@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use axum::extract::{Request, State};
-use axum::http::{StatusCode, header};
+use axum::http::{Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -18,6 +18,7 @@ mod events;
 mod hardware;
 mod providers;
 mod settings;
+mod web;
 
 pub fn router(state: Arc<AppState>) -> Router {
     let authed = Router::new()
@@ -46,11 +47,15 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/conversations/{id}/messages", post(conversations::send))
         .route("/conversations/{id}/cancel", post(conversations::cancel))
-        .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
+        .route("/web/login-link", post(web::login_link))
+        .route("/web/logout", post(web::logout))
+        .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     Router::new()
         .route("/health", get(health))
+        .route("/login", get(web::login))
         .nest(API_PREFIX, authed)
+        .fallback(web::static_files)
         .with_state(state)
 }
 
@@ -70,18 +75,68 @@ async fn status(State(state): State<Arc<AppState>>) -> Json<Status> {
     })
 }
 
-async fn require_token(State(state): State<Arc<AppState>>, req: Request, next: Next) -> Response {
-    let presented = req
+/// How a request authenticated, available to handlers as an extension.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Auth {
+    /// The discovery-file token: the desktop app's Rust side, the CLI.
+    Bearer,
+    /// A browser session cookie.
+    Session,
+}
+
+/// Accepts the bearer token, or a browser session cookie. Cookie requests must also
+/// come from our own origin: the Host check defeats DNS rebinding, and the Origin check
+/// on anything that changes state (and on the event socket) defeats cross-site requests.
+async fn require_auth(
+    State(state): State<Arc<AppState>>,
+    mut req: Request,
+    next: Next,
+) -> Response {
+    let bearer = req
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "));
-    match presented {
-        Some(token) if constant_time_eq(token.as_bytes(), state.token.as_bytes()) => {
-            next.run(req).await
+    if let Some(token) = bearer {
+        if !constant_time_eq(token.as_bytes(), state.token.as_bytes()) {
+            return StatusCode::UNAUTHORIZED.into_response();
         }
-        _ => StatusCode::UNAUTHORIZED.into_response(),
+        req.extensions_mut().insert(Auth::Bearer);
+        return next.run(req).await;
     }
+
+    let Some(session) = web::session_token(&req).map(str::to_owned) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    let host = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    if !crate::web::allowed_host(host, state.port) {
+        return forbidden("This address isn't allowed to use the web interface.");
+    }
+    let is_upgrade = req.headers().contains_key(header::UPGRADE);
+    if req.method() != Method::GET && req.method() != Method::HEAD || is_upgrade {
+        let origin = req
+            .headers()
+            .get(header::ORIGIN)
+            .and_then(|v| v.to_str().ok());
+        if origin != Some(format!("http://{host}").as_str()) {
+            return forbidden("Cross-site requests aren't allowed.");
+        }
+    }
+    match crate::web::session_valid(&state.db, &session).await {
+        Ok(true) => {}
+        Ok(false) => return StatusCode::UNAUTHORIZED.into_response(),
+        Err(e) => return error::AppError::from(e).into_response(),
+    }
+    req.extensions_mut().insert(Auth::Session);
+    next.run(req).await
+}
+
+fn forbidden(message: &str) -> Response {
+    error::AppError::new(StatusCode::FORBIDDEN, "forbidden", message).into_response()
 }
 
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {

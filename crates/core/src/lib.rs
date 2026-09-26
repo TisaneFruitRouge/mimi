@@ -15,6 +15,7 @@ pub mod hardware;
 pub mod keys;
 pub mod providers;
 pub mod settings;
+pub mod web;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -28,11 +29,19 @@ pub struct AppState {
     /// Shared HTTP client for talking to model providers.
     pub http: reqwest::Client,
     pub generations: chat::Generations,
+    /// The port actually bound, for login links and the Host/Origin checks.
+    pub port: u16,
+    pub login_codes: web::LoginCodes,
 }
 
 impl AppState {
     #[cfg(test)]
     pub fn for_tests(token: &str) -> Self {
+        Self::for_tests_on(token, 7437)
+    }
+
+    #[cfg(test)]
+    pub fn for_tests_on(token: &str, port: u16) -> Self {
         Self {
             paths: Paths {
                 data_dir: "/nonexistent".into(),
@@ -45,6 +54,8 @@ impl AppState {
             events: events::EventBus::new(),
             http: http_client(),
             generations: Default::default(),
+            port,
+            login_codes: Default::default(),
         }
     }
 }

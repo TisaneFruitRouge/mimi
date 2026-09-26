@@ -7,6 +7,7 @@ use hearth_protocol::{
     API_PREFIX, ApiError, Conversation, ConversationDetail, Discovery, Event, HardwareInfo, Health,
     ModelInfo, NewConversation, NewProvider, Paths, ProbeRequest, ProbeResult, Provider,
     ProviderPreset, Recommendations, SendMessage, SendMessageResult, Settings, Status,
+    WebLoginLink,
 };
 pub use reqwest::Method;
 use serde::Serialize;
@@ -159,6 +160,11 @@ impl Client {
             None::<()>,
         )
         .await
+    }
+
+    /// A single-use link that signs a browser in to the web interface.
+    pub async fn web_login_link(&self) -> Result<WebLoginLink, Error> {
+        self.send(Method::POST, "/web/login-link", None::<()>).await
     }
 
     /// Untyped request to any `/v1` route. `path` excludes the `/v1` prefix.

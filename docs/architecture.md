@@ -1,14 +1,15 @@
 # Architecture
 
 ```
- ┌──────────────┐  ┌──────────┐  ┌──────────┐
- │ Desktop app  │  │   CLI    │  │ TUI (tbd)│      clients
- │ Tauri + React│  │ `hearth` │  │          │
- └──────┬───────┘  └────┬─────┘  └────┬─────┘
-        │   hearth-client (typed Rust client)
-        └───────────────┼─────────────┘
-                        │ HTTP on 127.0.0.1, bearer token
-                ┌───────┴────────┐
+ ┌──────────────┐  ┌──────────┐  ┌──────────┐   ┌─────────────┐
+ │ Desktop app  │  │   CLI    │  │ TUI (tbd)│   │  Browser    │  clients
+ │ Tauri + React│  │ `hearth` │  │          │   │ same React  │
+ └──────┬───────┘  └────┬─────┘  └────┬─────┘   └──────┬──────┘
+        │   hearth-client (typed Rust client)          │ fetch + WebSocket,
+        └───────────────┼─────────────┘                │ session cookie
+                        │ HTTP on 127.0.0.1:7437,      │
+                        │ bearer token                 │
+                ┌───────┴──────────────────────────────┴┐
                 │    hearthd     │      hearth-core
                 │ agent · memory │
                 │ models · tools │
@@ -27,19 +28,46 @@
 | `apps/desktop/src-tauri` | `hearth-desktop` | Tauri shell. Exposes Tauri commands that call `hearth-client`. |
 | `apps/desktop/src` | `@hearth/desktop` | React + Tailwind + shadcn/ui frontend. |
 
+## Web interface
+
+The daemon serves the built frontend (`apps/desktop/dist`, via `rust-embed`) at `/`,
+with a fallback to `index.html` for client-side routes. Static files are public;
+everything under `/v1` requires auth. The frontend picks its transport at runtime
+(`src/lib/transport.ts`): Tauri IPC inside the desktop app, same-origin `fetch` and a
+WebSocket in a browser.
+
+Browsers can't read the discovery file, so they sign in with a link:
+
+1. A native client (bearer token) calls `POST /v1/web/login-link` and opens the URL
+   (`hearth open`, or the desktop app's `open_in_browser` command).
+2. `GET /login?code=…` redeems the single-use code (valid two minutes, kept in memory),
+   creates a session, sets `hearth_session` (HttpOnly, SameSite=Strict, 30 days) and
+   redirects to `/`. The database stores only the SHA-256 of the session token.
+3. Cookie-authenticated requests must have Host `127.0.0.1:<port>` or
+   `localhost:<port>` (DNS-rebinding defense). Non-GET requests and the `/v1/events`
+   upgrade must also send a matching Origin (CSRF defense). Sessions can't mint login
+   links. `POST /v1/web/logout` ends the session.
+
+Known limit: browsers share cookies across ports of the same host, so another web app
+on `127.0.0.1` could receive the cookie. Such software already runs as the user, so
+this doesn't widen what it can reach, but remote access will need a proper origin and
+TLS.
+
 ## Daemon discovery and auth
 
 On start, `hearthd`:
 
 1. Creates the data dir with mode `0700`.
 2. Refuses to start if another instance's discovery file points at a live port.
-3. Binds `127.0.0.1` on a random port and generates a 256-bit token.
+3. Binds `127.0.0.1:7437` (`HEARTH_PORT` overrides; a random port if it's taken) and
+   generates a 256-bit token.
 4. Writes `daemon.json` (`pid`, `port`, `token`) to the data dir with mode `0600`, atomically.
 5. Deletes `daemon.json` on SIGINT/SIGTERM.
 
-Clients read `daemon.json` and send `Authorization: Bearer <token>`. Only `GET /health`
-is unauthenticated, and it returns nothing but the version. Everything else lives under
-`/v1` behind the token.
+Clients read `daemon.json` and send `Authorization: Bearer <token>`. Outside `/v1`,
+only `GET /health` (the version, nothing else), `GET /login` and the static frontend
+files are public. Everything under `/v1` needs the token or a browser session (see
+above).
 
 The desktop webview never sees the token: the frontend calls Tauri commands, and the
 Rust side makes the request.

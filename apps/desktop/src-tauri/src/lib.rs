@@ -5,6 +5,7 @@ use std::time::Duration;
 use futures::StreamExt;
 use hearth_client::{Client, Method};
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_opener::OpenerExt;
 
 /// Errors cross into the webview as a tagged value the UI can branch on.
 #[derive(serde::Serialize)]
@@ -55,6 +56,17 @@ async fn api(
     Ok(Client::local()?.request_json(method, &path, body).await?)
 }
 
+/// Opens the web interface in the default browser, signed in via a single-use link.
+#[tauri::command]
+async fn open_in_browser(app: AppHandle) -> Result<(), CommandError> {
+    let link = Client::local()?.web_login_link().await?;
+    app.opener()
+        .open_url(link.url, None::<&str>)
+        .map_err(|e| CommandError::Other {
+            message: e.to_string(),
+        })
+}
+
 #[derive(Default)]
 struct Connection(Arc<AtomicBool>);
 
@@ -101,7 +113,11 @@ pub fn run() {
             spawn_event_relay(app.handle().clone(), connected);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![api, daemon_connected])
+        .invoke_handler(tauri::generate_handler![
+            api,
+            daemon_connected,
+            open_in_browser
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

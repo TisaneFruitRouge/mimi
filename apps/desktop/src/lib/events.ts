@@ -1,6 +1,4 @@
 import { useEffect, useSyncExternalStore } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import type { QueryClient } from "@tanstack/react-query";
 
 import type { Conversation } from "@/bindings/Conversation";
@@ -8,8 +6,9 @@ import type { ConversationDetail } from "@/bindings/ConversationDetail";
 import type { Event } from "@/bindings/Event";
 import type { Message } from "@/bindings/Message";
 import { keys } from "@/lib/api";
+import { subscribe } from "@/lib/transport";
 
-// Connection state, fed by the Rust event relay.
+// Connection state, fed by the transport (Tauri relay or browser WebSocket).
 let connected: boolean | null = null;
 const listeners = new Set<() => void>();
 function setConnected(value: boolean) {
@@ -30,22 +29,19 @@ export function useConnected(): boolean | null {
 
 /** Keeps the query cache in sync with daemon events. Mount once. */
 export function useDaemonSync(qc: QueryClient) {
-  useEffect(() => {
-    let disposed = false;
-    const unlisteners = [
-      listen<Event>("daemon-event", ({ payload }) => apply(qc, payload)),
-      listen<boolean>("daemon-connection", ({ payload }) => {
-        setConnected(payload);
-        // Anything could have changed while we were away.
-        if (payload) qc.invalidateQueries();
-      }),
-    ];
-    invoke<boolean>("daemon_connected").then((v) => !disposed && setConnected(v));
-    return () => {
-      disposed = true;
-      unlisteners.forEach((p) => p.then((un) => un()));
-    };
-  }, [qc]);
+  useEffect(
+    () =>
+      subscribe(
+        (event) => apply(qc, event),
+        (value) => {
+          const reconnected = value && connected === false;
+          setConnected(value);
+          // Anything could have changed while we were away.
+          if (reconnected) qc.invalidateQueries();
+        },
+      ),
+    [qc],
+  );
 }
 
 function apply(qc: QueryClient, event: Event) {

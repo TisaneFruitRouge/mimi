@@ -40,6 +40,19 @@ pnpm check            # fmt, clippy, tests, typecheck (same as CI)
 ```
 
 `pnpm dev` keeps its data in `.dev/` at the repo root, separate from a real install.
+
+### Web interface
+
+The daemon also serves the app to your browser at `http://127.0.0.1:7437` (loopback
+only; `HEARTH_PORT` changes the port). With the daemon running:
+
+```sh
+pnpm web              # build the frontend, then open it in your browser, signed in
+pnpm hearth open      # just open it (after a build)
+```
+
+Browsers sign in with a single-use link from the desktop app or `hearth open`, which
+sets a session cookie.
 To run the pieces on their own: `pnpm dev:daemon`, `pnpm dev:app`. Set
 `HEARTH_HOME=/some/dir` for any other isolated instance.
 

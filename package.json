@@ -4,10 +4,11 @@
   "license": "AGPL-3.0-or-later",
   "packageManager": "pnpm@10.28.2",
   "scripts": {
-    "dev": "HEARTH_HOME=\"$PWD/.dev\" concurrently --kill-others --names daemon,app --prefix-colors yellow,cyan \"pnpm dev:daemon\" \"pnpm dev:app\"",
-    "dev:daemon": "cargo run -p hearth-core --bin hearthd",
-    "dev:app": "pnpm --filter @hearth/desktop tauri dev",
-    "hearth": "HEARTH_HOME=\"$PWD/.dev\" cargo run -q -p hearth-cli --",
+    "dev": "HEARTH_HOME=\"${HEARTH_HOME:-$PWD/.dev}\" concurrently --kill-others --names daemon,app --prefix-colors yellow,cyan \"pnpm dev:daemon\" \"pnpm dev:app\"",
+    "dev:daemon": "HEARTH_HOME=\"${HEARTH_HOME:-$PWD/.dev}\" cargo run -p hearth-core --bin hearthd",
+    "dev:app": "HEARTH_HOME=\"${HEARTH_HOME:-$PWD/.dev}\" pnpm --filter @hearth/desktop tauri dev",
+    "web": "pnpm build && HEARTH_HOME=\"${HEARTH_HOME:-$PWD/.dev}\" cargo run -q -p hearth-cli -- open",
+    "hearth": "HEARTH_HOME=\"${HEARTH_HOME:-$PWD/.dev}\" cargo run -q -p hearth-cli --",
     "build": "pnpm --filter @hearth/desktop build",
     "typecheck": "pnpm --filter @hearth/desktop typecheck",
     "check": "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace && pnpm typecheck"

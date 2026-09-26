@@ -51,6 +51,18 @@ features go in the daemon plus the protocol types. Frontends only render them.
 - The desktop webview calls Tauri commands. It never talks to the daemon or holds the
   token directly: the `api` command proxies `/v1` requests, and the Rust side relays
   daemon events to the webview as `daemon-event` / `daemon-connection`.
+- The same frontend also runs in a browser, served by the daemon (`rust-embed` of
+  `apps/desktop/dist`: read from disk in debug builds, embedded in release). Only
+  `src/lib/transport.ts` knows which it is: Tauri IPC in the app, same-origin
+  `fetch`/WebSocket in a browser. Never call Tauri APIs from screens directly; use
+  `openExternal` for links.
+- Web auth: native clients use the bearer token; browsers use a `hearth_session`
+  cookie (HttpOnly, SameSite=Strict) obtained from a single-use, 2-minute login link
+  that only bearer clients can mint (`POST /v1/web/login-link`). Only a SHA-256 of each
+  session token is stored. Cookie-authenticated requests must carry an allowed Host
+  (`127.0.0.1:<port>`/`localhost:<port>`, against DNS rebinding) and, for anything but
+  GET plus the event socket, a matching Origin (against CSRF). Keep these checks in
+  `require_auth` when adding routes; new `/v1` routes get them automatically.
 - Frontend layout: `src/lib/api.ts` (typed calls + query keys), `src/lib/events.ts`
   (applies daemon events to the TanStack Query cache; prefer this over refetching),
   `src/features/<area>/` for screens, `src/components/` for shared pieces. Model output
@@ -62,6 +74,7 @@ features go in the daemon plus the protocol types. Frontends only render them.
 
 ```sh
 pnpm dev                 # daemon + desktop app together, data in .dev/
+pnpm web                 # build the frontend and open it in a browser (daemon running)
 pnpm dev:daemon          # daemon only (pnpm dev:app for the app only)
 pnpm hearth <args>       # CLI against the .dev/ instance
 pnpm check               # fmt, clippy, tests, typecheck (what CI runs)

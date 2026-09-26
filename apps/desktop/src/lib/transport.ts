@@ -1,0 +1,120 @@
+/**
+ * How the UI reaches the daemon. The same app runs in two places:
+ *
+ * - The desktop app (Tauri): requests go through the `api` command and events arrive
+ *   via Tauri events. The Rust side holds the daemon token; the webview never sees it.
+ * - A browser, served by the daemon itself: same-origin `fetch` and a WebSocket,
+ *   authenticated by the session cookie set when a login link was opened.
+ */
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
+
+import type { Event } from "@/bindings/Event";
+
+export const isTauri = "__TAURI_INTERNALS__" in window;
+
+/** Mirrors CommandError in src-tauri/src/lib.rs, plus the browser-only `unauthorized`. */
+export type TransportError =
+  | { kind: "not_running" }
+  | { kind: "unauthorized" }
+  | { kind: "api"; code: string; message: string }
+  | { kind: "other"; message: string };
+
+/** Calls a `/v1` route. Rejects with a `TransportError`. */
+export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  if (isTauri) return invoke<T>("api", { method, path, body: body ?? null });
+
+  let res: Response;
+  try {
+    res = await fetch(`/v1${path}`, {
+      method,
+      credentials: "same-origin",
+      headers: body !== undefined ? { "content-type": "application/json" } : {},
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw { kind: "not_running" } satisfies TransportError;
+  }
+  if (res.status === 401) throw { kind: "unauthorized" } satisfies TransportError;
+  const text = await res.text();
+  const json = text ? JSON.parse(text) : null;
+  if (!res.ok) {
+    throw (json?.code
+      ? { kind: "api", code: json.code, message: json.message }
+      : { kind: "other", message: `The assistant returned ${res.status}.` }) satisfies TransportError;
+  }
+  return json as T;
+}
+
+/**
+ * Subscribes to daemon events and connection changes. `onConnection` fires on every
+ * change, starting with the initial state. Returns an unsubscribe function.
+ */
+export function subscribe(
+  onEvent: (event: Event) => void,
+  onConnection: (connected: boolean) => void,
+): () => void {
+  return isTauri ? subscribeTauri(onEvent, onConnection) : subscribeBrowser(onEvent, onConnection);
+}
+
+function subscribeTauri(onEvent: (e: Event) => void, onConnection: (c: boolean) => void) {
+  let disposed = false;
+  const unlisteners = [
+    listen<Event>("daemon-event", ({ payload }) => onEvent(payload)),
+    listen<boolean>("daemon-connection", ({ payload }) => onConnection(payload)),
+  ];
+  invoke<boolean>("daemon_connected").then((c) => !disposed && onConnection(c));
+  return () => {
+    disposed = true;
+    unlisteners.forEach((p) => p.then((un) => un()));
+  };
+}
+
+function subscribeBrowser(onEvent: (e: Event) => void, onConnection: (c: boolean) => void) {
+  let socket: WebSocket | null = null;
+  let retry: ReturnType<typeof setTimeout> | undefined;
+  let delay = 1000;
+  let disposed = false;
+
+  const connect = () => {
+    const scheme = location.protocol === "https:" ? "wss" : "ws";
+    socket = new WebSocket(`${scheme}://${location.host}/v1/events`);
+    socket.onopen = () => {
+      delay = 1000;
+      onConnection(true);
+    };
+    socket.onmessage = (msg) => {
+      try {
+        onEvent(JSON.parse(msg.data) as Event);
+      } catch {
+        // Ignore events this version doesn't understand.
+      }
+    };
+    socket.onclose = () => {
+      if (disposed) return;
+      onConnection(false);
+      retry = setTimeout(connect, delay);
+      delay = Math.min(delay * 2, 10_000);
+    };
+  };
+  connect();
+  return () => {
+    disposed = true;
+    clearTimeout(retry);
+    socket?.close();
+  };
+}
+
+/** Opens an external link in the user's browser, never inside the app's own view. */
+export function openExternal(url: string) {
+  if (!/^(https?|mailto):/i.test(url)) return;
+  if (isTauri) openUrl(url);
+  else window.open(url, "_blank", "noopener,noreferrer");
+}
+
+/** Desktop only: opens the web interface in the default browser, already signed in. */
+export async function openInBrowser(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("open_in_browser");
+}

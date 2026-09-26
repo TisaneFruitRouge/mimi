@@ -5,6 +5,7 @@ import { ChatView } from "@/features/chat/chat-view";
 import { Sidebar } from "@/features/chat/sidebar";
 import { SettingsView } from "@/features/settings/settings-view";
 import { Setup } from "@/features/setup/setup";
+import type { DaemonError } from "@/lib/api";
 import { useConnected } from "@/lib/events";
 import { useSettings } from "@/lib/queries";
 
@@ -15,7 +16,10 @@ export default function App() {
   const settings = useSettings();
   const [view, setView] = useState<View>({ kind: "chat", conversationId: null });
 
-  if (connected === false) return <Offline />;
+  if ((settings.error as DaemonError | null)?.kind === "unauthorized") return <SignedOut />;
+  // Wait for the first settings answer, so a browser that isn't signed in (whose event
+  // socket is refused) doesn't flash the offline screen first.
+  if (connected === false && !settings.isPending) return <Offline />;
   if (!settings.data) return <Splash />;
   if (!settings.data.default_model) return <Setup />;
 
@@ -47,6 +51,22 @@ function Splash() {
   return (
     <div className="flex h-screen items-center justify-center">
       <Loader2 className="size-5 animate-spin text-muted-foreground" />
+    </div>
+  );
+}
+
+/** Browser only: this browser has no valid session. */
+function SignedOut() {
+  return (
+    <div className="flex h-screen flex-col items-center justify-center gap-3 p-6 text-center">
+      <div className="rounded-2xl bg-muted p-3">
+        <Flame className="size-7 text-muted-foreground" />
+      </div>
+      <h1 className="text-lg font-semibold">Open Hearth from your computer</h1>
+      <p className="max-w-sm text-sm text-muted-foreground">
+        For your privacy, this browser needs a sign-in link. Open it from the Hearth app, or run{" "}
+        <code className="font-mono">hearth open</code> in a terminal.
+      </p>
     </div>
   );
 }

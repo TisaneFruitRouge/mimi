@@ -48,8 +48,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         tracing::warn!(interrupted, "marked replies cut off by the last shutdown");
     }
 
-    // Loopback only; remote access will be a separate, explicitly enabled listener.
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+    let listener = bind().await?;
     let port = listener.local_addr()?.port();
     let token = random_hex(32)?;
 
@@ -72,6 +71,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         events: crate::events::EventBus::new(),
         http: crate::http_client(),
         generations: Default::default(),
+        port,
+        login_codes: Default::default(),
     });
     tracing::info!(port, "hearth daemon listening on 127.0.0.1");
 
@@ -81,6 +82,32 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
     let _ = fs::remove_file(&discovery_file);
     served?;
     Ok(())
+}
+
+/// Default port, so the web interface has a stable address.
+pub const DEFAULT_PORT: u16 = 7437;
+/// Overrides the port.
+pub const PORT_ENV: &str = "HEARTH_PORT";
+
+/// Binds loopback only; remote access will be a separate, explicitly enabled listener.
+/// Falls back to a random port if the preferred one is taken.
+async fn bind() -> anyhow::Result<TcpListener> {
+    let preferred = match std::env::var(PORT_ENV) {
+        Ok(v) => v
+            .parse()
+            .with_context(|| format!("{PORT_ENV}={v} is not a valid port"))?,
+        Err(_) => DEFAULT_PORT,
+    };
+    match TcpListener::bind((Ipv4Addr::LOCALHOST, preferred)).await {
+        Ok(listener) => Ok(listener),
+        Err(e) => {
+            tracing::warn!(
+                "port {preferred} is unavailable ({e}); using a random port. The web \
+                 interface address will change on every start."
+            );
+            Ok(TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?)
+        }
+    }
 }
 
 /// A previous daemon's discovery file, if that daemon still accepts connections.

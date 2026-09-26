@@ -1,7 +1,7 @@
 import { memo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openExternal } from "@/lib/transport";
 
 /**
  * Renders model output. Raw HTML is not rendered, and links open in the system browser
@@ -18,7 +18,7 @@ export const Markdown = memo(function Markdown({ children }: { children: string 
               href={href}
               onClick={(e) => {
                 e.preventDefault();
-                if (href && /^(https?|mailto):/i.test(href)) openUrl(href);
+                if (href) openExternal(href);
               }}
               className="cursor-pointer"
             >

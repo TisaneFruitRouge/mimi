@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openExternal } from "@/lib/transport";
 import { ArrowRight, Cloud, Flame, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
@@ -146,7 +146,7 @@ export function Setup() {
                 </p>
                 <SuggestedModels models={r?.suggested ?? []} />
                 <div className="flex gap-2">
-                  <Button onClick={() => openUrl("https://ollama.com/download")}>Get Ollama</Button>
+                  <Button onClick={() => openExternal("https://ollama.com/download")}>Get Ollama</Button>
                   <Button variant="outline" onClick={() => rec.refetch()} disabled={rec.isFetching}>
                     <RefreshCw className={rec.isFetching ? "animate-spin" : ""} /> Check again
                   </Button>

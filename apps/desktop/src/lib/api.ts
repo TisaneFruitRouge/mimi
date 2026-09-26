@@ -1,5 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
-
 import type { Conversation } from "@/bindings/Conversation";
 import type { ConversationDetail } from "@/bindings/ConversationDetail";
 import type { HardwareInfo } from "@/bindings/HardwareInfo";
@@ -14,19 +12,20 @@ import type { SendMessage } from "@/bindings/SendMessage";
 import type { SendMessageResult } from "@/bindings/SendMessageResult";
 import type { Settings } from "@/bindings/Settings";
 import type { Status } from "@/bindings/Status";
-
-/** Mirrors CommandError in src-tauri/src/lib.rs. */
-type CommandError =
-  | { kind: "not_running" }
-  | { kind: "api"; code: string; message: string }
-  | { kind: "other"; message: string };
+import { type TransportError, request } from "@/lib/transport";
 
 export class DaemonError extends Error {
-  readonly kind: CommandError["kind"];
+  readonly kind: TransportError["kind"];
   readonly code?: string;
 
-  constructor(err: CommandError) {
-    super(err.kind === "not_running" ? "The assistant isn't running." : err.message);
+  constructor(err: TransportError) {
+    super(
+      err.kind === "not_running"
+        ? "The assistant isn't running."
+        : err.kind === "unauthorized"
+          ? "This browser isn't signed in to the assistant."
+          : err.message,
+    );
     this.kind = err.kind;
     this.code = err.kind === "api" ? err.code : undefined;
   }
@@ -34,9 +33,9 @@ export class DaemonError extends Error {
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
   try {
-    return await invoke<T>("api", { method, path, body: body ?? null });
+    return await request<T>(method, path, body);
   } catch (err) {
-    throw new DaemonError(err as CommandError);
+    throw new DaemonError(err as TransportError);
   }
 }
 

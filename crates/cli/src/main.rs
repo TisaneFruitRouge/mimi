@@ -21,6 +21,8 @@ struct Cli {
 enum Command {
     /// Show whether the daemon is running.
     Status,
+    /// Open the web interface in your browser.
+    Open,
     /// Print daemon events as JSON lines until interrupted.
     Events,
     /// Manage model providers.
@@ -75,6 +77,24 @@ async fn main() -> anyhow::Result<()> {
             println!("  uptime       {}s", status.uptime_secs);
             println!("  data dir     {}", status.data_dir.display());
             println!("  key storage  {:?}", status.key_storage);
+        }
+        Command::Open => {
+            let link = client.web_login_link().await?;
+            println!("{}", link.url);
+            let opener = if cfg!(target_os = "macos") {
+                "open"
+            } else {
+                "xdg-open"
+            };
+            let opened = std::process::Command::new(opener)
+                .arg(&link.url)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success());
+            if !opened {
+                eprintln!("Couldn't open a browser; open the link above within two minutes.");
+            }
         }
         Command::Events => {
             let mut events = client.events().await?;

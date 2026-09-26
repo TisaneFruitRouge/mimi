@@ -76,3 +76,10 @@ pub struct Discovery {
     pub port: u16,
     pub token: String,
 }
+
+/// A single-use link that signs a browser in to the web interface.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct WebLoginLink {
+    pub url: String,
+}

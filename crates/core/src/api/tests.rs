@@ -109,9 +109,9 @@ async fn settings_round_trip_and_validate() {
 
 /// Serves the real router on a loopback port, for tests that need a live socket.
 async fn serve() -> (u16, Arc<AppState>) {
-    let state = Arc::new(AppState::for_tests(TOKEN));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
+    let state = Arc::new(AppState::for_tests_on(TOKEN, port));
     let app = router(state.clone());
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     (port, state)
@@ -409,4 +409,229 @@ async fn sending_without_a_model_explains_why() {
         )
         .await;
     assert_eq!((status, err["code"].as_str()), (400, Some("no_model")));
+}
+
+// Web interface: login links, cookie sessions, and the Host/Origin rules.
+
+mod web {
+    use axum::body::Body;
+    use axum::http::{Method, Request, StatusCode, header};
+    use tower::ServiceExt;
+
+    use super::*;
+
+    const HOST: &str = "127.0.0.1:7437";
+    const ORIGIN: &str = "http://127.0.0.1:7437";
+
+    async fn send(app: &Router, req: Request<Body>) -> axum::response::Response {
+        app.clone().oneshot(req).await.unwrap()
+    }
+
+    /// Logs a browser in through a fresh login link; returns the session cookie pair.
+    async fn login(app: &Router) -> String {
+        let (status, link) = call(app, Method::POST, "/v1/web/login-link", None).await;
+        assert_eq!(status, StatusCode::OK);
+        let url = link["url"].as_str().unwrap();
+        let path = url.strip_prefix("http://127.0.0.1:7437").unwrap();
+        let res = send(
+            app,
+            Request::get(path)
+                .header(header::HOST, HOST)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::SEE_OTHER);
+        let cookie = res.headers()[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert!(cookie.contains("HttpOnly") && cookie.contains("SameSite=Strict"));
+
+        // The same link doesn't work twice.
+        let again = send(
+            app,
+            Request::get(path)
+                .header(header::HOST, HOST)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(again.status(), StatusCode::UNAUTHORIZED);
+
+        cookie.split(';').next().unwrap().to_owned()
+    }
+
+    fn with_cookie(method: Method, path: &str, cookie: &str) -> axum::http::request::Builder {
+        Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::COOKIE, cookie)
+    }
+
+    #[tokio::test]
+    async fn cookie_session_authenticates_same_origin_requests() {
+        let app = app();
+        let cookie = login(&app).await;
+
+        let res = send(
+            &app,
+            with_cookie(Method::GET, "/v1/status", &cookie)
+                .header(header::HOST, HOST)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let res = send(
+            &app,
+            with_cookie(Method::PUT, "/v1/settings", &cookie)
+                .header(header::HOST, HOST)
+                .header(header::ORIGIN, ORIGIN)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{"assistant_name":"Ember","default_model":null}"#,
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn expired_or_unknown_codes_are_refused() {
+        let state = Arc::new(AppState::for_tests(TOKEN));
+        state.login_codes.insert_expired("stale");
+        let app = router(state);
+        for code in ["stale", "made-up"] {
+            let res = send(
+                &app,
+                Request::get(format!("/login?code={code}"))
+                    .header(header::HOST, HOST)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+            assert!(!res.headers().contains_key(header::SET_COOKIE));
+        }
+    }
+
+    #[tokio::test]
+    async fn cookie_requests_from_foreign_hosts_are_rejected() {
+        let app = app();
+        let cookie = login(&app).await;
+        for host in ["evil.example:7437", "127.0.0.1:8080"] {
+            let res = send(
+                &app,
+                with_cookie(Method::GET, "/v1/status", &cookie)
+                    .header(header::HOST, host)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(res.status(), StatusCode::FORBIDDEN, "host {host}");
+        }
+    }
+
+    #[tokio::test]
+    async fn cross_origin_writes_and_sockets_are_rejected() {
+        let app = app();
+        let cookie = login(&app).await;
+        for origin in [
+            Some("http://evil.example"),
+            Some("http://localhost:7437"),
+            None,
+        ] {
+            let mut req = with_cookie(Method::POST, "/v1/conversations", &cookie)
+                .header(header::HOST, HOST)
+                .header(header::CONTENT_TYPE, "application/json");
+            if let Some(origin) = origin {
+                req = req.header(header::ORIGIN, origin);
+            }
+            let res = send(&app, req.body(Body::from("{}")).unwrap()).await;
+            assert_eq!(res.status(), StatusCode::FORBIDDEN, "origin {origin:?}");
+        }
+        let res = send(
+            &app,
+            with_cookie(Method::GET, "/v1/events", &cookie)
+                .header(header::HOST, HOST)
+                .header(header::ORIGIN, "http://evil.example")
+                .header(header::CONNECTION, "upgrade")
+                .header(header::UPGRADE, "websocket")
+                .header(header::SEC_WEBSOCKET_VERSION, "13")
+                .header(header::SEC_WEBSOCKET_KEY, "dGhlIHNhbXBsZSBub25jZQ==")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn sessions_cannot_mint_links_and_logout_ends_them() {
+        let app = app();
+        let cookie = login(&app).await;
+        let authed = |method: Method, path: &str| {
+            with_cookie(method, path, &cookie)
+                .header(header::HOST, HOST)
+                .header(header::ORIGIN, ORIGIN)
+                .body(Body::empty())
+                .unwrap()
+        };
+        let res = send(&app, authed(Method::POST, "/v1/web/login-link")).await;
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+
+        let res = send(&app, authed(Method::POST, "/v1/web/logout")).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        assert!(
+            res.headers()[header::SET_COOKIE]
+                .to_str()
+                .unwrap()
+                .contains("Max-Age=0")
+        );
+        let res = send(&app, authed(Method::GET, "/v1/status")).await;
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn bearer_clients_ignore_host_and_origin() {
+        let res = send(
+            &app(),
+            Request::get("/v1/status")
+                .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+                .header(header::HOST, "anything:1")
+                .header(header::ORIGIN, "http://evil.example")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn serves_the_frontend_but_not_unknown_api_routes() {
+        let app = app();
+        let res = send(&app, Request::get("/").body(Body::empty()).unwrap()).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        assert!(
+            res.headers()[header::CONTENT_TYPE]
+                .to_str()
+                .unwrap()
+                .starts_with("text/html")
+        );
+        // Client-side routes fall back to the app.
+        let res = send(
+            &app,
+            Request::get("/settings/models")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let res = send(&app, Request::get("/v1/nope").body(Body::empty()).unwrap()).await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    }
 }
