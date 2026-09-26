@@ -6,6 +6,7 @@ import { cn } from "cn";
 import { LogoMark } from "@/components/brand";
 import { ChatView } from "@/features/chat/chat-view";
 import { ConnectionsView } from "@/features/connections/connections-view";
+import { MemoryView } from "@/features/memory/memory-view";
 import { ModelsView } from "@/features/models/models-view";
 import { ConversationPalette } from "@/features/shell/conversation-palette";
 import { SettingsDialog } from "@/features/shell/settings-dialog";
@@ -59,7 +60,8 @@ type Route = { section: Section; conversationId: string | null };
 
 function parseHash(): Route {
   const [first, second] = location.hash.replace(/^#\/?/, "").split("/");
-  if (first === "models" || first === "connections") return { section: first, conversationId: null };
+  if (first === "models" || first === "connections" || first === "memory")
+    return { section: first, conversationId: null };
   return { section: "chat", conversationId: first === "chat" && second ? second : null };
 }
 
@@ -170,6 +172,7 @@ function Shell() {
             )}
             {section === "connections" && <ConnectionsView />}
             {section === "models" && <ModelsView onChat={() => setSection("chat")} />}
+            {section === "memory" && <MemoryView />}
           </motion.main>
         </AnimatePresence>
 
@@ -187,7 +190,14 @@ function Shell() {
           onNewConversation={() => setConversationId(null)}
           onSection={setSection}
         />
-        <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+        <SettingsDialog
+          open={settingsOpen}
+          onOpenChange={setSettingsOpen}
+          onOpenMemory={() => {
+            setSettingsOpen(false);
+            setSection("memory");
+          }}
+        />
       </div>
     </ScrollEdgeContext.Provider>
   );

@@ -77,6 +77,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         tool_sources: Default::default(),
         approvals: Default::default(),
         connections: Default::default(),
+        learner: Default::default(),
     });
     #[cfg(debug_assertions)]
     if std::env::var(crate::tools::dev::ENV).is_ok_and(|v| v == "1") {
@@ -90,7 +91,11 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
     state
         .tool_sources
         .add(Arc::new(crate::connections::calendar::tools::CalendarTools));
+    state
+        .tool_sources
+        .add(Arc::new(crate::memory::tools::MemoryTools));
     crate::connections::start_all(&state).await;
+    tokio::spawn(crate::memory::learn::run(state.clone()));
 
     let served = axum::serve(listener, api::router(state))
         .with_graceful_shutdown(shutdown_signal())

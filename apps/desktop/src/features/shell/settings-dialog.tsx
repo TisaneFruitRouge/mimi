@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ExternalLink, Lock, LogOut } from "lucide-react";
+import { BookOpen, ChevronRight, ExternalLink, Lock, LogOut } from "lucide-react";
 import { toast } from "sonner";
 
 import { LocalityBadge } from "@/components/locality-badge";
@@ -28,9 +28,11 @@ const shortcuts = [
 export function SettingsDialog({
   open,
   onOpenChange,
+  onOpenMemory,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onOpenMemory: () => void;
 }) {
   const settings = useSettings().data;
   const providers = useProviders().data ?? [];
@@ -84,6 +86,20 @@ export function SettingsDialog({
                 </Button>
               )}
             </form>
+          </Group>
+
+          <Group title="Memory">
+            <Row
+              icon={
+                <IconTile size="sm" className="bg-lime-soft text-lime-deep">
+                  <BookOpen />
+                </IconTile>
+              }
+              title="What your assistant remembers"
+              detail="See, change or forget it"
+              trailing={<ChevronRight className="size-4 text-faint" />}
+              onClick={onOpenMemory}
+            />
           </Group>
 
           <Group title="Privacy">

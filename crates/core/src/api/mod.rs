@@ -18,6 +18,7 @@ mod conversations;
 pub mod error;
 mod events;
 mod hardware;
+mod memory;
 mod providers;
 mod settings;
 mod web;
@@ -63,6 +64,17 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/conversations/{id}/cancel", post(conversations::cancel))
         .route("/actions/{id}/approve", post(actions::approve))
         .route("/actions/{id}/reject", post(actions::reject))
+        .route("/memory", get(memory::overview))
+        .route(
+            "/memory/note",
+            get(memory::get_note)
+                .put(memory::put_note)
+                .delete(memory::delete_note),
+        )
+        .route("/memory/profile", axum::routing::put(memory::put_profile))
+        .route("/memory/learning", axum::routing::put(memory::put_learning))
+        .route("/memory/undo/{revision}", post(memory::undo))
+        .route("/memory/forget-all", post(memory::forget_all))
         .route("/web/login-link", post(web::login_link))
         .route("/web/logout", post(web::logout))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));

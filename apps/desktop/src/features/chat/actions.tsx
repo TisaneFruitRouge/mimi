@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { Check, CircleAlert, ExternalLink, Hand, Loader2, X } from "lucide-react";
+import { BookmarkCheck, Check, CircleAlert, ExternalLink, Hand, Loader2, X } from "lucide-react";
 import { cn } from "cn";
 import { toast } from "sonner";
 
@@ -10,11 +10,22 @@ import { describeArgs } from "@/features/chat/action-formatters";
 import { api } from "@/lib/api";
 import { openExternal } from "@/lib/transport";
 
+/** Looking things up in memory is routine; it isn't shown. */
+const MEMORY_READS = new Set(["memory_search", "memory_read", "memory_list"]);
+/** Changes to memory show as one quiet line each, with Undo. */
+const MEMORY_WRITES = new Set(["memory_write", "memory_update", "memory_forget"]);
+
 /** What the assistant did (reads) and asked to do (approval cards) in one reply. */
 export function Actions({ actions }: { actions: Action[] }) {
-  const reads = actions.filter((a) => !a.requires_approval);
+  const reads = actions.filter(
+    (a) => !a.requires_approval && !MEMORY_READS.has(a.tool) && !MEMORY_WRITES.has(a.tool),
+  );
+  // Only memory changes that happened; refused or empty ones aren't news.
+  const remembered = actions.filter(
+    (a) => MEMORY_WRITES.has(a.tool) && a.status === "done" && memoryRevision(a) !== null,
+  );
   const asks = actions.filter((a) => a.requires_approval);
-  if (actions.length === 0) return null;
+  if (reads.length + remembered.length + asks.length === 0) return null;
   return (
     <div className="flex flex-col gap-3">
       {reads.length > 0 && (
@@ -24,9 +35,52 @@ export function Actions({ actions }: { actions: Action[] }) {
           ))}
         </div>
       )}
+      {remembered.map((a) => (
+        <MemoryLine key={a.id} action={a} />
+      ))}
       {asks.map((a) => (
         <ApprovalCard key={a.id} action={a} />
       ))}
+    </div>
+  );
+}
+
+function memoryRevision(a: Action): number | null {
+  const r = (a.output as { revision?: unknown } | null)?.revision;
+  return typeof r === "number" ? r : null;
+}
+
+/** "Remembered that Sam is your brother · Undo". */
+function MemoryLine({ action: a }: { action: Action }) {
+  const [busy, setBusy] = useState(false);
+  const revision = memoryRevision(a);
+  const undone = (a.output as { undone?: unknown } | null)?.undone === true;
+  const undo = async () => {
+    if (revision === null) return;
+    setBusy(true);
+    try {
+      await api.undoMemory(revision);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="flex items-center gap-1.5 type-subhead text-faint">
+      <BookmarkCheck className="size-3.5 shrink-0" />
+      <span className={cn(undone && "line-through")}>{upperFirst(a.result ?? a.summary)}</span>
+      {undone ? (
+        <span>· Undone</span>
+      ) : (
+        <button
+          onClick={undo}
+          disabled={busy}
+          className="rounded px-1 font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-60"
+        >
+          Undo
+        </button>
+      )}
     </div>
   );
 }

@@ -5,6 +5,8 @@ import type { Connection } from "@/bindings/Connection";
 import type { ConnectionSetup } from "@/bindings/ConnectionSetup";
 import type { HardwareInfo } from "@/bindings/HardwareInfo";
 import type { Integration } from "@/bindings/Integration";
+import type { MemoryNote } from "@/bindings/MemoryNote";
+import type { MemoryOverview } from "@/bindings/MemoryOverview";
 import type { ModelPull } from "@/bindings/ModelPull";
 import type { ModelInfo } from "@/bindings/ModelInfo";
 import type { NewProvider } from "@/bindings/NewProvider";
@@ -83,6 +85,21 @@ export const api = {
   approveAction: (id: string, args?: Record<string, unknown>) =>
     call<null>("POST", `/actions/${id}/approve`, { arguments: args ?? null }),
   rejectAction: (id: string) => call<null>("POST", `/actions/${id}/reject`),
+
+  memory: () => call<MemoryOverview>("GET", "/memory"),
+  memoryNote: (path: string) =>
+    call<MemoryNote>("GET", `/memory/note?path=${encodeURIComponent(path)}`),
+  saveMemoryNote: (path: string, body: string, title?: string) =>
+    call<MemoryNote>("PUT", `/memory/note?path=${encodeURIComponent(path)}`, {
+      body,
+      title: title ?? null,
+    }),
+  deleteMemoryNote: (path: string) =>
+    call<null>("DELETE", `/memory/note?path=${encodeURIComponent(path)}`),
+  saveMemoryProfile: (text: string) => call<null>("PUT", "/memory/profile", { text }),
+  setMemoryLearning: (learning: boolean) => call<null>("PUT", "/memory/learning", { learning }),
+  undoMemory: (revision: number) => call<null>("POST", `/memory/undo/${revision}`),
+  forgetEverything: () => call<null>("POST", "/memory/forget-all"),
 };
 
 /** Query keys, shared by queries and the event sync so they stay in step. */
@@ -100,4 +117,6 @@ export const keys = {
   connections: ["connections"] as const,
   conversations: ["conversations"] as const,
   conversation: (id: string) => ["conversation", id] as const,
+  memory: ["memory"] as const,
+  memoryNote: (path: string) => ["memory", "note", path] as const,
 };

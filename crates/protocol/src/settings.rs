@@ -12,6 +12,8 @@ pub struct Settings {
     pub assistant_name: String,
     /// Model used for new messages. `None` until the user finishes setup.
     pub default_model: Option<ModelRef>,
+    /// Whether the assistant learns new things about the user from conversations.
+    pub memory_learning: bool,
 }
 
 impl Default for Settings {
@@ -19,6 +21,7 @@ impl Default for Settings {
         Self {
             assistant_name: "Hearth".to_owned(),
             default_model: None,
+            memory_learning: true,
         }
     }
 }

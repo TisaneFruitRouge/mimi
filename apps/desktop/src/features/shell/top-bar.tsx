@@ -7,7 +7,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { macOverlayTitleBar, mod } from "@/lib/platform";
 import { useSettings } from "@/lib/queries";
 
-export type Section = "chat" | "connections" | "models";
+/** Top-bar sections, plus pages reached from elsewhere (Memory, from Settings). */
+export type Section = "chat" | "connections" | "models" | "memory";
 
 const sections: { id: Section; label: string; key: string }[] = [
   { id: "chat", label: "Chat", key: "1" },
