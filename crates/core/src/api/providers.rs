@@ -3,8 +3,8 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Path, State};
 use hearth_protocol::{
-    Event, ModelInfo, NewProvider, ProbeRequest, ProbeResult, Provider, ProviderPreset,
-    ProviderUpdate,
+    Event, ModelInfo, ModelPull, NewProvider, ProbeRequest, ProbeResult, Provider, ProviderPreset,
+    ProviderUpdate, PullRequest,
 };
 use uuid::Uuid;
 
@@ -156,4 +156,36 @@ fn valid_name(name: &str) -> Result<String, AppError> {
 
 fn clean_key(key: Option<String>) -> Option<String> {
     key.map(|k| k.trim().to_owned()).filter(|k| !k.is_empty())
+}
+
+/// Starts downloading a model through this source (Ollama only). Progress arrives as
+/// `model_pull` events.
+pub async fn pull(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PullRequest>,
+) -> ApiResult<ModelPull> {
+    let model = req.model.trim().to_owned();
+    if !providers::pull::valid_model_name(&model) {
+        return Err(AppError::bad_request("That isn't a valid model name."));
+    }
+    let record = store::get(&state.db, id)
+        .await?
+        .ok_or_else(|| AppError::not_found("Provider"))?;
+    let client = providers::connect(&state.http, &record).map_err(AppError::bad_request)?;
+    if !client.is_ollama().await {
+        return Err(AppError::bad_request(
+            "This model source can't download models. Downloads work through Ollama.",
+        ));
+    }
+    Ok(Json(providers::pull::start(
+        state.clone(),
+        client,
+        id,
+        model,
+    )))
+}
+
+pub async fn pulls(State(state): State<Arc<AppState>>) -> Json<Vec<ModelPull>> {
+    Json(state.pulls.running())
 }

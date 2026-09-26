@@ -112,3 +112,34 @@ pub struct ProbeResult {
     pub locality: Locality,
     pub models: Vec<ModelInfo>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum PullState {
+    Running,
+    Done,
+    Failed,
+}
+
+/// Progress of a model download through a model source that supports it (Ollama).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ModelPull {
+    pub provider_id: Uuid,
+    pub model: String,
+    pub state: PullState,
+    /// The source's own description of the current step.
+    pub status: String,
+    #[ts(type = "number | null")]
+    pub completed_bytes: Option<u64>,
+    #[ts(type = "number | null")]
+    pub total_bytes: Option<u64>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PullRequest {
+    pub model: String,
+}

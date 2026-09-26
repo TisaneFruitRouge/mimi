@@ -143,7 +143,21 @@ pub fn recommend(
         installed,
         suggested,
         detected_servers,
+        download_provider_id: None,
     }
+}
+
+pub fn catalog_models() -> Vec<CatalogModel> {
+    CATALOG
+        .models
+        .iter()
+        .map(|m| CatalogModel {
+            id: m.id.clone(),
+            name: m.name.clone(),
+            description: m.description.clone(),
+            download_bytes: gb(m.download_gb),
+        })
+        .collect()
 }
 
 fn gb(n: f64) -> u64 {

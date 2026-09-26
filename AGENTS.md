@@ -69,6 +69,17 @@ features go in the daemon plus the protocol types. Frontends only render them.
   is rendered with react-markdown (no raw HTML); links open in the system browser.
 - Every place a model is chosen or used shows its locality (`LocalityBadge`). Cloud use
   must always be visible to the user.
+- Look and feel ("Midnight", light edition): tokens live in `src/index.css` (`--canvas`,
+  `--subtle`, `--faint`, `--lime*`, and the fixed data-flow colours `--private*` teal,
+  `--network*` blue, `--cloud*` amber). Geist and Geist Mono are bundled via
+  `@fontsource-variable`, never loaded from a CDN. Lime is the signature accent: use it
+  sparingly (send, best-fit, progress). Mono uppercase labels for section headings. Copy
+  is plain language: "model source" not "provider", no URLs unless the user typed one.
+- Navigation: three sections (Chat, Connections, Models) in the top bar, conversations
+  behind Ctrl/⌘K, settings in a dialog. The URL hash holds the route (`#/models`,
+  `#/chat/<id>`). Setup is the Models page in setup mode until a model is chosen.
+- Integrations come from the daemon's catalog (`GET /v1/integrations`); list new ones
+  there with status `coming_soon` until their connection flow exists.
 
 ## Commands
 
@@ -84,6 +95,12 @@ HEARTH_HOME=/tmp/h1 ...  # any other isolated instance
 When testing `pnpm dev` from an agent session, stop it by exact PID or by the
 `setsid` process group. Never `pkill -f` with a pattern that could match other
 projects' processes or the current shell's own command line.
+
+To check UI changes visually, run a throwaway daemon (scratch `HEARTH_HOME`,
+`HEARTH_KEY_STORE=file`, its own `HEARTH_PORT`), `pnpm build`, and drive the web UI with
+`node scripts/ui-check.mjs` (headless Chromium: screenshots, clicks, keys, computed
+styles). Chromium's one-shot `--screenshot` flag can capture transitions mid-way; use the
+script instead.
 
 The dev machine is the user's own desktop, in use while you work. Before sending input
 (`wtype`) confirm the app window is focused (`hyprctl activewindow`), and only screenshot

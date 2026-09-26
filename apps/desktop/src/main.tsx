@@ -1,29 +1,18 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import "@fontsource-variable/geist";
+import "@fontsource-variable/geist-mono";
 
 import App from "./App";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import type { DaemonError } from "@/lib/api";
 import { useDaemonSync } from "@/lib/events";
 import "./index.css";
 
-// Follow the OS light/dark setting until there's an in-app preference.
-const dark = window.matchMedia("(prefers-color-scheme: dark)");
-const applyTheme = () => document.documentElement.classList.toggle("dark", dark.matches);
-applyTheme();
-dark.addEventListener("change", applyTheme);
-
 // Daemon events keep the cache fresh, so refetching on focus is unnecessary.
 const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      refetchOnWindowFocus: false,
-      // Retrying won't sign a browser in.
-      retry: (count, err) => (err as DaemonError).kind !== "unauthorized" && count < 1,
-    },
-  },
+  defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } },
 });
 
 function Root() {

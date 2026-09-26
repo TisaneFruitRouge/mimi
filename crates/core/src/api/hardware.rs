@@ -90,5 +90,35 @@ pub async fn recommendations(State(state): State<Arc<AppState>>) -> ApiResult<Re
         })
         .collect();
 
-    Ok(Json(recommend::recommend(hardware, available, detected)))
+    // The first private source that can download models, preferring this computer.
+    let mut download_provider_id = None;
+    for locality in [Locality::Device, Locality::Network] {
+        for p in private.iter().filter(|p| p.locality == locality) {
+            let Ok(Some(record)) = store::get(&state.db, p.id).await else {
+                continue;
+            };
+            if let Ok(client) = providers::connect(&state.http, &record)
+                && client.is_ollama().await
+            {
+                download_provider_id = Some(p.id);
+                break;
+            }
+        }
+        if download_provider_id.is_some() {
+            break;
+        }
+    }
+
+    let mut rec = recommend::recommend(hardware, available, detected);
+    rec.download_provider_id = download_provider_id;
+    Ok(Json(rec))
+}
+
+/// Every model in the catalog, so clients can show friendly names and descriptions.
+pub async fn catalog() -> Json<Vec<hearth_protocol::CatalogModel>> {
+    Json(recommend::catalog_models())
+}
+
+pub async fn integrations() -> Json<Vec<hearth_protocol::Integration>> {
+    Json(crate::integrations::catalog())
 }

@@ -8,14 +8,22 @@ export const useSettings = () => useQuery({ queryKey: keys.settings, queryFn: ap
 export const useProviders = () => useQuery({ queryKey: keys.providers, queryFn: api.providers });
 export const useConversations = () =>
   useQuery({ queryKey: keys.conversations, queryFn: api.conversations });
+export const useRecommendations = () =>
+  useQuery({ queryKey: keys.recommendations, queryFn: api.recommendations, staleTime: 30_000 });
+export const usePulls = () => useQuery({ queryKey: keys.pulls, queryFn: api.pulls });
+export const useIntegrations = () =>
+  useQuery({ queryKey: keys.integrations, queryFn: api.integrations, staleTime: Infinity });
+const useCatalog = () =>
+  useQuery({ queryKey: keys.catalog, queryFn: api.catalog, staleTime: Infinity });
 
 export interface ModelOption {
   ref: ModelRef;
   providerName: string;
   locality: Locality;
+  sizeBytes: number | null;
 }
 
-/** Every model from every configured provider, grouped by provider order. */
+/** Every model from every configured model source, in source order. */
 export function useAllModels() {
   const providers = useProviders().data ?? [];
   const results = useQueries({
@@ -31,6 +39,7 @@ export function useAllModels() {
       ref: { provider_id: p.id, model: m.id },
       providerName: p.name,
       locality: p.locality,
+      sizeBytes: m.size_bytes,
     })),
   );
   const failed = providers.filter((_, i) => results[i]?.isError);
@@ -39,3 +48,32 @@ export function useAllModels() {
 
 export const sameModel = (a: ModelRef | null | undefined, b: ModelRef | null | undefined) =>
   !!a && !!b && a.provider_id === b.provider_id && a.model === b.model;
+
+/** Friendly name and description for a model id, from the catalog when it's known. */
+export function useModelInfo() {
+  const catalog = useCatalog().data ?? [];
+  return (id: string) => {
+    const known = catalog.find((m) => m.id === id || m.id === id.replace(/:latest$/, ""));
+    return {
+      name: known?.name ?? prettify(id),
+      description: known?.description ?? null,
+    };
+  };
+}
+
+function prettify(id: string) {
+  // "llama3.2:3b" -> "llama3.2 3B"; unknown ids stay recognizable.
+  const [base, tag] = id.split("/").pop()!.split(":");
+  return tag && tag !== "latest" ? `${base} ${tag.toUpperCase()}` : base;
+}
+
+/** The active model with where it runs, or null before setup. */
+export function useActiveModel() {
+  const settings = useSettings().data;
+  const providers = useProviders().data ?? [];
+  const info = useModelInfo();
+  const ref = settings?.default_model ?? null;
+  const provider = providers.find((p) => p.id === ref?.provider_id) ?? null;
+  if (!ref || !provider) return null;
+  return { ref, provider, ...info(ref.model) };
+}

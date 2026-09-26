@@ -103,6 +103,42 @@ impl OpenAiCompatible {
         Ok(models)
     }
 
+    /// Where Ollama's native API would be, next to its OpenAI-compatible `/v1`.
+    fn ollama_root(&self) -> Option<&str> {
+        self.base_url
+            .as_str()
+            .trim_end_matches('/')
+            .strip_suffix("/v1")
+    }
+
+    /// Whether this source is Ollama, which can download models.
+    pub async fn is_ollama(&self) -> bool {
+        let Some(root) = self.ollama_root() else {
+            return false;
+        };
+        self.request(reqwest::Method::GET, format!("{root}/api/version"))
+            .timeout(Duration::from_secs(3))
+            .send()
+            .await
+            .is_ok_and(|r| r.status().is_success())
+    }
+
+    /// Starts an Ollama model download. The response streams NDJSON progress lines.
+    pub async fn start_pull(&self, model: &str) -> Result<reqwest::Response, ProviderError> {
+        let Some(root) = self.ollama_root() else {
+            return Err(ProviderError::Status(
+                "This model source can't download models.".to_owned(),
+            ));
+        };
+        let res = self
+            .request(reqwest::Method::POST, format!("{root}/api/pull"))
+            .json(&serde_json::json!({ "model": model, "stream": true }))
+            .send()
+            .await
+            .map_err(|e| self.send_error(e))?;
+        check(res).await
+    }
+
     /// Ollama reports model sizes on its native API, next to the OpenAI one. Anything
     /// else answers 404, and we go without.
     async fn ollama_sizes(&self) -> Vec<(String, u64)> {

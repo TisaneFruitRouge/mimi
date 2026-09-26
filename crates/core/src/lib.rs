@@ -12,6 +12,7 @@ pub mod db;
 pub mod events;
 mod fsutil;
 pub mod hardware;
+pub mod integrations;
 pub mod keys;
 pub mod providers;
 pub mod settings;
@@ -32,6 +33,7 @@ pub struct AppState {
     /// The port actually bound, for login links and the Host/Origin checks.
     pub port: u16,
     pub login_codes: web::LoginCodes,
+    pub pulls: providers::pull::Pulls,
 }
 
 impl AppState {
@@ -56,6 +58,7 @@ impl AppState {
             generations: Default::default(),
             port,
             login_codes: Default::default(),
+            pulls: Default::default(),
         }
     }
 }

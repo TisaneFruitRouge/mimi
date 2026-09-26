@@ -3,7 +3,7 @@ use ts_rs::TS;
 
 use uuid::Uuid;
 
-use crate::{Conversation, Message, Provider, Settings};
+use crate::{Conversation, Message, ModelPull, Provider, Settings};
 
 /// Pushed by the daemon to every client connected to `GET /v1/events` (WebSocket, one
 /// JSON event per text frame).
@@ -34,6 +34,10 @@ pub enum Event {
         message_id: Uuid,
         content: String,
         reasoning: String,
+    },
+    /// A model download started, progressed or finished.
+    ModelPull {
+        pull: ModelPull,
     },
     /// This client fell behind and missed events. Refetch any state you display.
     Resync,

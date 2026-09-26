@@ -6,6 +6,7 @@ use hearth_protocol::{Locality, ProviderPreset};
 use reqwest::Url;
 
 pub mod openai;
+pub mod pull;
 pub mod store;
 
 pub use openai::{ChatChunk, ChatMessage, OpenAiCompatible, ProviderError, Role};

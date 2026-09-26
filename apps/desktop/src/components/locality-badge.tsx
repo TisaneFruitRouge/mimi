@@ -5,40 +5,39 @@ import type { Locality } from "@/bindings/Locality";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { localityExplanation, localityLabel } from "@/lib/format";
 
-const styles: Record<Locality, string> = {
-  device: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-  network: "bg-sky-500/10 text-sky-700 dark:text-sky-400",
-  cloud: "bg-amber-500/15 text-amber-800 dark:text-amber-400",
+export const localityStyles: Record<Locality, string> = {
+  device: "bg-private-soft text-private",
+  network: "bg-network-soft text-network",
+  cloud: "bg-cloud-soft text-cloud",
 };
 
-const icons: Record<Locality, typeof Cloud> = {
-  device: ShieldCheck,
-  network: House,
-  cloud: Cloud,
+export const LocalityIcon = ({ locality, className }: { locality: Locality; className?: string }) => {
+  const Icon = { device: ShieldCheck, network: House, cloud: Cloud }[locality];
+  return <Icon className={className} />;
 };
 
 export function LocalityBadge({
   locality,
+  label,
   className,
-  compact = false,
 }: {
   locality: Locality;
+  /** Overrides the default label. */
+  label?: string;
   className?: string;
-  compact?: boolean;
 }) {
-  const Icon = icons[locality];
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <span
           className={cn(
-            "inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
-            styles[locality],
+            "inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium",
+            localityStyles[locality],
             className,
           )}
         >
-          <Icon className="size-3" />
-          {!compact && localityLabel[locality]}
+          <LocalityIcon locality={locality} className="size-3.5" />
+          {label ?? localityLabel[locality]}
         </span>
       </TooltipTrigger>
       <TooltipContent className="max-w-64">{localityExplanation[locality]}</TooltipContent>

@@ -1,6 +1,9 @@
 import type { Conversation } from "@/bindings/Conversation";
 import type { ConversationDetail } from "@/bindings/ConversationDetail";
+import type { CatalogModel } from "@/bindings/CatalogModel";
 import type { HardwareInfo } from "@/bindings/HardwareInfo";
+import type { Integration } from "@/bindings/Integration";
+import type { ModelPull } from "@/bindings/ModelPull";
 import type { ModelInfo } from "@/bindings/ModelInfo";
 import type { NewProvider } from "@/bindings/NewProvider";
 import type { ProbeResult } from "@/bindings/ProbeResult";
@@ -54,6 +57,12 @@ export const api = {
   removeProvider: (id: string) => call<null>("DELETE", `/providers/${id}`),
   models: (providerId: string) => call<ModelInfo[]>("GET", `/providers/${providerId}/models`),
 
+  pull: (providerId: string, model: string) =>
+    call<ModelPull>("POST", `/providers/${providerId}/pull`, { model }),
+  pulls: () => call<ModelPull[]>("GET", "/pulls"),
+  catalog: () => call<CatalogModel[]>("GET", "/catalog"),
+  integrations: () => call<Integration[]>("GET", "/integrations"),
+
   hardware: () => call<HardwareInfo>("GET", "/hardware"),
   recommendations: () => call<Recommendations>("GET", "/recommendations"),
 
@@ -77,6 +86,9 @@ export const keys = {
   models: (providerId: string) => ["models", providerId] as const,
   allModels: ["models"] as const,
   recommendations: ["recommendations"] as const,
+  pulls: ["pulls"] as const,
+  catalog: ["catalog"] as const,
+  integrations: ["integrations"] as const,
   conversations: ["conversations"] as const,
   conversation: (id: string) => ["conversation", id] as const,
 };

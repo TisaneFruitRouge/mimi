@@ -33,6 +33,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             axum::routing::patch(providers::update).delete(providers::delete),
         )
         .route("/providers/{id}/models", get(providers::models))
+        .route("/providers/{id}/pull", post(providers::pull))
+        .route("/pulls", get(providers::pulls))
+        .route("/catalog", get(hardware::catalog))
+        .route("/integrations", get(hardware::integrations))
         .route("/hardware", get(hardware::get))
         .route("/recommendations", get(hardware::recommendations))
         .route(

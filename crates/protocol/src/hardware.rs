@@ -78,6 +78,8 @@ pub struct Recommendations {
     pub suggested: Vec<CatalogModel>,
     /// Local model servers found running on this computer.
     pub detected_servers: Vec<DetectedServer>,
+    /// A configured model source that can download `suggested` models, if any.
+    pub download_provider_id: Option<uuid::Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

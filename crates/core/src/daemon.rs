@@ -73,6 +73,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         generations: Default::default(),
         port,
         login_codes: Default::default(),
+        pulls: Default::default(),
     });
     tracing::info!(port, "hearth daemon listening on 127.0.0.1");
 

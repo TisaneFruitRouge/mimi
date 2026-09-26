@@ -29,4 +29,8 @@ suggested: Array<CatalogModel>,
 /**
  * Local model servers found running on this computer.
  */
-detected_servers: Array<DetectedServer>, };
+detected_servers: Array<DetectedServer>, 
+/**
+ * A configured model source that can download `suggested` models, if any.
+ */
+download_provider_id: string | null, };

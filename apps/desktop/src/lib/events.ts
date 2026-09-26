@@ -5,6 +5,7 @@ import type { Conversation } from "@/bindings/Conversation";
 import type { ConversationDetail } from "@/bindings/ConversationDetail";
 import type { Event } from "@/bindings/Event";
 import type { Message } from "@/bindings/Message";
+import type { ModelPull } from "@/bindings/ModelPull";
 import { keys } from "@/lib/api";
 import { subscribe } from "@/lib/transport";
 
@@ -91,6 +92,20 @@ function apply(qc: QueryClient, event: Event) {
           : d,
       );
       break;
+    case "model_pull": {
+      const { pull } = event;
+      const same = (p: ModelPull) => p.provider_id === pull.provider_id && p.model === pull.model;
+      qc.setQueryData<ModelPull[]>(keys.pulls, (list = []) =>
+        pull.state === "running"
+          ? [...list.filter((p) => !same(p)), pull]
+          : list.map((p) => (same(p) ? pull : p)),
+      );
+      if (pull.state === "done") {
+        qc.invalidateQueries({ queryKey: keys.allModels });
+        qc.invalidateQueries({ queryKey: keys.recommendations });
+      }
+      break;
+    }
     case "resync":
       qc.invalidateQueries();
       break;
