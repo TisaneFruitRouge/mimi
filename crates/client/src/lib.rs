@@ -3,11 +3,15 @@
 
 use futures::StreamExt;
 use futures::stream::BoxStream;
-use hearth_protocol::{API_PREFIX, ApiError, Discovery, Event, Health, Paths, Settings, Status};
+use hearth_protocol::{
+    API_PREFIX, ApiError, Discovery, Event, Health, ModelInfo, NewProvider, Paths, ProbeRequest,
+    ProbeResult, Provider, ProviderPreset, Settings, Status,
+};
 pub use reqwest::Method;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio_tungstenite::tungstenite::{self, Message, client::IntoClientRequest};
+use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -75,6 +79,37 @@ impl Client {
 
     pub async fn put_settings(&self, settings: &Settings) -> Result<Settings, Error> {
         self.send(Method::PUT, "/settings", Some(settings)).await
+    }
+
+    pub async fn providers(&self) -> Result<Vec<Provider>, Error> {
+        self.send(Method::GET, "/providers", None::<()>).await
+    }
+
+    pub async fn provider_presets(&self) -> Result<Vec<ProviderPreset>, Error> {
+        self.send(Method::GET, "/providers/presets", None::<()>)
+            .await
+    }
+
+    pub async fn probe_provider(&self, req: &ProbeRequest) -> Result<ProbeResult, Error> {
+        self.send(Method::POST, "/providers/probe", Some(req)).await
+    }
+
+    pub async fn add_provider(&self, new: &NewProvider) -> Result<Provider, Error> {
+        self.send(Method::POST, "/providers", Some(new)).await
+    }
+
+    pub async fn remove_provider(&self, id: Uuid) -> Result<(), Error> {
+        self.send(Method::DELETE, &format!("/providers/{id}"), None::<()>)
+            .await
+    }
+
+    pub async fn models(&self, provider_id: Uuid) -> Result<Vec<ModelInfo>, Error> {
+        self.send(
+            Method::GET,
+            &format!("/providers/{provider_id}/models"),
+            None::<()>,
+        )
+        .await
     }
 
     /// Untyped request to any `/v1` route. `path` excludes the `/v1` prefix.

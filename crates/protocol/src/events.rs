@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::Settings;
+use crate::{Provider, Settings};
 
 /// Pushed by the daemon to every client connected to `GET /v1/events` (WebSocket, one
 /// JSON event per text frame).
@@ -11,6 +11,9 @@ use crate::Settings;
 pub enum Event {
     SettingsChanged {
         settings: Settings,
+    },
+    ProvidersChanged {
+        providers: Vec<Provider>,
     },
     /// This client fell behind and missed events. Refetch any state you display.
     Resync,

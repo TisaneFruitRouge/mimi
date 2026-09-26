@@ -6,7 +6,7 @@ use axum::extract::{Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use hearth_protocol::{API_PREFIX, Health, Status};
 
@@ -14,6 +14,7 @@ use crate::{AppState, VERSION};
 
 pub mod error;
 mod events;
+mod providers;
 mod settings;
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -21,6 +22,14 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/status", get(status))
         .route("/settings", get(settings::get).put(settings::put))
         .route("/events", get(events::subscribe))
+        .route("/providers", get(providers::list).post(providers::create))
+        .route("/providers/presets", get(providers::presets))
+        .route("/providers/probe", post(providers::probe))
+        .route(
+            "/providers/{id}",
+            axum::routing::patch(providers::update).delete(providers::delete),
+        )
+        .route("/providers/{id}/models", get(providers::models))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
 
     Router::new()

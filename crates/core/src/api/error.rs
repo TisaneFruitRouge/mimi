@@ -46,6 +46,12 @@ impl AppError {
     }
 }
 
+impl From<crate::providers::ProviderError> for AppError {
+    fn from(err: crate::providers::ProviderError) -> Self {
+        Self::new(StatusCode::BAD_GATEWAY, "provider_error", err.to_string())
+    }
+}
+
 impl From<DbError> for AppError {
     fn from(err: DbError) -> Self {
         Self::internal(err)

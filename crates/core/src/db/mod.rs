@@ -7,7 +7,10 @@ use rusqlite::Connection;
 
 /// Applied in order; `PRAGMA user_version` records how many have run. Never edit a
 /// migration that has shipped: add a new one.
-const MIGRATIONS: &[&str] = &[include_str!("migrations/0001_settings.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("migrations/0001_settings.sql"),
+    include_str!("migrations/0002_providers.sql"),
+];
 
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
@@ -82,6 +85,32 @@ fn migrate(conn: &mut Connection) -> rusqlite::Result<()> {
         tracing::info!(version = i, "applied database migration");
     }
     Ok(())
+}
+
+// Enums are stored as their serde names, so the database and the API agree.
+
+pub fn enum_str<T: serde::Serialize>(value: T) -> String {
+    match serde_json::to_value(value) {
+        Ok(serde_json::Value::String(s)) => s,
+        _ => unreachable!("stored enums serialize to strings"),
+    }
+}
+
+pub fn parse_enum<T: serde::de::DeserializeOwned>(
+    row: &rusqlite::Row,
+    idx: usize,
+) -> rusqlite::Result<T> {
+    let raw: String = row.get(idx)?;
+    serde_json::from_value(serde_json::Value::String(raw)).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(idx, rusqlite::types::Type::Text, Box::new(e))
+    })
+}
+
+pub fn parse_uuid(row: &rusqlite::Row, idx: usize) -> rusqlite::Result<uuid::Uuid> {
+    let raw: String = row.get(idx)?;
+    raw.parse().map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(idx, rusqlite::types::Type::Text, Box::new(e))
+    })
 }
 
 #[cfg(test)]

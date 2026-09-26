@@ -21,6 +21,15 @@ pub async fn put(
             "The assistant's name must be between 1 and 40 characters.",
         ));
     }
+    if let Some(model) = &new.default_model
+        && crate::providers::store::get(&state.db, model.provider_id)
+            .await?
+            .is_none()
+    {
+        return Err(AppError::bad_request(
+            "The chosen model's provider doesn't exist.",
+        ));
+    }
     settings::save(&state.db, &new).await?;
     state.events.publish(Event::SettingsChanged {
         settings: new.clone(),
