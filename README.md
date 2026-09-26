@@ -25,21 +25,14 @@ Requirements: Rust (stable), Node 22+, pnpm. On Linux, also the
 
 ```sh
 pnpm install
-cargo run -p hearth-core --bin hearthd   # start the daemon
-pnpm dev                                  # desktop app, in another terminal
-cargo run -p hearth-cli -- status         # CLI
+pnpm dev              # daemon + desktop app; closing the app or Ctrl+C stops both
+pnpm hearth status    # CLI, talking to the dev daemon
+pnpm check            # fmt, clippy, tests, typecheck (same as CI)
 ```
 
-To run an isolated instance, set `HEARTH_HOME=/some/dir`.
-
-Checks (same as CI):
-
-```sh
-cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-pnpm typecheck
-```
+`pnpm dev` keeps its data in `.dev/` at the repo root, separate from a real install.
+To run the pieces on their own: `pnpm dev:daemon`, `pnpm dev:app`. Set
+`HEARTH_HOME=/some/dir` for any other isolated instance.
 
 See [docs/architecture.md](docs/architecture.md) for how the pieces fit together.
 

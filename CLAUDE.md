@@ -49,13 +49,16 @@ features go in the daemon plus the protocol types. Frontends only render them.
 ## Commands
 
 ```sh
-cargo run -p hearth-core --bin hearthd      # daemon
-pnpm dev                                    # desktop app (tauri dev)
-cargo run -p hearth-cli -- status           # CLI
-HEARTH_HOME=/tmp/h1 ...                     # isolated instance
-cargo fmt --all && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
-pnpm typecheck
+pnpm dev                 # daemon + desktop app together, data in .dev/
+pnpm dev:daemon          # daemon only (pnpm dev:app for the app only)
+pnpm hearth <args>       # CLI against the .dev/ instance
+pnpm check               # fmt, clippy, tests, typecheck (what CI runs)
+HEARTH_HOME=/tmp/h1 ...  # any other isolated instance
 ```
+
+When testing `pnpm dev` from an agent session, stop it by exact PID or by the
+`setsid` process group. Never `pkill -f` with a pattern that could match other
+projects' processes or the current shell's own command line.
 
 Rust comes from mise on the dev machine (`eval "$(mise env -s bash)"` if `cargo` is not
 on PATH).

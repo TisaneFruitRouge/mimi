@@ -4,8 +4,15 @@
   "license": "AGPL-3.0-or-later",
   "packageManager": "pnpm@10.28.2",
   "scripts": {
-    "dev": "pnpm --filter @hearth/desktop tauri dev",
+    "dev": "HEARTH_HOME=\"$PWD/.dev\" concurrently --kill-others --names daemon,app --prefix-colors yellow,cyan \"pnpm dev:daemon\" \"pnpm dev:app\"",
+    "dev:daemon": "cargo run -p hearth-core --bin hearthd",
+    "dev:app": "pnpm --filter @hearth/desktop tauri dev",
+    "hearth": "HEARTH_HOME=\"$PWD/.dev\" cargo run -q -p hearth-cli --",
     "build": "pnpm --filter @hearth/desktop build",
-    "typecheck": "pnpm --filter @hearth/desktop typecheck"
+    "typecheck": "pnpm --filter @hearth/desktop typecheck",
+    "check": "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace && pnpm typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5"
   }
 }
