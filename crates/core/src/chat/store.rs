@@ -1,4 +1,4 @@
-use hearth_protocol::{Conversation, Message, MessageStatus, ModelRef};
+use hearth_protocol::{Action, ActionStatus, Conversation, Message, MessageStatus, ModelRef};
 use rusqlite::{OptionalExtension, Row};
 use uuid::Uuid;
 
@@ -13,7 +13,7 @@ fn conversation(row: &Row) -> rusqlite::Result<Conversation> {
     })
 }
 
-const MESSAGE_COLUMNS: &str = "id, conversation_id, role, content, reasoning, status, provider_id, model, locality, error, created_at";
+const MESSAGE_COLUMNS: &str = "id, conversation_id, role, content, reasoning, status, provider_id, model, locality, error, created_at, actions";
 
 fn message(row: &Row) -> rusqlite::Result<Message> {
     let provider_id: Option<String> = row.get(6)?;
@@ -45,6 +45,16 @@ fn message(row: &Row) -> rusqlite::Result<Message> {
         },
         error: row.get(9)?,
         created_at: row.get(10)?,
+        actions: {
+            let raw: String = row.get(11)?;
+            serde_json::from_str(&raw).map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    11,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })?
+        },
     })
 }
 
@@ -107,10 +117,10 @@ pub async fn upsert_message(db: &Db, m: Message) -> Result<(), DbError> {
         c.execute(
             &format!(
                 "INSERT INTO messages ({MESSAGE_COLUMNS})
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                  ON CONFLICT (id) DO UPDATE SET content = excluded.content,
                      reasoning = excluded.reasoning, status = excluded.status,
-                     error = excluded.error"
+                     error = excluded.error, actions = excluded.actions"
             ),
             rusqlite::params![
                 m.id.to_string(),
@@ -124,6 +134,7 @@ pub async fn upsert_message(db: &Db, m: Message) -> Result<(), DbError> {
                 m.locality.map(enum_str),
                 m.error,
                 m.created_at,
+                serde_json::to_string(&m.actions).expect("actions serialize"),
             ],
         )?;
         Ok(())
@@ -131,16 +142,41 @@ pub async fn upsert_message(db: &Db, m: Message) -> Result<(), DbError> {
     .await
 }
 
-/// Messages still marked as streaming belong to a daemon that stopped mid-reply.
+/// Messages still marked as streaming belong to a daemon that stopped mid-reply. Their
+/// unfinished actions (including ones awaiting approval) are marked failed: nothing is
+/// waiting for them anymore, and they must not run later.
 pub async fn mark_interrupted(db: &Db) -> Result<usize, DbError> {
     db.call(|c| {
-        c.execute(
-            "UPDATE messages SET status = ?1 WHERE status = ?2",
-            (
-                enum_str(MessageStatus::Interrupted),
-                enum_str(MessageStatus::Streaming),
-            ),
-        )
+        let tx = c.transaction()?;
+        let rows: Vec<(String, String)> = {
+            let mut stmt = tx.prepare("SELECT id, actions FROM messages WHERE status = ?1")?;
+            stmt.query_map([enum_str(MessageStatus::Streaming)], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?
+            .collect::<Result<_, _>>()?
+        };
+        for (id, raw) in &rows {
+            let mut actions: Vec<Action> = serde_json::from_str(raw).unwrap_or_default();
+            for a in &mut actions {
+                if matches!(
+                    a.status,
+                    ActionStatus::PendingApproval | ActionStatus::Approved | ActionStatus::Running
+                ) {
+                    a.status = ActionStatus::Failed;
+                    a.error = Some("Hearth stopped before this finished.".to_owned());
+                }
+            }
+            tx.execute(
+                "UPDATE messages SET status = ?1, actions = ?2 WHERE id = ?3",
+                (
+                    enum_str(MessageStatus::Interrupted),
+                    serde_json::to_string(&actions).expect("actions serialize"),
+                    id,
+                ),
+            )?;
+        }
+        tx.commit()?;
+        Ok(rows.len())
     })
     .await
 }

@@ -74,6 +74,33 @@ Rust side makes the request.
 
 `HEARTH_HOME` overrides all paths, which lets you run isolated instances in development.
 
+## Tools and approvals
+
+A reply is a loop of model rounds (`chat::Turn`). Each round streams from the model
+with the available tools offered (`tools::ToolSources` → a per-reply `ToolRegistry`).
+When the model asks for tools, each call becomes an `Action` on the assistant message:
+
+- **Reads** run immediately.
+- **Anything that sends, changes or deletes** waits as `pending_approval`. The reply
+  pauses until `POST /v1/actions/{id}/approve` (optionally with edited arguments) or
+  `/reject`. A declined action doesn't run, and the model is told so.
+- Results go back to the model as `role: "tool"` messages, and the next round starts,
+  up to 8 rounds. After that the model is asked once more without tools, so it must
+  answer in words.
+
+Details:
+
+- **State updates:** action changes reach clients as `message_updated` events.
+- **Position in the text:** each action records `content_offset`, how far into the
+  reply's text it happened, so clients show text and cards in order.
+- **History:** history replays past tool calls and results, so follow-ups work.
+- **Stopping:** cancelling a reply while it waits for approval fails the action
+  without running it.
+- **Restarts:** actions that were pending or running are marked failed. They never
+  run later.
+- **Models without tool support:** some models reject the `tools` parameter. The
+  reply is retried once as plain chat.
+
 ## Planned
 
 - **Background service**: install `hearthd` as a systemd user unit (Linux) or a launchd

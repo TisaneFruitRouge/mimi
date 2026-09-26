@@ -55,6 +55,66 @@ pub struct Message {
     pub error: Option<String>,
     #[ts(type = "number")]
     pub created_at: i64,
+    /// Tools the assistant used, or asked permission to use, while writing this reply.
+    #[serde(default)]
+    pub actions: Vec<Action>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ActionStatus {
+    /// Waiting for the user to approve or decline it.
+    PendingApproval,
+    /// Approved; about to run.
+    Approved,
+    /// The user declined it. It did not run.
+    Rejected,
+    Running,
+    Done,
+    /// It failed, or never ran (stopped, interrupted). `error` says why.
+    Failed,
+}
+
+/// One use of a tool by the assistant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Action {
+    pub id: Uuid,
+    /// The tool's name, e.g. `calendar_create_event`.
+    pub tool: String,
+    /// One plain-language line saying what it does, for the approval card.
+    pub summary: String,
+    /// The arguments the model chose (after any edit by the user).
+    #[ts(type = "Record<string, unknown>")]
+    pub arguments: serde_json::Value,
+    /// Anything that sends, changes or deletes on the user's behalf needs approval.
+    pub requires_approval: bool,
+    pub status: ActionStatus,
+    /// Short past-tense description once done, e.g. "read calendar".
+    pub result: Option<String>,
+    pub error: Option<String>,
+    /// What the tool returned, as given back to the model.
+    #[ts(type = "unknown")]
+    pub output: Option<serde_json::Value>,
+    /// The model's id for this tool call, needed to replay the conversation to it.
+    pub call_id: String,
+    /// Which model round of the reply asked for it (0-based).
+    pub round: u32,
+    /// How much of the reply's text, in Unicode characters, came before this action,
+    /// so clients can show it in place.
+    #[serde(default)]
+    pub content_offset: u32,
+}
+
+/// Body of `POST /v1/actions/{id}/approve`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct ApproveAction {
+    /// Replaces the model's arguments, when the user edited them.
+    #[ts(type = "Record<string, unknown> | null")]
+    pub arguments: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

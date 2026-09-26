@@ -200,6 +200,7 @@ async fn mock_llm(chunks: Vec<&'static str>, delay: std::time::Duration) -> u16 
 use futures::StreamExt;
 
 struct Harness {
+    state: Arc<AppState>,
     http: reqwest::Client,
     base: String,
     ws: tokio_tungstenite::WebSocketStream<
@@ -210,7 +211,7 @@ struct Harness {
 impl Harness {
     async fn new() -> Self {
         use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-        let (port, _) = serve().await;
+        let (port, state) = serve().await;
         let mut req = format!("ws://127.0.0.1:{port}/v1/events")
             .into_client_request()
             .unwrap();
@@ -220,6 +221,7 @@ impl Harness {
         );
         let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
         Self {
+            state,
             http: reqwest::Client::new(),
             base: format!("http://127.0.0.1:{port}/v1"),
             ws,
@@ -633,5 +635,488 @@ mod web {
 
         let res = send(&app, Request::get("/v1/nope").body(Body::empty()).unwrap()).await;
         assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    }
+}
+
+// --- Tool use -----------------------------------------------------------------------
+
+mod tool_use {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use futures::future::BoxFuture;
+    use hearth_protocol::{ActionStatus, Event, MessageStatus};
+    use serde_json::{Value, json};
+
+    use super::*;
+    use crate::tools::{Tool, ToolContext, ToolSource};
+
+    /// What the scripted model answers to one request.
+    enum Reply {
+        Text(&'static str),
+        Call(&'static str, Value),
+        /// Some text, then a tool call, in one response.
+        SayThenCall(&'static str, &'static str, Value),
+        Status(u16, &'static str),
+    }
+
+    struct ScriptedLlm {
+        port: u16,
+        requests: Arc<Mutex<Vec<Value>>>,
+    }
+
+    impl ScriptedLlm {
+        fn requests(&self) -> Vec<Value> {
+            self.requests.lock().unwrap().clone()
+        }
+    }
+
+    /// A fake OpenAI-compatible server whose reply to each request is decided by
+    /// `script(request_body, how_many_requests_before)`. Records every request.
+    async fn scripted_llm(
+        script: impl Fn(&Value, usize) -> Reply + Send + Sync + 'static,
+    ) -> ScriptedLlm {
+        use axum::routing::{get, post};
+        let requests: Arc<Mutex<Vec<Value>>> = Default::default();
+        let script = Arc::new(script);
+        let recorded = requests.clone();
+        let app = Router::new()
+            .route(
+                "/v1/models",
+                get(|| async { Json(json!({"data": [{"id": "mock-model"}]})) }),
+            )
+            .route(
+                "/v1/chat/completions",
+                post(move |Json(body): Json<Value>| {
+                    let script = script.clone();
+                    let recorded = recorded.clone();
+                    async move {
+                        let n = {
+                            let mut r = recorded.lock().unwrap();
+                            r.push(body.clone());
+                            r.len() - 1
+                        };
+                        let frames: Vec<String> = match script(&body, n) {
+                            Reply::Status(code, msg) => {
+                                return Response::builder()
+                                    .status(code)
+                                    .header(header::CONTENT_TYPE, "application/json")
+                                    .body(Body::from(json!({"error": {"message": msg}}).to_string()))
+                                    .unwrap();
+                            }
+                            Reply::Text(t) => vec![json!({"choices": [{"delta": {"content": t}}]}).to_string()],
+                            Reply::Call(name, args) | Reply::SayThenCall(_, name, args) => {
+                                // Arguments arrive in fragments, as real servers send them.
+                                let args = args.to_string();
+                                let (a, b) = args.split_at(args.len() / 2);
+                                let say = match script(&body, n) {
+                                    Reply::SayThenCall(t, ..) => Some(json!({"choices": [{"delta": {"content": t}}]}).to_string()),
+                                    _ => None,
+                                };
+                                say.into_iter().chain([
+                                    json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": format!("call_{n}"), "type": "function", "function": {"name": name, "arguments": a}}]}}]}).to_string(),
+                                    json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": b}}]}}]}).to_string(),
+                                ]).collect()
+                            }
+                        };
+                        let body: String = frames
+                            .into_iter()
+                            .map(|f| format!("data: {f}\n\n"))
+                            .chain(["data: [DONE]\n\n".to_owned()])
+                            .collect();
+                        Response::builder()
+                            .header(header::CONTENT_TYPE, "text/event-stream")
+                            .body(Body::from(body))
+                            .unwrap()
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        ScriptedLlm { port, requests }
+    }
+
+    struct TestTool {
+        name: &'static str,
+        approval: bool,
+        runs: Arc<AtomicUsize>,
+    }
+
+    impl Tool for TestTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn description(&self) -> &str {
+            "A test tool."
+        }
+        fn parameters(&self) -> Value {
+            json!({"type": "object", "properties": {}})
+        }
+        fn needs_approval(&self, _: &Value) -> bool {
+            self.approval
+        }
+        fn summary(&self, args: &Value) -> String {
+            format!("{} with {args}", self.name)
+        }
+        fn result_label(&self, _: &Value, _: &Value) -> String {
+            format!("ran {}", self.name)
+        }
+        fn run<'a>(
+            &'a self,
+            _: &'a ToolContext,
+            args: Value,
+        ) -> BoxFuture<'a, Result<Value, String>> {
+            self.runs.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move { Ok(json!({"answer": 42, "args": args})) })
+        }
+    }
+
+    struct Source(Vec<Arc<dyn Tool>>);
+
+    impl ToolSource for Source {
+        fn tools<'a>(&'a self, _: &'a AppState) -> BoxFuture<'a, Vec<Arc<dyn Tool>>> {
+            let tools = self.0.clone();
+            Box::pin(async move { tools })
+        }
+    }
+
+    /// Sets up a harness whose model is `llm`, with a read tool `lookup` and an
+    /// approval tool `send_note`. Returns run counters for both.
+    async fn setup(llm: &ScriptedLlm) -> (Harness, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+        let h = Harness::new().await;
+        h.use_mock(llm.port).await;
+        let (reads, writes) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        h.state.tool_sources.add(Arc::new(Source(vec![
+            Arc::new(TestTool {
+                name: "lookup",
+                approval: false,
+                runs: reads.clone(),
+            }),
+            Arc::new(TestTool {
+                name: "send_note",
+                approval: true,
+                runs: writes.clone(),
+            }),
+        ])));
+        (h, reads, writes)
+    }
+
+    impl Harness {
+        /// Starts a conversation with `content`; returns (conversation id, reply id).
+        async fn start(&self, content: &str) -> (String, String) {
+            let (_, conv) = self
+                .call(reqwest::Method::POST, "/conversations", json!({}))
+                .await;
+            let conv_id = conv["id"].as_str().unwrap().to_owned();
+            let (status, sent) = self
+                .call(
+                    reqwest::Method::POST,
+                    &format!("/conversations/{conv_id}/messages"),
+                    json!({"content": content}),
+                )
+                .await;
+            assert_eq!(status, 200, "{sent}");
+            (
+                conv_id,
+                sent["assistant_message"]["id"].as_str().unwrap().to_owned(),
+            )
+        }
+
+        /// Waits until the reply shows an approval card; returns the action id.
+        async fn wait_for_pending(&mut self, message_id: &str) -> String {
+            loop {
+                let frame =
+                    tokio::time::timeout(std::time::Duration::from_secs(10), self.ws.next())
+                        .await
+                        .expect("timed out waiting for an approval card")
+                        .unwrap()
+                        .unwrap();
+                if let Event::MessageUpdated { message } =
+                    serde_json::from_str(frame.to_text().unwrap()).unwrap()
+                    && message.id.to_string() == message_id
+                    && let Some(a) = message
+                        .actions
+                        .iter()
+                        .find(|a| a.status == ActionStatus::PendingApproval)
+                {
+                    return a.id.to_string();
+                }
+            }
+        }
+    }
+
+    fn has_tools(req: &Value) -> bool {
+        req.get("tools")
+            .is_some_and(|t| t.as_array().is_some_and(|a| !a.is_empty()))
+    }
+
+    fn tool_messages(req: &Value) -> Vec<Value> {
+        req["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| m["role"] == "tool")
+            .cloned()
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn read_tool_runs_and_its_result_goes_back_to_the_model() {
+        let llm = scripted_llm(|_, n| match n {
+            0 => Reply::Call("lookup", json!({"q": "cats"})),
+            _ => Reply::Text("The answer is 42."),
+        })
+        .await;
+        let (mut h, reads, _) = setup(&llm).await;
+        let (_, id) = h.start("What's the answer?").await;
+        let (reply, _) = h.wait_for_reply(&id).await;
+
+        assert_eq!(reply.status, MessageStatus::Complete);
+        assert_eq!(reply.content, "The answer is 42.");
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+        let [action] = &reply.actions[..] else {
+            panic!("{:?}", reply.actions)
+        };
+        assert_eq!(action.status, ActionStatus::Done);
+        assert!(!action.requires_approval);
+        assert_eq!(action.arguments, json!({"q": "cats"}));
+        assert_eq!(action.result.as_deref(), Some("ran lookup"));
+
+        let requests = llm.requests();
+        assert!(has_tools(&requests[0]));
+        let tools = tool_messages(&requests[1]);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["tool_call_id"], "call_0");
+        assert!(tools[0]["content"].as_str().unwrap().contains("42"));
+        assert!(
+            requests[1]["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|m| m["tool_calls"][0]["function"]["name"] == "lookup")
+        );
+
+        // The next message replays the tool call and result from history.
+        let (_, conv) = h
+            .call(reqwest::Method::GET, "/conversations", json!(null))
+            .await;
+        let conv_id = conv[0]["id"].as_str().unwrap().to_owned();
+        let (_, sent) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/conversations/{conv_id}/messages"),
+                json!({"content": "Thanks"}),
+            )
+            .await;
+        h.wait_for_reply(sent["assistant_message"]["id"].as_str().unwrap())
+            .await;
+        let replayed = tool_messages(&llm.requests()[2]);
+        assert_eq!(replayed.len(), 1);
+        assert_eq!(replayed[0]["tool_call_id"], "call_0");
+    }
+
+    #[tokio::test]
+    async fn approval_pauses_until_approved_with_edits() {
+        let llm = scripted_llm(|_, n| match n {
+            0 => Reply::SayThenCall("Sure. ", "send_note", json!({"to": "Sam", "text": "hi"})),
+            _ => Reply::Text("Sent."),
+        })
+        .await;
+        let (mut h, _, writes) = setup(&llm).await;
+        let (_, id) = h.start("Tell Sam hi").await;
+        let action = h.wait_for_pending(&id).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert_eq!(
+            writes.load(Ordering::SeqCst),
+            0,
+            "must not run before approval"
+        );
+        assert_eq!(llm.requests().len(), 1, "the turn waits");
+
+        let (status, _) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/actions/{action}/approve"),
+                json!({"arguments": {"to": "Sam", "text": "hello!"}}),
+            )
+            .await;
+        assert_eq!(status, 200);
+        let (reply, _) = h.wait_for_reply(&id).await;
+        // Text from both rounds, a paragraph apart, with the action placed between.
+        assert_eq!(reply.content, "Sure. \n\nSent.");
+        assert_eq!(reply.actions[0].content_offset, 6);
+        assert_eq!(writes.load(Ordering::SeqCst), 1);
+        assert_eq!(reply.actions[0].status, ActionStatus::Done);
+        assert_eq!(reply.actions[0].arguments["text"], "hello!");
+
+        // A decided action can't be decided again.
+        let (status, body) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/actions/{action}/approve"),
+                json!({}),
+            )
+            .await;
+        assert_eq!((status, body["code"].as_str()), (409, Some("not_waiting")));
+    }
+
+    #[tokio::test]
+    async fn rejected_action_does_not_run_and_the_model_is_told() {
+        let llm = scripted_llm(|_, n| match n {
+            0 => Reply::Call("send_note", json!({"to": "Sam"})),
+            _ => Reply::Text("Okay, I won't."),
+        })
+        .await;
+        let (mut h, _, writes) = setup(&llm).await;
+        let (_, id) = h.start("Tell Sam hi").await;
+        let action = h.wait_for_pending(&id).await;
+        let (status, _) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/actions/{action}/reject"),
+                json!(null),
+            )
+            .await;
+        assert_eq!(status, 200);
+        let (reply, _) = h.wait_for_reply(&id).await;
+        assert_eq!(reply.status, MessageStatus::Complete);
+        assert_eq!(reply.actions[0].status, ActionStatus::Rejected);
+        assert_eq!(writes.load(Ordering::SeqCst), 0);
+        let tools = tool_messages(&llm.requests()[1]);
+        assert!(tools[0]["content"].as_str().unwrap().contains("declined"));
+    }
+
+    #[tokio::test]
+    async fn models_without_tool_support_get_plain_chat() {
+        let llm = scripted_llm(|req, _| {
+            if has_tools(req) {
+                Reply::Status(
+                    400,
+                    "registry.ollama.ai/library/tiny does not support tools",
+                )
+            } else {
+                Reply::Text("Plain answer.")
+            }
+        })
+        .await;
+        let (mut h, _, _) = setup(&llm).await;
+        let (_, id) = h.start("Hello").await;
+        let (reply, _) = h.wait_for_reply(&id).await;
+        assert_eq!(reply.status, MessageStatus::Complete);
+        assert_eq!(reply.content, "Plain answer.");
+        let requests = llm.requests();
+        assert_eq!(requests.len(), 2);
+        assert!(!has_tools(&requests[1]));
+    }
+
+    #[tokio::test]
+    async fn tool_rounds_are_capped() {
+        let llm = scripted_llm(|req, _| {
+            if has_tools(req) {
+                Reply::Call("lookup", json!({}))
+            } else {
+                Reply::Text("Enough looking.")
+            }
+        })
+        .await;
+        let (mut h, reads, _) = setup(&llm).await;
+        let (_, id) = h.start("Look forever").await;
+        let (reply, _) = h.wait_for_reply(&id).await;
+        let max = crate::chat::MAX_TOOL_ROUNDS as usize;
+        assert_eq!(reply.content, "Enough looking.");
+        assert_eq!(reply.actions.len(), max);
+        assert_eq!(reads.load(Ordering::SeqCst), max);
+        let requests = llm.requests();
+        assert_eq!(requests.len(), max + 1);
+        assert!(!has_tools(requests.last().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn cancelling_while_awaiting_approval_stops_cleanly() {
+        let llm = scripted_llm(|_, _| Reply::Call("send_note", json!({"to": "Sam"}))).await;
+        let (mut h, _, writes) = setup(&llm).await;
+        let (conv, id) = h.start("Tell Sam hi").await;
+        let action = h.wait_for_pending(&id).await;
+        h.call(
+            reqwest::Method::POST,
+            &format!("/conversations/{conv}/cancel"),
+            json!(null),
+        )
+        .await;
+        let (reply, _) = h.wait_for_reply(&id).await;
+        assert_eq!(reply.status, MessageStatus::Cancelled);
+        assert_eq!(reply.actions[0].status, ActionStatus::Failed);
+        assert_eq!(writes.load(Ordering::SeqCst), 0);
+        let (status, _) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/actions/{action}/approve"),
+                json!({}),
+            )
+            .await;
+        assert_eq!(status, 409);
+    }
+
+    #[tokio::test]
+    async fn unknown_tools_and_bad_arguments_fail_without_running() {
+        let llm = scripted_llm(|_, n| match n {
+            0 => Reply::Call("does_not_exist", json!({})),
+            _ => Reply::Text("Sorry."),
+        })
+        .await;
+        let (mut h, _, _) = setup(&llm).await;
+        let (_, id) = h.start("Do something").await;
+        let (reply, _) = h.wait_for_reply(&id).await;
+        assert_eq!(reply.actions[0].status, ActionStatus::Failed);
+        assert!(
+            tool_messages(&llm.requests()[1])[0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("no tool")
+        );
+    }
+
+    #[tokio::test]
+    async fn restart_fails_actions_that_were_in_flight() {
+        let db = crate::db::Db::open_in_memory().unwrap();
+        let conv = crate::chat::new_conversation(None);
+        crate::chat::store::upsert_conversation(&db, conv.clone())
+            .await
+            .unwrap();
+        let pending = hearth_protocol::Action {
+            id: uuid::Uuid::now_v7(),
+            tool: "send_note".into(),
+            summary: "Send".into(),
+            arguments: json!({}),
+            requires_approval: true,
+            status: ActionStatus::PendingApproval,
+            result: None,
+            error: None,
+            output: None,
+            call_id: "call_0".into(),
+            round: 0,
+            content_offset: 0,
+        };
+        let message = hearth_protocol::Message {
+            id: uuid::Uuid::now_v7(),
+            conversation_id: conv.id,
+            role: hearth_protocol::MessageRole::Assistant,
+            content: String::new(),
+            reasoning: String::new(),
+            status: MessageStatus::Streaming,
+            model: None,
+            locality: None,
+            error: None,
+            created_at: 1,
+            actions: vec![pending],
+        };
+        crate::chat::store::upsert_message(&db, message)
+            .await
+            .unwrap();
+        assert_eq!(crate::chat::store::mark_interrupted(&db).await.unwrap(), 1);
+        let saved = crate::chat::store::messages(&db, conv.id).await.unwrap();
+        assert_eq!(saved[0].status, MessageStatus::Interrupted);
+        assert_eq!(saved[0].actions[0].status, ActionStatus::Failed);
     }
 }

@@ -75,6 +75,9 @@ export const api = {
   send: (id: string, msg: SendMessage) =>
     call<SendMessageResult>("POST", `/conversations/${id}/messages`, msg),
   cancel: (id: string) => call<null>("POST", `/conversations/${id}/cancel`),
+  approveAction: (id: string, args?: Record<string, unknown>) =>
+    call<null>("POST", `/actions/${id}/approve`, { arguments: args ?? null }),
+  rejectAction: (id: string) => call<null>("POST", `/actions/${id}/reject`),
 };
 
 /** Query keys, shared by queries and the event sync so they stay in step. */

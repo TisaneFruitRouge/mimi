@@ -167,6 +167,25 @@ impl Client {
         self.send(Method::POST, "/web/login-link", None::<()>).await
     }
 
+    /// Approves an action waiting for the user, optionally with edited arguments.
+    pub async fn approve_action(
+        &self,
+        id: Uuid,
+        arguments: Option<serde_json::Value>,
+    ) -> Result<(), Error> {
+        self.send(
+            Method::POST,
+            &format!("/actions/{id}/approve"),
+            Some(hearth_protocol::ApproveAction { arguments }),
+        )
+        .await
+    }
+
+    pub async fn reject_action(&self, id: Uuid) -> Result<(), Error> {
+        self.send(Method::POST, &format!("/actions/{id}/reject"), None::<()>)
+            .await
+    }
+
     /// Untyped request to any `/v1` route. `path` excludes the `/v1` prefix.
     pub async fn request_json(
         &self,

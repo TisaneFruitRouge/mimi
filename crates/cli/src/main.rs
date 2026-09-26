@@ -5,8 +5,8 @@ use hearth_client::Client;
 use std::io::{BufRead, Write};
 
 use hearth_protocol::{
-    Event, Locality, MessageStatus, ModelRef, NewConversation, NewProvider, ProbeRequest, Provider,
-    SendMessage,
+    ActionStatus, Event, Locality, MessageStatus, ModelRef, NewConversation, NewProvider,
+    ProbeRequest, Provider, SendMessage,
 };
 
 /// Command-line interface to your hearth assistant.
@@ -235,6 +235,7 @@ async fn chat(client: &Client, message: Option<String>, resume: bool) -> anyhow:
             .await?;
         let id = sent.assistant_message.id;
         let mut thinking = false;
+        let mut asked = std::collections::HashSet::new();
         while let Some(event) = events.next().await {
             match event? {
                 Event::MessageDelta {
@@ -251,8 +252,44 @@ async fn chat(client: &Client, message: Option<String>, resume: bool) -> anyhow:
                     std::io::stdout().flush()?;
                 }
                 Event::MessageUpdated { message }
+                    if message.id == id && message.status == MessageStatus::Streaming =>
+                {
+                    for a in &message.actions {
+                        if a.status != ActionStatus::PendingApproval || !asked.insert(a.id) {
+                            continue;
+                        }
+                        eprintln!("\n\x1b[1mWaiting for you:\x1b[0m {}", a.summary);
+                        if let Some(args) = a.arguments.as_object() {
+                            for (k, v) in args {
+                                eprintln!(
+                                    "  {k}: {}",
+                                    v.as_str().map_or_else(|| v.to_string(), str::to_owned)
+                                );
+                            }
+                        }
+                        eprint!("Approve? [y/N] ");
+                        let mut answer = String::new();
+                        std::io::stdin().lock().read_line(&mut answer)?;
+                        if answer.trim().eq_ignore_ascii_case("y") {
+                            client.approve_action(a.id, None).await?;
+                        } else {
+                            client.reject_action(a.id).await?;
+                        }
+                    }
+                }
+                Event::MessageUpdated { message }
                     if message.id == id && message.status != MessageStatus::Streaming =>
                 {
+                    for a in message
+                        .actions
+                        .iter()
+                        .filter(|a| a.status == ActionStatus::Done)
+                    {
+                        eprintln!(
+                            "\x1b[2m✓ {}\x1b[0m",
+                            a.result.as_deref().unwrap_or(&a.summary)
+                        );
+                    }
                     println!();
                     if let Some(err) = message.error {
                         eprintln!("error: {err}");

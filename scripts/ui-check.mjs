@@ -3,11 +3,13 @@
 //
 //   node scripts/ui-check.mjs <url> <steps.json> <chrome-profile-dir>
 //
-// Open a login link first (POST /v1/web/login-link) with the same profile dir so the
-// session cookie is set. Cookies are per host, not per port: signing in to a second
+// Sign in by passing a login link (POST /v1/web/login-link) as <url>, then use "goto"
+// steps: Chromium doesn't write cookies to the profile right away, so a separate run
+// may not be signed in. Cookies are per host, not per port: signing in to a second
 // instance on 127.0.0.1 signs the profile out of the first.
 //
 // Steps, run in order:
+//   {"goto": "url"}                                navigate in the same session
 //   {"wait": ms}
 //   {"eval": "js expression"}                      prints the JSON result
 //   {"click": {"css": "button", "text": "Save"}}   first match containing text
@@ -38,6 +40,10 @@ await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, dev
 await send("Page.navigate", { url });
 await sleep(2500);
 for (const s of steps) {
+  if (s.goto) {
+    await send("Page.navigate", { url: s.goto });
+    await sleep(2000);
+  }
   if (s.wait) await sleep(s.wait);
   if (s.eval) console.log(JSON.stringify(await evaluate(s.eval)));
   if (s.click) {

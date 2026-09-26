@@ -88,6 +88,26 @@ features go in the daemon plus the protocol types. Frontends only render them.
 - Integrations come from the daemon's catalog (`GET /v1/integrations`); list new ones
   there with status `coming_soon` until their connection flow exists.
 
+## Tools (what the assistant can do)
+
+- **Approval rule:** anything that sends, changes or deletes something on the user's
+  behalf needs approval (`Tool::needs_approval` returns true); reads don't. Never
+  weaken this for convenience; it is the main defence against prompt injection.
+- **Adding a tool:** implement `tools::Tool` (crates/core/src/tools/mod.rs): a stable
+  `snake_case` name, a description written for the model, a JSON Schema for the
+  arguments, `summary()` as one plain-language line for the approval card, and
+  `result_label()` as a short past-tense line ("read calendar"). Integrations expose
+  their tools through a `ToolSource` added to `state.tool_sources` at startup; the
+  source returns no tools while the integration is disconnected. Each reply builds a
+  fresh registry, so nothing else needs wiring.
+- Optionally add a formatter for the tool's arguments in
+  `apps/desktop/src/features/chat/action-formatters.tsx` so its approval card reads
+  well; otherwise arguments show as a tidy key/value list.
+- Tool output is given back to the model verbatim (cut at 16k characters) and stored
+  with the message, so keep it compact and free of secrets.
+- Debug builds have two fake tools (`dev_lookup`, `dev_send_note`) enabled with
+  `HEARTH_DEV_TOOLS=1`, for exercising approval cards against a scripted model.
+
 ## Commands
 
 ```sh

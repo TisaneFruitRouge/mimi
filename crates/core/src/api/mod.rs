@@ -12,6 +12,7 @@ use hearth_protocol::{API_PREFIX, Health, Status};
 
 use crate::{AppState, VERSION};
 
+mod actions;
 mod conversations;
 pub mod error;
 mod events;
@@ -51,6 +52,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/conversations/{id}/messages", post(conversations::send))
         .route("/conversations/{id}/cancel", post(conversations::cancel))
+        .route("/actions/{id}/approve", post(actions::approve))
+        .route("/actions/{id}/reject", post(actions::reject))
         .route("/web/login-link", post(web::login_link))
         .route("/web/logout", post(web::logout))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));

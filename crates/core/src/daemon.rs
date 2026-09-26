@@ -74,7 +74,16 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         port,
         login_codes: Default::default(),
         pulls: Default::default(),
+        tool_sources: Default::default(),
+        approvals: Default::default(),
     });
+    #[cfg(debug_assertions)]
+    if std::env::var(crate::tools::dev::ENV).is_ok_and(|v| v == "1") {
+        tracing::warn!("development tools enabled");
+        state
+            .tool_sources
+            .add(Arc::new(crate::tools::dev::DevTools));
+    }
     tracing::info!(port, "hearth daemon listening on 127.0.0.1");
 
     let served = axum::serve(listener, api::router(state))

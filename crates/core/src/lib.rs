@@ -16,6 +16,7 @@ pub mod integrations;
 pub mod keys;
 pub mod providers;
 pub mod settings;
+pub mod tools;
 pub mod web;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -34,6 +35,10 @@ pub struct AppState {
     pub port: u16,
     pub login_codes: web::LoginCodes,
     pub pulls: providers::pull::Pulls,
+    /// Where each reply's tools come from.
+    pub tool_sources: tools::ToolSources,
+    /// Approval cards waiting for the user.
+    pub approvals: tools::Approvals,
 }
 
 impl AppState {
@@ -59,6 +64,8 @@ impl AppState {
             port,
             login_codes: Default::default(),
             pulls: Default::default(),
+            tool_sources: Default::default(),
+            approvals: Default::default(),
         }
     }
 }

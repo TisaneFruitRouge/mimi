@@ -26,12 +26,96 @@ pub enum Role {
     System,
     User,
     Assistant,
+    Tool,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ChatMessage {
     pub role: Role,
     pub content: String,
+    /// Tools an assistant message called.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ToolCallOut>,
+    /// For `Role::Tool`: which call this is the result of.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+}
+
+impl ChatMessage {
+    pub fn text(role: Role, content: impl Into<String>) -> Self {
+        Self {
+            role,
+            content: content.into(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+        }
+    }
+
+    pub fn tool_calls(content: impl Into<String>, calls: &[ToolCall]) -> Self {
+        Self {
+            role: Role::Assistant,
+            content: content.into(),
+            tool_calls: calls
+                .iter()
+                .map(|c| ToolCallOut {
+                    id: c.id.clone(),
+                    kind: "function",
+                    function: FunctionCallOut {
+                        name: c.name.clone(),
+                        arguments: c.arguments.clone(),
+                    },
+                })
+                .collect(),
+            tool_call_id: None,
+        }
+    }
+
+    pub fn tool_result(call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: Role::Tool,
+            content: content.into(),
+            tool_calls: Vec::new(),
+            tool_call_id: Some(call_id.into()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolCallOut {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    pub function: FunctionCallOut,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FunctionCallOut {
+    pub name: String,
+    /// JSON-encoded, as the API expects.
+    pub arguments: String,
+}
+
+/// A tool offered to the model.
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolSpec {
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    pub function: FunctionSpec,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FunctionSpec {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+}
+
+/// A complete tool call from the model. `arguments` is the raw JSON text it produced.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
 }
 
 /// A piece of a streamed reply.
@@ -40,6 +124,8 @@ pub enum ChatChunk {
     Content(String),
     /// A reasoning model's thinking, shown separately from the answer.
     Reasoning(String),
+    /// The tools the model wants called. Arrives once, at the end of the stream.
+    ToolCalls(Vec<ToolCall>),
 }
 
 pub struct OpenAiCompatible {
@@ -175,17 +261,20 @@ impl OpenAiCompatible {
         }
     }
 
-    /// Streams a reply to `messages`.
+    /// Streams a reply to `messages`, offering `tools` when there are any.
     pub async fn stream_chat(
         &self,
         model: &str,
         messages: &[ChatMessage],
+        tools: &[ToolSpec],
     ) -> Result<BoxStream<'static, Result<ChatChunk, ProviderError>>, ProviderError> {
         #[derive(Serialize)]
         struct Request<'a> {
             model: &'a str,
             messages: &'a [ChatMessage],
             stream: bool,
+            #[serde(skip_serializing_if = "<[ToolSpec]>::is_empty")]
+            tools: &'a [ToolSpec],
         }
 
         let res = self
@@ -194,6 +283,7 @@ impl OpenAiCompatible {
                 model,
                 messages,
                 stream: true,
+                tools,
             })
             .send()
             .await
@@ -269,6 +359,19 @@ fn parse_sse(
         // Ollama uses `reasoning`, DeepSeek and vLLM `reasoning_content`.
         reasoning: Option<String>,
         reasoning_content: Option<String>,
+        tool_calls: Option<Vec<ToolCallDelta>>,
+    }
+    #[derive(Deserialize)]
+    struct ToolCallDelta {
+        index: Option<usize>,
+        id: Option<String>,
+        function: Option<FunctionDelta>,
+    }
+    #[derive(Deserialize)]
+    struct FunctionDelta {
+        name: Option<String>,
+        // A string fragment per the spec; some servers send the whole object.
+        arguments: Option<serde_json::Value>,
     }
 
     struct State<S> {
@@ -276,7 +379,10 @@ fn parse_sse(
         buf: Vec<u8>,
         pending: std::collections::VecDeque<Result<ChatChunk, ProviderError>>,
         think: ThinkSplitter,
+        /// Tool calls being assembled, by index: (id, name, arguments so far).
+        calls: std::collections::BTreeMap<usize, (Option<String>, String, String)>,
         done: bool,
+        flushed: bool,
     }
 
     let state = State {
@@ -284,7 +390,9 @@ fn parse_sse(
         buf: Vec::new(),
         pending: Default::default(),
         think: ThinkSplitter::default(),
+        calls: Default::default(),
         done: false,
+        flushed: false,
     };
 
     futures::stream::unfold(state, |mut st| async move {
@@ -292,7 +400,7 @@ fn parse_sse(
             if let Some(item) = st.pending.pop_front() {
                 return Some((item, st));
             }
-            if st.done {
+            if st.done && st.flushed {
                 return None;
             }
             // Handle every complete line in the buffer.
@@ -317,6 +425,7 @@ fn parse_sse(
                                 .unwrap_or_else(|| err.to_string());
                             st.pending.push_back(Err(ProviderError::Status(msg)));
                             st.done = true;
+                            st.calls.clear();
                             break;
                         }
                         for choice in frame.choices {
@@ -331,6 +440,22 @@ fn parse_sse(
                             if let Some(c) = d.content {
                                 st.pending.extend(st.think.push(&c).into_iter().map(Ok));
                             }
+                            for (n, call) in d.tool_calls.into_iter().flatten().enumerate() {
+                                let entry = st.calls.entry(call.index.unwrap_or(n)).or_default();
+                                if let Some(id) = call.id.filter(|i| !i.is_empty()) {
+                                    entry.0 = Some(id);
+                                }
+                                if let Some(f) = call.function {
+                                    if let Some(name) = f.name {
+                                        entry.1.push_str(&name);
+                                    }
+                                    match f.arguments {
+                                        Some(serde_json::Value::String(a)) => entry.2.push_str(&a),
+                                        Some(serde_json::Value::Null) | None => {}
+                                        Some(other) => entry.2.push_str(&other.to_string()),
+                                    }
+                                }
+                            }
                         }
                     }
                     Err(e) => {
@@ -341,11 +466,24 @@ fn parse_sse(
                     }
                 }
             }
-            if st.done {
+            if st.done && !st.flushed {
+                st.flushed = true;
                 st.pending.extend(st.think.finish().into_iter().map(Ok));
+                let calls: Vec<ToolCall> = std::mem::take(&mut st.calls)
+                    .into_iter()
+                    .filter(|(_, (_, name, _))| !name.is_empty())
+                    .map(|(i, (id, name, arguments))| ToolCall {
+                        id: id.unwrap_or_else(|| format!("call_{i}")),
+                        name,
+                        arguments,
+                    })
+                    .collect();
+                if !calls.is_empty() {
+                    st.pending.push_back(Ok(ChatChunk::ToolCalls(calls)));
+                }
                 continue;
             }
-            if !st.pending.is_empty() {
+            if !st.pending.is_empty() || st.done {
                 continue;
             }
             match st.bytes.next().await {
@@ -353,6 +491,8 @@ fn parse_sse(
                 Some(Err(e)) => {
                     st.pending.push_back(Err(e));
                     st.done = true;
+                    // Don't act on half-received tool calls after a broken stream.
+                    st.calls.clear();
                 }
                 // Stream ended without [DONE]: treat what we have as the reply.
                 None => st.done = true,
@@ -429,6 +569,7 @@ mod tests {
             match c {
                 ChatChunk::Content(s) => content += &s,
                 ChatChunk::Reasoning(s) => reasoning += &s,
+                ChatChunk::ToolCalls(_) => {}
             }
         }
         (content, reasoning)
@@ -471,6 +612,45 @@ mod tests {
         let chunks: Vec<_> = parse_sse(bytes).collect().await;
         let chunks: Vec<ChatChunk> = chunks.into_iter().map(Result::unwrap).collect();
         assert_eq!(collect(chunks), ("Hello".into(), "hmm".into()));
+    }
+
+    #[tokio::test]
+    async fn assembles_streamed_tool_calls() {
+        let body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Checking.\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"cats\\\"}\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"function\":{\"name\":\"other\",\"arguments\":{\"x\":1}}}]}}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let bytes = futures::stream::iter(vec![Ok(bytes::Bytes::from(body))]);
+        let chunks: Vec<ChatChunk> = parse_sse(bytes).map(Result::unwrap).collect().await;
+        assert_eq!(
+            chunks,
+            vec![
+                ChatChunk::Content("Checking.".into()),
+                ChatChunk::ToolCalls(vec![
+                    ToolCall {
+                        id: "call_a".into(),
+                        name: "lookup".into(),
+                        arguments: "{\"q\":\"cats\"}".into()
+                    },
+                    ToolCall {
+                        id: "call_1".into(),
+                        name: "other".into(),
+                        arguments: "{\"x\":1}".into()
+                    },
+                ]),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn flushes_when_the_stream_ends_without_done() {
+        let body = "data: {\"choices\":[{\"delta\":{\"content\":\"<think>hm\"}}]}\n\n";
+        let bytes = futures::stream::iter(vec![Ok(bytes::Bytes::from(body))]);
+        let chunks: Vec<ChatChunk> = parse_sse(bytes).map(Result::unwrap).collect().await;
+        assert_eq!(collect(chunks), (String::new(), "hm".into()));
     }
 
     #[tokio::test]

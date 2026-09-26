@@ -2,8 +2,10 @@ import { useState } from "react";
 import { Check, ChevronRight, CircleAlert, Copy } from "lucide-react";
 import { cn } from "cn";
 
+import type { Action } from "@/bindings/Action";
 import type { Message } from "@/bindings/Message";
 import { AssistantMark } from "@/components/brand";
+import { Actions } from "@/features/chat/actions";
 import { LocalityIcon } from "@/components/locality-badge";
 import { Markdown } from "@/components/markdown";
 import { localityShort } from "@/lib/format";
@@ -25,7 +27,10 @@ export function MessageView({ message }: { message: Message }) {
 function AssistantMessage({ message }: { message: Message }) {
   const info = useModelInfo();
   const streaming = message.status === "streaming";
-  const thinking = streaming && !message.content;
+  const acting = message.actions.some((a) =>
+    ["pending_approval", "approved", "running"].includes(a.status),
+  );
+  const thinking = streaming && !message.content && !acting;
 
   return (
     <div className="group flex gap-3.5">
@@ -34,10 +39,17 @@ function AssistantMessage({ message }: { message: Message }) {
         {(message.reasoning || thinking) && (
           <Reasoning text={message.reasoning} active={thinking} />
         )}
-        {message.content && (
-          <div className={cn(streaming && "streaming-caret")}>
-            <Markdown>{message.content}</Markdown>
-          </div>
+        {segments(message).map((seg, i, all) =>
+          seg.kind === "text" ? (
+            <div
+              key={i}
+              className={cn(streaming && i === all.length - 1 && "streaming-caret")}
+            >
+              <Markdown>{seg.text}</Markdown>
+            </div>
+          ) : (
+            <Actions key={seg.actions[0].id} actions={seg.actions} />
+          ),
         )}
         {message.status === "error" && (
           <div className="flex items-start gap-2.5 rounded-xl border border-[#f1c9c1] bg-[#fdf2ef] px-3.5 py-2.5 text-[13.5px] text-destructive">
@@ -100,4 +112,26 @@ function CopyButton({ text }: { text: string }) {
       {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
     </button>
   );
+}
+
+type Segment = { kind: "text"; text: string } | { kind: "actions"; actions: Action[] };
+
+/** The reply's text with its actions placed where they happened. */
+function segments(message: Message): Segment[] {
+  const chars = Array.from(message.content);
+  const actions = [...message.actions].sort((a, b) => a.content_offset - b.content_offset);
+  const out: Segment[] = [];
+  let at = 0;
+  for (const a of actions) {
+    const offset = Math.min(a.content_offset, chars.length);
+    const text = chars.slice(at, offset).join("");
+    if (text.trim()) out.push({ kind: "text", text });
+    at = Math.max(at, offset);
+    const last = out.at(-1);
+    if (last?.kind === "actions") last.actions.push(a);
+    else out.push({ kind: "actions", actions: [a] });
+  }
+  const rest = chars.slice(at).join("");
+  if (rest.trim()) out.push({ kind: "text", text: rest });
+  return out;
 }
