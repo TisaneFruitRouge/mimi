@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, ChevronRight, CircleAlert, Copy } from "lucide-react";
+import { Check, CircleAlert, Copy } from "lucide-react";
 import { cn } from "cn";
 
 import type { Action } from "@/bindings/Action";
@@ -8,8 +8,6 @@ import { AssistantMark } from "@/components/brand";
 import { Actions } from "@/features/chat/actions";
 import { LocalityIcon } from "@/components/locality-badge";
 import { Markdown } from "@/components/markdown";
-import { localityShort } from "@/lib/format";
-import { useModelInfo } from "@/lib/queries";
 
 export function MessageView({ message }: { message: Message }) {
   if (message.role === "user") {
@@ -25,7 +23,6 @@ export function MessageView({ message }: { message: Message }) {
 }
 
 function AssistantMessage({ message }: { message: Message }) {
-  const info = useModelInfo();
   const streaming = message.status === "streaming";
   const acting = message.actions.some((a) =>
     ["pending_approval", "approved", "running"].includes(a.status),
@@ -36,9 +33,7 @@ function AssistantMessage({ message }: { message: Message }) {
     <div className="group flex gap-3.5">
       <AssistantMark />
       <div className="flex min-w-0 flex-1 flex-col gap-2 pt-0.5">
-        {(message.reasoning || thinking) && (
-          <Reasoning text={message.reasoning} active={thinking} />
-        )}
+        {thinking && <span className="shimmer self-start text-[14px]">Thinking…</span>}
         {segments(message).map((seg, i, all) =>
           seg.kind === "text" ? (
             <div
@@ -58,40 +53,20 @@ function AssistantMessage({ message }: { message: Message }) {
           </div>
         )}
         {!streaming && (
-          <div className="flex h-6 items-center gap-2 font-mono text-[11.5px] text-faint">
-            {message.model && <span>{info(message.model.model).name}</span>}
-            {message.locality && (
-              <span className="inline-flex items-center gap-1">
-                · <LocalityIcon locality={message.locality} className="size-3" />
-                {localityShort[message.locality]}
+          <div className="flex h-6 items-center gap-2 text-[12.5px] text-faint">
+            {/* Only cloud use is worth pointing out: private is the default. */}
+            {message.locality === "cloud" && (
+              <span className="inline-flex items-center gap-1.5 text-cloud">
+                <LocalityIcon locality="cloud" className="size-3.5" />
+                Answered by a cloud service
               </span>
             )}
-            {message.status === "cancelled" && <span>· stopped</span>}
-            {message.status === "interrupted" && <span>· cut off</span>}
+            {message.status === "cancelled" && <span>Stopped</span>}
+            {message.status === "interrupted" && <span>This reply was cut off</span>}
             {message.content && <CopyButton text={message.content} />}
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-function Reasoning({ text, active }: { text: string; active: boolean }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="flex flex-col gap-2">
-      <button
-        onClick={() => text && setOpen(!open)}
-        className="flex items-center gap-1.5 self-start font-mono text-[12px] text-faint hover:text-foreground"
-      >
-        <span className={cn(active && "shimmer")}>{active ? "thinking…" : "thought it through"}</span>
-        {text && <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} />}
-      </button>
-      {open && (
-        <div className="max-h-72 overflow-y-auto rounded-xl bg-subtle px-3.5 py-3 text-[13px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
-          {text}
-        </div>
-      )}
     </div>
   );
 }
@@ -107,7 +82,7 @@ function CopyButton({ text }: { text: string }) {
         })
       }
       aria-label="Copy reply"
-      className="ml-1 rounded-md p-1 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-subtle hover:text-foreground focus-visible:opacity-100"
+      className="-ml-1 rounded-md p-1 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-subtle hover:text-foreground focus-visible:opacity-100"
     >
       {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
     </button>

@@ -76,13 +76,8 @@ impl Tool for ReadEvents {
         }
     }
 
-    fn result_label(&self, _args: &Value, output: &Value) -> String {
-        match output["events"].as_array().map(Vec::len) {
-            Some(0) => "read calendar · nothing planned".to_owned(),
-            Some(1) => "read calendar · 1 event".to_owned(),
-            Some(n) => format!("read calendar · {n} events"),
-            None => "read calendar".to_owned(),
-        }
+    fn result_label(&self, _args: &Value, _output: &Value) -> String {
+        "checked your calendar".to_owned()
     }
 
     fn run<'a>(

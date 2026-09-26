@@ -10,13 +10,15 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProviderError {
-    #[error("Couldn't reach {0}. Is it running?")]
+    #[error(
+        "Your assistant's model isn't responding. If it runs on this computer, check that it's open."
+    )]
     Unreachable(String),
-    #[error("The provider rejected the API key.")]
+    #[error("The model service didn't accept the key. Check it in Models.")]
     Unauthorized,
-    #[error("The provider returned an error: {0}")]
+    #[error("The model had a problem: {0}")]
     Status(String),
-    #[error("The provider sent a response we couldn't understand: {0}")]
+    #[error("The model's answer couldn't be read. Try again.")]
     Decode(String),
 }
 

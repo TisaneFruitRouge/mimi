@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { Section } from "@/features/shell/top-bar";
 import { api } from "@/lib/api";
-import { localityShort } from "@/lib/format";
 import { sameModel, useActiveModel, useAllModels, useModelInfo, useSettings } from "@/lib/queries";
 
 export interface ComposerHandle {
@@ -105,7 +104,7 @@ export const Composer = forwardRef<
 
           <Popover open={actionsOpen} onOpenChange={setActionsOpen}>
             <PopoverTrigger asChild>
-              <ToolbarChip icon={<Slash />} label="actions" mono />
+              <ToolbarChip icon={<Slash />} label="Actions" />
             </PopoverTrigger>
             <PopoverContent align="start" className="w-60 p-1.5">
               <MenuItem icon={<MessageSquarePlus />} onClick={action(onNewConversation)}>
@@ -229,7 +228,7 @@ function ModelChip({ onManage }: { onManage: () => void }) {
           )}
         >
           {active && <LocalityIcon locality={active.provider.locality} className="size-3.5" />}
-          {active ? `${active.name} · ${localityShort[active.provider.locality]}` : "No model"}
+          {active ? (active.provider.locality === "cloud" ? "Cloud" : "Private") : "Set up"}
         </button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-72 p-1.5">

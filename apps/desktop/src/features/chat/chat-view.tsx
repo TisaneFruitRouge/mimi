@@ -234,8 +234,10 @@ function EmptyState({ onStarter }: { onStarter: (text: string) => void }) {
             locality={active.provider.locality}
             label={
               active.provider.locality === "cloud"
-                ? `${active.name} · via ${active.provider.name}`
-                : `${active.name} · ${active.provider.locality === "device" ? "running privately on this computer" : "on your network"}`
+                ? `Uses ${active.provider.name}, a cloud service`
+                : active.provider.locality === "device"
+                  ? "Private · runs on this computer"
+                  : "Private · runs on your own network"
             }
             className="mt-1"
           />

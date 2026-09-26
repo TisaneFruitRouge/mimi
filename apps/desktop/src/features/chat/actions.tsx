@@ -16,12 +16,9 @@ export function Actions({ actions }: { actions: Action[] }) {
   return (
     <div className="flex flex-col gap-2.5">
       {reads.length > 0 && (
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11.5px]">
-          {reads.map((a, i) => (
-            <span key={a.id} className="inline-flex items-center gap-2">
-              {i > 0 && <span className="text-faint">·</span>}
-              <ReadStatus action={a} />
-            </span>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px]">
+          {reads.map((a) => (
+            <ReadStatus key={a.id} action={a} />
           ))}
         </div>
       )}
@@ -35,16 +32,16 @@ export function Actions({ actions }: { actions: Action[] }) {
 function ReadStatus({ action: a }: { action: Action }) {
   if (a.status === "done")
     return (
-      <span className="inline-flex items-center gap-1 text-private">
-        <Check className="size-3" strokeWidth={2.5} />
-        {a.result ?? a.summary}
+      <span className="inline-flex items-center gap-1.5 text-faint">
+        <Check className="size-3.5" />
+        {upperFirst(a.result ?? a.summary)}
       </span>
     );
   if (a.status === "failed")
     return (
-      <span className="inline-flex items-center gap-1 text-destructive" title={a.error ?? undefined}>
-        <X className="size-3" strokeWidth={2.5} />
-        {a.summary}
+      <span className="inline-flex items-center gap-1.5 text-destructive" title={a.error ?? undefined}>
+        <X className="size-3.5" />
+        Couldn't {lowerFirst(a.summary)}
       </span>
     );
   return <span className="shimmer">{lowerFirst(a.summary)}…</span>;
@@ -80,9 +77,9 @@ function ApprovalCard({ action: a }: { action: Action }) {
   return (
     <div className="overflow-hidden rounded-2xl border bg-background shadow-xs">
       <div className="flex flex-col gap-3 px-4 pt-3.5 pb-4">
-        <div className="font-mono text-[11.5px] text-faint">
-          <span className="font-medium tracking-[0.04em] text-[#4d6b00]">WAITING FOR YOU</span> ·{" "}
-          {a.summary}
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[12.5px] font-medium text-[#5b7a0e]">Needs your OK</span>
+          <span className="text-[15px] leading-snug font-medium">{a.summary}</span>
         </div>
         {rows.length > 0 && (
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[14px] leading-relaxed">
@@ -109,7 +106,7 @@ function ApprovalCard({ action: a }: { action: Action }) {
           disabled={busy !== null}
           className="h-8 rounded-[9px] px-3.5 text-[13px] font-medium text-muted-foreground transition hover:bg-secondary hover:text-foreground disabled:opacity-60"
         >
-          Don’t
+          Not now
         </button>
       </div>
     </div>
@@ -145,16 +142,16 @@ function DecidedCard({ action: a }: { action: Action }) {
     );
   const text =
     a.status === "done"
-      ? (a.result ?? a.summary)
+      ? upperFirst(a.result ?? a.summary)
       : a.status === "rejected"
-        ? `You said no · ${lowerFirst(a.summary)}`
+        ? `Not done: ${lowerFirst(a.summary)}`
         : a.status === "failed"
-          ? `${a.summary}: ${a.error ?? "it didn't work"}`
-          : `Approved · ${lowerFirst(a.summary)}…`;
+          ? `Couldn't do it${a.error ? `: ${a.error}` : "."}`
+          : `On it: ${lowerFirst(a.summary)}…`;
   return (
     <div
       className={cn(
-        "flex items-start gap-2 rounded-xl border border-dashed px-3.5 py-2.5 font-mono text-[12px]",
+        "flex items-start gap-2 rounded-xl border border-dashed px-3.5 py-2.5 text-[13.5px]",
         tone,
       )}
     >
@@ -170,6 +167,10 @@ function DecidedCard({ action: a }: { action: Action }) {
       )}
     </div>
   );
+}
+
+function upperFirst(s: string) {
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 function lowerFirst(s: string) {

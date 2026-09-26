@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { ExternalLink, Lock, LogOut } from "lucide-react";
 import { toast } from "sonner";
 
@@ -14,7 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { api, keys } from "@/lib/api";
+import { api } from "@/lib/api";
 import { useProviders, useSettings } from "@/lib/queries";
 import { isTauri, openInBrowser, request } from "@/lib/transport";
 
@@ -27,7 +26,6 @@ export function SettingsDialog({
 }) {
   const settings = useSettings().data;
   const providers = useProviders().data ?? [];
-  const status = useQuery({ queryKey: keys.status, queryFn: api.status, enabled: open }).data;
   const [name, setName] = useState<string | null>(null);
   const value = name ?? settings?.assistant_name ?? "";
 
@@ -73,16 +71,10 @@ export function SettingsDialog({
               <Lock className="mt-0.5 size-4 shrink-0 text-private" />
               <div className="flex flex-col gap-1">
                 <span>
-                  Conversations, settings and passwords are stored encrypted on this computer.
-                  {status?.key_storage === "file"
-                    ? " No system keychain was found, so the key is kept in a file only your account can read."
-                    : " The key is kept in your system keychain."}
+                  Your conversations, settings and passwords are stored encrypted on this
+                  computer, and nowhere else.
                 </span>
-                {status && (
-                  <span className="font-mono text-[11px] break-all text-faint">
-                    {status.data_dir}
-                  </span>
-                )}
+
               </div>
             </div>
           </section>
@@ -120,9 +112,7 @@ export function SettingsDialog({
               <LogOut /> Sign out of this browser
             </Button>
           )}
-          <span className="self-center font-mono text-[11px] text-faint">
-            {status ? `v${status.version}` : ""}
-          </span>
+
         </div>
       </DialogContent>
     </Dialog>

@@ -195,8 +195,7 @@ function ActiveModelCard({ onChange, onChat }: { onChange: () => void; onChat?: 
         <div className="flex flex-col gap-1.5">
           <span className="text-[32px] leading-none font-semibold tracking-[-0.03em]">{active.name}</span>
           <span className="text-[14px] text-muted-foreground">
-            {active.description ?? "A model from " + active.provider.name + "."}{" "}
-            <span className="text-faint">via {active.provider.name}</span>
+            {active.description ?? "Your assistant's current model."}
           </span>
         </div>
       ) : (
@@ -242,12 +241,10 @@ function ComputerCard() {
       <SectionLabel>This computer</SectionLabel>
       <p className="text-[15px] leading-snug font-medium">{tierLine[rec.tier]}</p>
       <div className="flex flex-col gap-1.5">
-        <div className="flex justify-between font-mono text-[11.5px] text-muted-foreground">
-          <span>model memory</span>
-          <span>
-            {activeSize ? `${Math.round(activeSize / 1e9)} / ` : ""}
-            {Math.round(budgetGb)} GB
-          </span>
+        <div className="text-[12.5px] text-muted-foreground">
+          {activeSize
+            ? `Your model uses about ${Math.round((activeSize / rec.model_budget_bytes) * 100)}% of the room available.`
+            : `Room for models up to about ${Math.round(budgetGb)} GB.`}
         </div>
         <div className="h-1.5 overflow-hidden rounded-full bg-subtle">
           <div className="h-full rounded-full bg-lime" style={{ width: `${usedPct}%` }} />
@@ -335,14 +332,10 @@ const YourModels = forwardRef<HTMLElement>(function YourModels(_, ref) {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 text-[14.5px] font-medium">
                   {name}
-                  {o.sizeBytes ? (
-                    <span className="font-mono text-[11.5px] font-normal text-faint">
-                      {formatBytes(o.sizeBytes)}
-                    </span>
-                  ) : null}
+
                 </div>
                 <div className="truncate text-[13px] text-muted-foreground">
-                  {description ?? o.ref.model} · via {o.providerName}
+                  {description ?? `From ${o.providerName}`}
                   {o.locality !== "cloud" && !fits(o.ref) && (
                     <span className="text-cloud"> · may be slow on this computer</span>
                   )}
@@ -412,10 +405,9 @@ function SuggestedCard({
         {running ? (
           <>
             <Progress value={pct ?? 0} className="h-1.5 [&>*]:bg-lime" />
-            <span className="font-mono text-[11.5px] text-muted-foreground">
+            <span className="text-[12.5px] text-muted-foreground">
               {pull.status}
               {pct != null && ` · ${pct}%`}
-              {pull.total_bytes ? ` of ${formatBytes(pull.total_bytes)}` : ""}
             </span>
           </>
         ) : pull?.state === "failed" ? (
@@ -508,9 +500,8 @@ function Sources({ onAdd }: { onAdd: () => void }) {
             <div key={p.id} className="flex items-center gap-4 px-5 py-3">
               <div className="min-w-0 flex-1">
                 <div className="text-[14.5px] font-medium">{p.name}</div>
-                <div className="truncate font-mono text-[11.5px] text-faint">
-                  {p.base_url}
-                  {p.has_api_key && " · key saved"}
+                <div className="truncate text-[13px] text-muted-foreground">
+                  {{ device: "On this computer", network: "On your network", cloud: "Cloud service" }[p.locality]}
                 </div>
               </div>
               <LocalityBadge locality={p.locality} />
