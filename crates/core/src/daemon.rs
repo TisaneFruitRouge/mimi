@@ -1,9 +1,9 @@
-//! Process lifecycle: pick a port, publish the discovery file, serve until signalled.
+//! Process lifecycle: open the database, pick a port, publish the discovery file, serve
+//! until signalled.
 
-use std::fs::{self, DirBuilder, OpenOptions};
-use std::io::Write;
+use std::fs::{self, DirBuilder};
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -11,7 +11,8 @@ use anyhow::{Context, bail};
 use hearth_protocol::{Discovery, Paths};
 use tokio::net::TcpListener;
 
-use crate::{AppState, router};
+use crate::fsutil::{random_hex, write_private};
+use crate::{AppState, api, db, keys};
 
 pub async fn run(paths: Paths) -> anyhow::Result<()> {
     DirBuilder::new()
@@ -28,10 +29,25 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         );
     }
 
+    let (db, key_storage) = {
+        let paths = paths.clone();
+        tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+            let db_path = paths.data_dir.join("hearth.db");
+            let key = keys::load_or_create(&paths, db_path.exists())?;
+            let db = db::Db::open(&db_path, &key.hex)
+                .with_context(|| format!("opening {}", db_path.display()))?;
+            // SQLite gives the -wal/-shm files the same mode as the database file.
+            fs::set_permissions(&db_path, fs::Permissions::from_mode(0o600))?;
+            Ok((db, key.storage))
+        })
+        .await??
+    };
+    tracing::info!(?key_storage, "database opened");
+
     // Loopback only; remote access will be a separate, explicitly enabled listener.
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
     let port = listener.local_addr()?.port();
-    let token = new_token()?;
+    let token = random_hex(32)?;
 
     let discovery_file = paths.discovery_file();
     write_private(
@@ -47,10 +63,12 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         paths,
         token,
         started: Instant::now(),
+        db,
+        key_storage,
     });
     tracing::info!(port, "hearth daemon listening on 127.0.0.1");
 
-    let served = axum::serve(listener, router(state))
+    let served = axum::serve(listener, api::router(state))
         .with_graceful_shutdown(shutdown_signal())
         .await;
     let _ = fs::remove_file(&discovery_file);
@@ -65,29 +83,6 @@ fn running_instance(paths: &Paths) -> Option<Discovery> {
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, discovery.port));
     TcpStream::connect_timeout(&addr, Duration::from_millis(300)).ok()?;
     Some(discovery)
-}
-
-fn new_token() -> anyhow::Result<String> {
-    let mut bytes = [0u8; 32];
-    getrandom::fill(&mut bytes).map_err(|e| anyhow::anyhow!("generating token: {e}"))?;
-    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
-}
-
-/// Writes via a temp file + rename so readers never see a partial file, with the
-/// file created owner-only from the start.
-fn write_private(path: &std::path::Path, contents: &[u8]) -> anyhow::Result<()> {
-    let tmp = path.with_extension("tmp");
-    let _ = fs::remove_file(&tmp);
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&tmp)
-        .with_context(|| format!("creating {}", tmp.display()))?;
-    file.write_all(contents)?;
-    file.sync_all()?;
-    fs::rename(&tmp, path)?;
-    Ok(())
 }
 
 async fn shutdown_signal() {

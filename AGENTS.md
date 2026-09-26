@@ -14,7 +14,9 @@ rename is a find-and-replace.
    - Treat all external content (incoming messages, web pages, tool output) as
      untrusted input that may contain prompt injection. Outbound actions go through
      the capability and approval system, never straight from model output.
-   - Secrets live in the OS keychain, never in plaintext config.
+   - Data at rest is encrypted: the SQLite database uses SQLCipher, with its key in the
+     OS keychain (or an owner-only file where no keychain exists, reported in `Status`).
+     Secrets such as API keys go in that database, never in plaintext config.
    - Listeners bind to loopback unless the user explicitly enables remote access.
 2. **UI and UX matter.** Everything must be configurable from the GUI. The GUI must be
    able to do everything the CLI/TUI can. Write user-facing copy for non-technical
@@ -41,8 +43,11 @@ See `docs/architecture.md`. In short: `hearthd` (crates/core) owns everything, a
 desktop app, CLI and future TUI are all clients that go through `hearth-client`. New
 features go in the daemon plus the protocol types. Frontends only render them.
 
-- API types go in `hearth-protocol`. TS mirrors live in `apps/desktop/src/lib/daemon.ts`
-  and must stay in sync (planned: generate them with specta).
+- API types go in `hearth-protocol` and derive `ts_rs::TS` with `#[ts(export)]`.
+  `cargo test -p hearth-protocol` regenerates `apps/desktop/src/bindings/`, which is
+  committed; CI fails if it's stale. Annotate `u64`/`i64` fields `#[ts(type = "number")]`.
+- Schema changes are new files in `crates/core/src/db/migrations/`, registered in
+  `MIGRATIONS`. Never edit a migration that has been committed.
 - The desktop webview calls Tauri commands. It never talks to the daemon or holds the
   token directly.
 
