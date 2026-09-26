@@ -16,6 +16,7 @@ pub mod hardware;
 pub mod integrations;
 pub mod memory;
 pub mod paths;
+pub mod people;
 pub mod providers;
 pub mod settings;
 
@@ -26,6 +27,7 @@ pub use hardware::*;
 pub use integrations::*;
 pub use memory::*;
 pub use paths::Paths;
+pub use people::*;
 pub use providers::*;
 pub use settings::*;
 

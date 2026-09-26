@@ -4,9 +4,16 @@ import type { CatalogModel } from "@/bindings/CatalogModel";
 import type { Connection } from "@/bindings/Connection";
 import type { ConnectionSetup } from "@/bindings/ConnectionSetup";
 import type { HardwareInfo } from "@/bindings/HardwareInfo";
+import type { DuplicateSuggestion } from "@/bindings/DuplicateSuggestion";
 import type { Integration } from "@/bindings/Integration";
 import type { MemoryNote } from "@/bindings/MemoryNote";
 import type { MemoryOverview } from "@/bindings/MemoryOverview";
+import type { MentionCandidate } from "@/bindings/MentionCandidate";
+import type { NewHandle } from "@/bindings/NewHandle";
+import type { NewPerson } from "@/bindings/NewPerson";
+import type { Person } from "@/bindings/Person";
+import type { PersonSummary } from "@/bindings/PersonSummary";
+import type { PersonUpdate } from "@/bindings/PersonUpdate";
 import type { ModelPull } from "@/bindings/ModelPull";
 import type { ModelInfo } from "@/bindings/ModelInfo";
 import type { NewProvider } from "@/bindings/NewProvider";
@@ -70,6 +77,24 @@ export const api = {
   connect: (setup: ConnectionSetup) => call<Connection>("POST", "/connections", setup),
   disconnect: (id: string) => call<null>("DELETE", `/connections/${id}`),
 
+  people: (q = "") => call<PersonSummary[]>("GET", `/people?q=${encodeURIComponent(q)}`),
+  person: (id: string) => call<Person>("GET", `/people/${id}`),
+  addPerson: (p: NewPerson) => call<Person>("POST", "/people", p),
+  updatePerson: (id: string, u: PersonUpdate) => call<Person>("PATCH", `/people/${id}`, u),
+  removePerson: (id: string) => call<null>("DELETE", `/people/${id}`),
+  addHandle: (id: string, h: NewHandle) => call<Person>("POST", `/people/${id}/handles`, h),
+  removeHandle: (id: string, handle: string) =>
+    call<Person>("DELETE", `/people/${id}/handles/${handle}`),
+  mergePeople: (keep: string, other: string) =>
+    call<Person>("POST", `/people/${keep}/merge`, { other }),
+  splitPerson: (id: string, source_id: string, record: string) =>
+    call<Person>("POST", `/people/${id}/split`, { source_id, record }),
+  duplicates: () => call<DuplicateSuggestion[]>("GET", "/people/duplicates"),
+  dismissDuplicate: (a: string, b: string) =>
+    call<null>("POST", "/people/duplicates/dismiss", { a, b }),
+  syncPeople: () => call<null>("POST", "/people/sync"),
+  mentions: (q: string) => call<MentionCandidate[]>("GET", `/mentions?q=${encodeURIComponent(q)}`),
+
   hardware: () => call<HardwareInfo>("GET", "/hardware"),
   recommendations: () => call<Recommendations>("GET", "/recommendations"),
 
@@ -115,6 +140,12 @@ export const keys = {
   catalog: ["catalog"] as const,
   integrations: ["integrations"] as const,
   connections: ["connections"] as const,
+  /** Everything about people: lists, details, duplicates, @ suggestions. */
+  people: ["people"] as const,
+  peopleList: (q: string) => ["people", "list", q] as const,
+  person: (id: string) => ["people", "person", id] as const,
+  duplicates: ["people", "duplicates"] as const,
+  mentions: (q: string) => ["people", "mentions", q] as const,
   conversations: ["conversations"] as const,
   conversation: (id: string) => ["conversation", id] as const,
   memory: ["memory"] as const,

@@ -5,6 +5,7 @@ import { ArrowDown, CalendarDays, ChevronDown, Lightbulb, PenLine, Pencil, Trash
 import { toast } from "sonner";
 
 import type { ConversationDetail } from "@/bindings/ConversationDetail";
+import type { Mention } from "@/bindings/Mention";
 import type { Message } from "@/bindings/Message";
 import { LogoMark } from "@/components/brand";
 import { LocalityBadge } from "@/components/locality-badge";
@@ -67,7 +68,7 @@ export function ChatView({
     return () => observer.disconnect();
   }, []);
 
-  const send = async (content: string): Promise<boolean> => {
+  const send = async (content: string, mentions: Mention[]): Promise<boolean> => {
     try {
       let id = conversationId;
       if (!id) {
@@ -77,7 +78,7 @@ export function ChatView({
         qc.setQueryData<ConversationDetail>(keys.conversation(id), { conversation, messages: [] });
         onCreated(id);
       }
-      const sent = await api.send(id, { content, model: null });
+      const sent = await api.send(id, { content, model: null, mentions });
       // Events usually get here first; only fill in what's missing.
       qc.setQueryData<ConversationDetail>(keys.conversation(id), (d) =>
         d

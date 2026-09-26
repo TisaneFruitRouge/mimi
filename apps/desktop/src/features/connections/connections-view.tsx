@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { motion } from "motion/react";
+import { useQuery } from "@tanstack/react-query";
 import {
   CalendarDays,
   Check,
+  ChevronRight,
   Hash,
   Lock,
   Mail,
@@ -39,7 +41,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { type ConnectKind, ConnectDialog } from "@/features/connections/connect-dialogs";
-import { api } from "@/lib/api";
+import { PersonAvatar } from "@/components/people";
+import { api, keys } from "@/lib/api";
 import { useConnections, useIntegrations } from "@/lib/queries";
 import { openExternal } from "@/lib/transport";
 
@@ -47,7 +50,7 @@ const connectable = (id: string): id is ConnectKind =>
   id === "google_calendar" || id === "caldav" || id === "telegram";
 
 /** Integrations that make sense to connect more than once. */
-const repeatable = (id: string) => id === "google_calendar" || id === "caldav";
+const repeatable = (id: string) => id === "google_calendar" || id === "caldav" || id === "carddav";
 
 const look: Record<string, { icon: typeof Plug; tone: string }> = {
   google_calendar: { icon: CalendarDays, tone: "bg-event-soft text-event" },
@@ -72,7 +75,7 @@ export function IntegrationIcon({ id, size = "md" }: { id: string; size?: "sm" |
   );
 }
 
-export function ConnectionsView() {
+export function ConnectionsView({ onPeople }: { onPeople: () => void }) {
   const integrations = useIntegrations();
   const connections = useConnections().data ?? [];
   const [open, setOpen] = useState<Integration | null>(null);
@@ -85,7 +88,9 @@ export function ConnectionsView() {
   const soon = all.filter((i) => i.status === "coming_soon");
   const startConnect = (i: Integration) => {
     setOpen(null);
-    if (connectable(i.id)) setConnecting(i.id);
+    // Address books come with the calendar account (same app password).
+    const kind = i.id === "carddav" ? "caldav" : i.id;
+    if (connectable(kind)) setConnecting(kind);
   };
 
   return (
@@ -94,6 +99,8 @@ export function ConnectionsView() {
         title="Connections"
         subtitle="Let your assistant help with the apps you use. It only sees what you connect, and always asks before it sends or changes anything."
       />
+
+      <PeopleEntry onOpen={onPeople} />
 
       <Section title="Connected">
         {connections.length === 0 ? (
@@ -311,5 +318,36 @@ function IntegrationSheet({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** The way into People: everyone the connected apps know, in one place. */
+function PeopleEntry({ onOpen }: { onOpen: () => void }) {
+  const people = useQuery({ queryKey: keys.peopleList(""), queryFn: () => api.people("") }).data;
+  const count = people?.length ?? 0;
+  return (
+    <button onClick={onOpen} className="surface pressable group flex items-center gap-4 px-5 py-4 text-left">
+      <div className="flex -space-x-2">
+        {(people ?? []).slice(0, 3).map((p) => (
+          <span key={p.id} className="rounded-full ring-2 ring-background">
+            <PersonAvatar id={p.id} name={p.name} />
+          </span>
+        ))}
+        {count === 0 && (
+          <IconTile className="bg-fill text-muted-foreground">
+            <Users />
+          </IconTile>
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="type-body font-medium">People</div>
+        <div className="type-subhead text-muted-foreground">
+          {count === 0
+            ? "Add the people you talk about, or connect an address book"
+            : `${count} ${count === 1 ? "person" : "people"} you can mention with @`}
+        </div>
+      </div>
+      <ChevronRight className="size-4 text-faint transition group-hover:translate-x-0.5" />
+    </button>
   );
 }

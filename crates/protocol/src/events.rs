@@ -35,6 +35,8 @@ pub enum Event {
         content: String,
         reasoning: String,
     },
+    /// The people directory changed (sync, edit, merge). Refetch what you show.
+    PeopleChanged,
     ConnectionsChanged {
         connections: Vec<Connection>,
     },

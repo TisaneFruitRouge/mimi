@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 
 use futures::StreamExt;
 use hearth_protocol::{
-    Action, ActionStatus, Conversation, Event, Message, MessageRole, MessageStatus, ModelRef,
-    SendMessageResult,
+    Action, ActionStatus, Conversation, Event, Mention, Message, MessageRole, MessageStatus,
+    ModelRef, SendMessageResult,
 };
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
@@ -71,11 +71,19 @@ pub async fn send(
     conversation_id: Uuid,
     content: String,
     model: Option<ModelRef>,
+    mentions: Vec<Mention>,
 ) -> Result<SendMessageResult, AppError> {
     let content = content.trim().to_owned();
     if content.is_empty() {
         return Err(AppError::bad_request("The message is empty."));
     }
+    // Only mentions that are still in the text count; a deleted "@Sam" means no Sam.
+    let mut mentions: Vec<Mention> = mentions
+        .into_iter()
+        .filter(|m| !m.label.trim().is_empty() && content.contains(&format!("@{}", m.label)))
+        .take(20)
+        .collect();
+    mentions.dedup_by(|a, b| a.kind == b.kind && a.id == b.id);
     let mut conversation = store::get_conversation(&state.db, conversation_id)
         .await?
         .ok_or_else(|| AppError::not_found("Conversation"))?;
@@ -97,6 +105,7 @@ pub async fn send(
             )
         })?;
     let client = providers::connect(&state.http, &provider).map_err(AppError::bad_request)?;
+    let mention_context = crate::people::mentions::resolve(&state, &mentions).await;
 
     let cancel = state.generations.start(conversation_id).ok_or_else(|| {
         AppError::new(
@@ -132,7 +141,16 @@ pub async fn send(
         block: crate::memory::recall::prompt_block(&recall),
         learning: settings.memory_learning,
     };
-    let prompt = build_prompt(&settings.assistant_name, &history, &content, &memory);
+    let contexts = store::mention_contexts(&state.db, conversation_id)
+        .await
+        .unwrap_or_default();
+    let prompt = build_prompt(
+        &settings.assistant_name,
+        &history,
+        &contexts,
+        &with_context(&content, mention_context.as_deref()),
+        &memory,
+    );
     tracing::debug!(
         %conversation_id,
         prompt_messages = prompt.len(),
@@ -153,6 +171,7 @@ pub async fn send(
         error: None,
         created_at: now,
         actions: Vec::new(),
+        mentions,
     };
     let assistant_message = Message {
         id: Uuid::now_v7(),
@@ -161,6 +180,7 @@ pub async fn send(
         status: MessageStatus::Streaming,
         model: Some(model.clone()),
         locality: Some(provider.provider.locality),
+        mentions: Vec::new(),
         ..user_message.clone()
     };
     if conversation.title == DEFAULT_TITLE && history.is_empty() {
@@ -170,6 +190,9 @@ pub async fn send(
 
     let saved = async {
         store::upsert_message(&state.db, user_message.clone()).await?;
+        if let Some(context) = mention_context {
+            store::set_mention_context(&state.db, user_message.id, context).await?;
+        }
         store::upsert_message(&state.db, assistant_message.clone()).await?;
         store::upsert_conversation(&state.db, conversation.clone()).await
     }
@@ -563,9 +586,13 @@ fn strip_tool_messages(prompt: &mut Vec<ChatMessage>) {
 }
 
 /// A past message as the model saw it: tool calls and results by round, then the text.
-fn replay(m: &Message) -> Vec<ChatMessage> {
+fn replay(m: &Message, contexts: &HashMap<Uuid, String>) -> Vec<ChatMessage> {
     if m.role == MessageRole::User {
-        return vec![ChatMessage::text(Role::User, m.content.clone())];
+        let context = contexts.get(&m.id).map(String::as_str);
+        return vec![ChatMessage::text(
+            Role::User,
+            with_context(&m.content, context),
+        )];
     }
     let mut rounds: std::collections::BTreeMap<u32, Vec<&Action>> = Default::default();
     for a in &m.actions {
@@ -602,9 +629,18 @@ struct PromptMemory {
     learning: bool,
 }
 
+/// A user message as the model reads it: the text, then what its @ mentions refer to.
+fn with_context(content: &str, mention_context: Option<&str>) -> String {
+    match mention_context {
+        Some(context) => format!("{content}\n\n{context}"),
+        None => content.to_owned(),
+    }
+}
+
 fn build_prompt(
     assistant_name: &str,
     history: &[Message],
+    contexts: &HashMap<Uuid, String>,
     new_message: &str,
     memory: &PromptMemory,
 ) -> Vec<ChatMessage> {
@@ -642,7 +678,7 @@ fn build_prompt(
         if m.status == MessageStatus::Streaming || (m.content.is_empty() && m.actions.is_empty()) {
             continue;
         }
-        let block = replay(m);
+        let block = replay(m, contexts);
         let size: usize = block.iter().map(|c| c.content.len()).sum();
         if size > budget {
             break;

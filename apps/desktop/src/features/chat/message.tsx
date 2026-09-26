@@ -5,6 +5,7 @@ import { cn } from "cn";
 import type { Action } from "@/bindings/Action";
 import type { Message } from "@/bindings/Message";
 import { Actions } from "@/features/chat/actions";
+import { MentionText } from "@/features/chat/mentions/mention-text";
 import { LocalityIcon } from "@/components/locality-badge";
 import { Markdown } from "@/components/markdown";
 
@@ -13,7 +14,7 @@ export function MessageView({ message }: { message: Message }) {
     return (
       <div className="flex justify-end pl-16">
         <div className="rounded-[20px] rounded-br-[6px] bg-[#e9e9ee] px-4 py-2.5 type-body whitespace-pre-wrap">
-          {message.content}
+          <MentionText text={message.content} mentions={message.mentions} />
         </div>
       </div>
     );

@@ -509,7 +509,7 @@ async fn ensure_conversation(state: &Arc<AppState>, config: &mut TelegramConfig)
 async fn reply(state: &Arc<AppState>, bot: &Bot, chat_id: i64, conversation: Uuid, text: String) {
     let mut events = state.events.subscribe();
     bot.typing(chat_id).await;
-    let sent = match crate::chat::send(state.clone(), conversation, text, None).await {
+    let sent = match crate::chat::send(state.clone(), conversation, text, None, Vec::new()).await {
         Ok(sent) => sent,
         Err(e) => {
             let _ = bot.send(chat_id, &escape(e.message())).await;

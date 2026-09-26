@@ -38,17 +38,21 @@ pub enum DavError {
     Protocol(String),
 }
 
-/// One response in a WebDAV multistatus body, flattened to what we use.
+/// One response in a WebDAV multistatus body, flattened to what we use. Shared with
+/// the CardDAV client in `people::carddav`.
 #[derive(Debug, Default, Clone)]
-struct DavResponse {
-    href: String,
+pub(crate) struct DavResponse {
+    pub href: String,
     is_calendar: bool,
     supports_events: bool,
-    display_name: Option<String>,
+    pub is_addressbook: bool,
+    pub display_name: Option<String>,
     color: Option<String>,
-    principal: Option<String>,
+    pub principal: Option<String>,
     calendar_home: Option<String>,
+    pub addressbook_home: Option<String>,
     calendar_data: Option<String>,
+    pub address_data: Option<String>,
 }
 
 impl CalDav {
@@ -182,7 +186,7 @@ impl CalDav {
         }
     }
 
-    async fn propfind(
+    pub(crate) async fn propfind(
         &self,
         url: &Url,
         depth: &str,
@@ -199,7 +203,7 @@ impl CalDav {
 
     /// Sends a WebDAV request, following redirects with the same method. Returns the
     /// final URL (for resolving relative hrefs) and the parsed multistatus.
-    async fn dav(
+    pub(crate) async fn dav(
         &self,
         method: Method,
         url: &Url,
@@ -305,6 +309,9 @@ fn parse_multistatus(xml: &str) -> Result<Vec<DavResponse>, DavError> {
                     if name == "calendar" && parent == Some("resourcetype") {
                         r.is_calendar = true;
                     }
+                    if name == "addressbook" && parent == Some("resourcetype") {
+                        r.is_addressbook = true;
+                    }
                     if name == "comp" && parent == Some("supported-calendar-component-set") {
                         saw_comp_list = true;
                         r.supports_events |= e.attributes().flatten().any(|a| {
@@ -346,7 +353,10 @@ fn parse_multistatus(xml: &str) -> Result<Vec<DavResponse>, DavError> {
 
 fn record_text(current: Option<&mut DavResponse>, path: &[String], text: String) {
     let Some(r) = current else { return };
-    let text = if path.last().is_some_and(|p| p == "calendar-data") {
+    let text = if path
+        .last()
+        .is_some_and(|p| p == "calendar-data" || p == "address-data")
+    {
         text
     } else {
         text.trim().to_owned()
@@ -364,9 +374,11 @@ fn record_text(current: Option<&mut DavResponse>, path: &[String], text: String)
         (Some("response"), Some("href")) => r.href = text,
         (Some("current-user-principal"), Some("href")) => r.principal = Some(text),
         (Some("calendar-home-set"), Some("href")) => r.calendar_home = Some(text),
+        (Some("addressbook-home-set"), Some("href")) => r.addressbook_home = Some(text),
         (_, Some("displayname")) => r.display_name = Some(text),
         (_, Some("calendar-color")) => r.color = Some(text),
         (_, Some("calendar-data")) => r.calendar_data = Some(text),
+        (_, Some("address-data")) => r.address_data = Some(text),
         _ => {}
     }
 }

@@ -3,13 +3,19 @@
 use hearth_protocol::{Integration, IntegrationCategory, IntegrationStatus};
 
 /// Integrations whose connection flow exists.
-const AVAILABLE: &[&str] = &["google_calendar", "caldav", "telegram"];
+const AVAILABLE: &[&str] = &["google_calendar", "caldav", "carddav", "telegram"];
+
+/// Address books come with the same account connection as calendars (CalDAV and
+/// CardDAV share the app password), so connecting one connects both.
+fn connected_as(id: &str) -> &str {
+    if id == "carddav" { "caldav" } else { id }
+}
 
 /// The catalog, with each entry's status for this user.
 pub fn catalog_for(connected: &[String]) -> Vec<Integration> {
     let mut all = catalog();
     for i in &mut all {
-        i.status = if connected.contains(&i.id) {
+        i.status = if connected.iter().any(|c| c == connected_as(&i.id)) {
             IntegrationStatus::Connected
         } else if AVAILABLE.contains(&i.id.as_str()) {
             IntegrationStatus::Available
@@ -60,8 +66,11 @@ pub fn catalog() -> Vec<Integration> {
             "carddav",
             "iCloud & other contacts",
             Contacts,
-            "Apple iCloud, Nextcloud or any CardDAV address book.",
-            &["Look up names, numbers and addresses"],
+            "Your iCloud, Fastmail or Nextcloud address book. Connects with the calendar account.",
+            &[
+                "Know who people are and every way to reach them",
+                "Let you mention them with @",
+            ],
         ),
         item(
             "telegram",

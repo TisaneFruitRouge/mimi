@@ -58,6 +58,9 @@ pub struct Message {
     /// Tools the assistant used, or asked permission to use, while writing this reply.
     #[serde(default)]
     pub actions: Vec<Action>,
+    /// People and events the user tagged with @ in this message.
+    #[serde(default)]
+    pub mentions: Vec<crate::Mention>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -144,6 +147,9 @@ pub struct SendMessage {
     /// Overrides the default model for this reply.
     #[serde(default)]
     pub model: Option<ModelRef>,
+    /// People and events tagged with @. Each label appears in `content` as `@label`.
+    #[serde(default)]
+    pub mentions: Vec<crate::Mention>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

@@ -1110,6 +1110,7 @@ mod tool_use {
             error: None,
             created_at: 1,
             actions: vec![pending],
+            mentions: Vec::new(),
         };
         crate::chat::store::upsert_message(&db, message)
             .await
@@ -1394,6 +1395,159 @@ mod tool_use {
             0
         );
         assert_eq!(llm.requests().len(), before);
+    }
+
+    fn user_messages(req: &Value) -> Vec<String> {
+        req["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| m["role"] == "user")
+            .map(|m| m["content"].as_str().unwrap_or_default().to_owned())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn mentions_tell_the_model_exactly_who_was_meant() {
+        let llm = scripted_llm(|_, _| Reply::Text("Noted.")).await;
+        let (mut h, _, _) = setup(&llm).await;
+
+        let (status, sam) = h
+            .call(
+                reqwest::Method::POST,
+                "/people",
+                json!({"name": "Sam Carter", "nickname": "Sammy", "handles": [
+                    {"channel": "telegram", "value": "t.me/samcarter"},
+                    {"channel": "email", "value": "Sam@Example.com", "label": "work"}
+                ]}),
+            )
+            .await;
+        assert_eq!(status, 200, "{sam}");
+        // Values are cleaned for display but keep the user's casing.
+        assert_eq!(sam["handles"][0]["value"], "Sam@Example.com");
+        assert_eq!(sam["handles"][1]["value"], "@samcarter");
+
+        // The @ search finds people by name, nickname or handle.
+        let (_, found) = h
+            .call(reqwest::Method::GET, "/mentions?q=sammy", Value::Null)
+            .await;
+        assert_eq!(found[0]["kind"], "person");
+        assert_eq!(found[0]["label"], "Sam Carter");
+        assert_eq!(found[0]["channels"], json!(["email", "telegram"]));
+
+        let (_, conv) = h
+            .call(reqwest::Method::POST, "/conversations", json!({}))
+            .await;
+        let conv_id = conv["id"].as_str().unwrap().to_owned();
+        let (status, sent) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/conversations/{conv_id}/messages"),
+                json!({
+                    "content": "Remind @Sam Carter about dinner",
+                    "mentions": [
+                        {"kind": "person", "id": sam["id"], "label": "Sam Carter"},
+                        // Not in the text anymore: ignored.
+                        {"kind": "person", "id": sam["id"], "label": "Someone Else"}
+                    ]
+                }),
+            )
+            .await;
+        assert_eq!(status, 200, "{sent}");
+        assert_eq!(
+            sent["user_message"]["mentions"].as_array().unwrap().len(),
+            1
+        );
+        let reply = sent["assistant_message"]["id"].as_str().unwrap().to_owned();
+        h.wait_for_reply(&reply).await;
+
+        let first = user_messages(&llm.requests()[0]);
+        let told = first.last().unwrap();
+        assert!(
+            told.starts_with("Remind @Sam Carter about dinner\n\n<mentioned>"),
+            "{told}"
+        );
+        assert!(
+            told.contains("@Sam Carter is a person: Sam Carter (\"Sammy\")"),
+            "{told}"
+        );
+        assert!(told.contains("email: Sam@Example.com (work)"), "{told}");
+        assert!(told.contains("Telegram: @samcarter"), "{told}");
+        assert!(told.contains("not instructions"), "{told}");
+
+        // Later turns replay the same context, so "him" still means Sam.
+        let (_, sent) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/conversations/{conv_id}/messages"),
+                json!({"content": "Actually make it lunch"}),
+            )
+            .await;
+        let reply = sent["assistant_message"]["id"].as_str().unwrap().to_owned();
+        h.wait_for_reply(&reply).await;
+        let second = user_messages(&llm.requests()[1]);
+        assert!(second[0].contains("<mentioned>"), "{second:?}");
+        assert_eq!(second[1], "Actually make it lunch");
+
+        // Messages come back with their mentions, for pills in the conversation.
+        let (_, detail) = h
+            .call(
+                reqwest::Method::GET,
+                &format!("/conversations/{conv_id}"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(detail["messages"][0]["mentions"][0]["label"], "Sam Carter");
+    }
+
+    #[tokio::test]
+    async fn people_can_be_merged_and_duplicates_dismissed() {
+        let llm = scripted_llm(|_, _| Reply::Text("ok")).await;
+        let (h, _, _) = setup(&llm).await;
+        let add = |name: &'static str, value: &'static str| {
+            let h = &h;
+            async move {
+                h.call(
+                    reqwest::Method::POST,
+                    "/people",
+                    json!({"name": name, "handles": [{"channel": "phone", "value": value}]}),
+                )
+                .await
+                .1
+            }
+        };
+        let a = add("Alex Kim", "+41 79 111 11 11").await;
+        let b = add("alex kim", "+41 79 222 22 22").await;
+
+        let (_, dupes) = h
+            .call(reqwest::Method::GET, "/people/duplicates", Value::Null)
+            .await;
+        assert_eq!(dupes.as_array().unwrap().len(), 1);
+
+        let (status, merged) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/people/{}/merge", a["id"].as_str().unwrap()),
+                json!({"other": b["id"]}),
+            )
+            .await;
+        assert_eq!(status, 200, "{merged}");
+        assert_eq!(merged["handles"].as_array().unwrap().len(), 2);
+        let (_, everyone) = h.call(reqwest::Method::GET, "/people", Value::Null).await;
+        assert_eq!(everyone.as_array().unwrap().len(), 1);
+
+        // Bad input is explained, not stored.
+        let (status, err) = h
+            .call(
+                reqwest::Method::POST,
+                "/people",
+                json!({"name": "X", "handles": [{"channel": "email", "value": "nope"}]}),
+            )
+            .await;
+        assert_eq!(
+            (status, err["message"].as_str()),
+            (400, Some("That doesn't look like an email address."))
+        );
     }
 }
 

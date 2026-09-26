@@ -3,10 +3,14 @@ import { AnimatePresence, motion } from "motion/react";
 import { ArrowUp, AtSign, Blocks, MessageSquarePlus, Plus, Sparkles } from "lucide-react";
 import { cn } from "cn";
 
+import type { Mention } from "@/bindings/Mention";
 import { LocalityIcon } from "@/components/locality-badge";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { MentionPicker } from "@/features/chat/mentions/mention-picker";
+import { MentionHighlights } from "@/features/chat/mentions/mention-text";
+import { useMentions } from "@/features/chat/mentions/use-mentions";
 import type { Section } from "@/features/shell/top-bar";
 import { localityExplanation } from "@/lib/format";
 import { mod } from "@/lib/platform";
@@ -25,7 +29,7 @@ export const Composer = forwardRef<
   ComposerHandle,
   {
     replying: boolean;
-    onSend: (text: string) => Promise<boolean>;
+    onSend: (text: string, mentions: Mention[]) => Promise<boolean>;
     onStop: () => void;
     onNewConversation: () => void;
     onSection: (s: Section) => void;
@@ -34,10 +38,13 @@ export const Composer = forwardRef<
   const [text, setText] = useState("");
   const [actionsOpen, setActionsOpen] = useState(false);
   const area = useRef<HTMLTextAreaElement>(null);
+  const highlights = useRef<HTMLDivElement>(null);
   const active = useActiveModel();
+  const mention = useMentions({ text, setText, area });
 
   useImperativeHandle(ref, () => ({
     setText: (t) => {
+      mention.reset();
       setText(t);
       requestAnimationFrame(() => {
         area.current?.focus();
@@ -57,8 +64,13 @@ export const Composer = forwardRef<
   const submit = async () => {
     const value = text.trim();
     if (!value || replying || !active) return;
+    const mentions = mention.mentions;
     setText("");
-    if (!(await onSend(value))) setText(value);
+    mention.reset();
+    if (!(await onSend(value, mentions))) {
+      setText(value);
+      mention.restore(mentions);
+    }
   };
 
   const action = (fn: () => void) => () => {
@@ -70,51 +82,60 @@ export const Composer = forwardRef<
 
   return (
     <div className="mx-auto w-full max-w-[720px] px-6 pb-5">
-      <div className="rounded-[24px] bg-background shadow-[var(--shadow-raised)] transition-shadow duration-300 focus-within:shadow-[0_0_0_0.5px_rgb(86_118_13/0.28),0_0_0_3px_rgb(200_242_93/0.22),0_8px_24px_-6px_rgb(0_0_0/0.12)]">
-        <textarea
-          ref={area}
-          value={text}
-          onChange={(e) => {
-            // A lone "/" opens the actions menu, like a command line.
-            if (e.target.value === "/" && text === "") {
-              setActionsOpen(true);
-              return;
-            }
-            setText(e.target.value);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault();
-              submit();
-            }
-          }}
-          placeholder={active ? "Ask anything" : "Choose a model to start"}
-          aria-label="Message"
-          rows={1}
-          autoFocus
-          className="block max-h-60 min-h-[52px] w-full resize-none bg-transparent px-5 pt-4 pb-1 type-body outline-none placeholder:text-[#a1a1a6]"
-        />
+      <div className="relative rounded-[24px] bg-background shadow-[var(--shadow-raised)] transition-shadow duration-300 focus-within:shadow-[0_0_0_0.5px_rgb(86_118_13/0.28),0_0_0_3px_rgb(200_242_93/0.22),0_8px_24px_-6px_rgb(0_0_0/0.12)]">
+        {mention.open && (
+          <MentionPicker
+            query={mention.query}
+            candidates={mention.candidates}
+            loading={mention.loading}
+            highlight={mention.highlight}
+            onHighlight={mention.setHighlight}
+            onPick={mention.pick}
+          />
+        )}
+        <div className="relative">
+          <MentionHighlights ref={highlights} text={text} mentions={mention.mentions} className={fieldText} />
+          <textarea
+            ref={area}
+            value={text}
+            onChange={(e) => {
+              // A lone "/" opens the actions menu, like a command line.
+              if (e.target.value === "/" && text === "") {
+                setActionsOpen(true);
+                return;
+              }
+              setText(e.target.value);
+              mention.refresh(e.target.value);
+            }}
+            onKeyDown={(e) => {
+              if (mention.onKeyDown(e)) return;
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            onSelect={() => mention.refresh()}
+            onBlur={() => mention.close()}
+            onScroll={(e) => {
+              if (highlights.current) highlights.current.scrollTop = e.currentTarget.scrollTop;
+            }}
+            placeholder={active ? "Ask anything" : "Choose a model to start"}
+            aria-label="Message"
+            rows={1}
+            autoFocus
+            className={cn(
+              fieldText,
+              "relative block max-h-60 min-h-[52px] w-full resize-none bg-transparent outline-none placeholder:text-[#a1a1a6]",
+            )}
+          />
+        </div>
         <div className="flex items-center gap-1 px-3 pt-1 pb-3">
-          <Popover>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <PopoverTrigger asChild>
-                  <ToolbarChip icon={<AtSign />} label="Mention someone or something" />
-                </PopoverTrigger>
-              </TooltipTrigger>
-              <TooltipContent>People, events and apps</TooltipContent>
-            </Tooltip>
-            <PopoverContent align="start" className="w-[300px] p-4">
-              <p className="type-callout font-medium">Mention people and events</p>
-              <p className="mt-1 type-subhead text-muted-foreground">
-                Once your calendar, contacts or messaging apps are connected, type @ to point
-                your assistant at exactly what you mean.
-              </p>
-              <Button size="sm" variant="secondary" className="mt-3" onClick={() => onSection("connections")}>
-                <Blocks /> Open Connections
-              </Button>
-            </PopoverContent>
-          </Popover>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <ToolbarChip icon={<AtSign />} label="Mention a person or event" onClick={mention.start} />
+            </TooltipTrigger>
+            <TooltipContent>Mention a person or event · or type @</TooltipContent>
+          </Tooltip>
 
           <Popover open={actionsOpen} onOpenChange={setActionsOpen}>
             <Tooltip>
@@ -186,6 +207,9 @@ export const Composer = forwardRef<
     </div>
   );
 });
+
+/** Box and type shared by the textarea and the mention highlights behind it. */
+const fieldText = "px-5 pt-4 pb-1 type-body";
 
 /** A quiet round button in the composer toolbar; its label shows as a tooltip. */
 const ToolbarChip = forwardRef<

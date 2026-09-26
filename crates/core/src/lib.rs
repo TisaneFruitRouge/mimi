@@ -16,6 +16,7 @@ pub mod hardware;
 pub mod integrations;
 pub mod keys;
 pub mod memory;
+pub mod people;
 pub mod providers;
 pub mod settings;
 pub mod tools;
@@ -44,6 +45,8 @@ pub struct AppState {
     pub connections: connections::Connections,
     /// Conversations waiting to be learned from once they go quiet.
     pub learner: memory::learn::Learner,
+    /// The people directory: contact sources and the sync trigger.
+    pub people: people::People,
 }
 
 impl AppState {
@@ -73,6 +76,7 @@ impl AppState {
             approvals: Default::default(),
             connections: Default::default(),
             learner: Default::default(),
+            people: Default::default(),
         }
     }
 }

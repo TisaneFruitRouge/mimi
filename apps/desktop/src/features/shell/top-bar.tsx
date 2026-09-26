@@ -7,8 +7,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { macOverlayTitleBar, mod } from "@/lib/platform";
 import { useSettings } from "@/lib/queries";
 
-/** Top-bar sections, plus pages reached from elsewhere (Memory, from Settings). */
-export type Section = "chat" | "connections" | "models" | "memory";
+/**
+ * Top-bar sections, plus pages reached from elsewhere: Memory (from Settings) and People
+ * (from Connections, whose tab stays selected).
+ */
+export type Section = "chat" | "connections" | "models" | "memory" | "people";
 
 const sections: { id: Section; label: string; key: string }[] = [
   { id: "chat", label: "Chat", key: "1" },
@@ -17,6 +20,9 @@ const sections: { id: Section; label: string; key: string }[] = [
 ];
 
 export const paletteShortcut = `${mod}K`;
+
+/** The tab a section is shown under. */
+const tabOf = (s: Section): Section => (s === "people" ? "connections" : s);
 
 /**
  * The translucent bar over every screen. Content scrolls under it; it gains its
@@ -54,7 +60,7 @@ export function TopBar({
         </span>
       </div>
 
-      <SegmentedControl value={section} onChange={onSection} />
+      <SegmentedControl value={tabOf(section)} onChange={onSection} />
 
       <div data-tauri-drag-region className="flex items-center justify-end gap-1">
         <IconButton label="New chat" shortcut={`${mod}N`} onClick={onNewChat}>

@@ -8,6 +8,7 @@ import { ChatView } from "@/features/chat/chat-view";
 import { ConnectionsView } from "@/features/connections/connections-view";
 import { MemoryView } from "@/features/memory/memory-view";
 import { ModelsView } from "@/features/models/models-view";
+import { PeopleView } from "@/features/people/people-view";
 import { ConversationPalette } from "@/features/shell/conversation-palette";
 import { SettingsDialog } from "@/features/shell/settings-dialog";
 import { type Section, TopBar } from "@/features/shell/top-bar";
@@ -60,7 +61,7 @@ type Route = { section: Section; conversationId: string | null };
 
 function parseHash(): Route {
   const [first, second] = location.hash.replace(/^#\/?/, "").split("/");
-  if (first === "models" || first === "connections" || first === "memory")
+  if (first === "models" || first === "connections" || first === "memory" || first === "people")
     return { section: first, conversationId: null };
   return { section: "chat", conversationId: first === "chat" && second ? second : null };
 }
@@ -170,7 +171,8 @@ function Shell() {
                 onSection={setSection}
               />
             )}
-            {section === "connections" && <ConnectionsView />}
+            {section === "connections" && <ConnectionsView onPeople={() => setSection("people")} />}
+            {section === "people" && <PeopleView onConnections={() => setSection("connections")} />}
             {section === "models" && <ModelsView onChat={() => setSection("chat")} />}
             {section === "memory" && <MemoryView />}
           </motion.main>

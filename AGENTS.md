@@ -163,6 +163,31 @@ than inventing their own.
   hand, `fake_telegram` in `api/tests.rs` for the bot, public Google holiday feeds for
   iCal parsing.
 
+## People and @ mentions
+
+- `crates/core/src/people/`: one directory of people. A person has contact cards
+  (`person_records`, one per card per source) and handles (`person_handles`, each with
+  its channel, value, label and the card it came from; `source IS NULL` = added by the
+  user). Keep person ids stable: other features (memory notes, messaging) link to them.
+- **Adding a contact source** (e.g. Telegram contacts from a "send as me" account):
+  implement `people::ContactSource` returning *all* current cards per connection, and
+  register it with `state.people.sources.add(...)` at startup. Sync diffs by card id;
+  never write to the people tables directly. Record ids must be stable per source.
+- **Unification rules (don't loosen them):** cards merge only on a shared match key
+  (`people::normalize::match_key`: email, phone incl. Signal/WhatsApp numbers, Telegram
+  username). Never on names: those become "possible duplicates" for the user. Never
+  guess a phone's country code. Once placed, a card stays with its person (so user
+  splits survive syncs); imported handles are read-only, "change it in the address book".
+- **Mentions:** `Mention { kind: person | event, id, label }`, with `@label` in the
+  message text. The engine resolves them into a `<mentioned>` block (data, not
+  instructions), stores it in `messages.mention_context` and replays it later. Event
+  ids come from `people::mentions::event_id` (calendar + uid + occurrence start).
+- **Composer:** the textarea stays the input. The @ logic lives in
+  `apps/desktop/src/features/chat/mentions/` (`useMentions`, picker, highlight layer);
+  the highlight layer must share the textarea's box and type (`fieldText` in
+  composer.tsx) or the pills drift from the text.
+- Channel icons and avatars: `src/components/people.tsx`.
+
 ## Tools (what the assistant can do)
 
 - **Approval rule:** anything that sends, changes or deletes something on the user's

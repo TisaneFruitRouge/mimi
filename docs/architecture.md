@@ -154,6 +154,41 @@ small in the prompt however much accumulates. It works like a tiny file system:
   `PUT /v1/memory/profile`, `PUT /v1/memory/learning`, `POST /v1/memory/undo/{revision}`,
   `POST /v1/memory/forget-all`. Changes publish `memory_changed`.
 
+## People and @ mentions
+
+`crates/core/src/people/` keeps one directory of people, unified across sources.
+
+- **Model:** a person (`people`) has contact cards from sources (`person_records`:
+  source = connection id, record = the card's id there) and handles
+  (`person_handles`: channel phone/email/telegram/signal/whatsapp/matrix, value, label,
+  and the card it came from, or none when the user added it). People the user adds are
+  `manual` and survive syncs. Person ids are stable (merges keep the first id), so
+  other features can link to them, such as memory notes' `subject`.
+- **Sources:** `ContactSource` implementations return every card, per connection;
+  `people::sync_all` works out what changed. Today: address books (CardDAV) on connected
+  CalDAV accounts (iCloud → contacts.icloud.com, Fastmail → carddav.fastmail.com,
+  others on the same server). Syncs run at startup, every 30 minutes, when connections
+  change, and on `POST /v1/people/sync`. A removed connection takes its cards along.
+- **Unification:** a new card joins the person who already has one of its match keys
+  (email lowercased; phone digits with `+`/`00` as international, national numbers kept
+  as they are; Signal/WhatsApp numbers are phones; Telegram usernames). Never on name:
+  same-name people become "possible duplicates" (`GET /v1/people/duplicates`), which
+  the user merges or dismisses. A card, once placed, stays with its person, so a split
+  (`POST /v1/people/{id}/split`) survives later syncs.
+- **Mentions:** `GET /v1/mentions?q=` suggests people and events (upcoming 30 days;
+  with a query, the past month to six months ahead). Event ids encode calendar, uid and
+  start (`ev:<ms>:<hex calendar>:<hex uid>`). `SendMessage.mentions` keeps those whose
+  `@label` is still in the text; the engine resolves them into a `<mentioned>` block
+  appended to the user's message for the model (who they are and every way to reach
+  them; the event's time, calendar and place), marked as data rather than
+  instructions. The block is stored with the message (`mention_context`) and replayed
+  in later turns.
+- **Assistant tools:** `people_search` and `person_details`, reads without approval.
+- **UI:** the composer is still a textarea. Typing `@` opens the picker
+  (`features/chat/mentions/`), picked items become `@label` text tracked as tokens and
+  drawn as pills behind the text, and a token deletes as a whole. People live at
+  `#/people`, reached from Connections.
+
 ## Planned
 
 - **Background service**: install `hearthd` as a systemd user unit (Linux) or a launchd

@@ -78,6 +78,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         approvals: Default::default(),
         connections: Default::default(),
         learner: Default::default(),
+        people: Default::default(),
     });
     #[cfg(debug_assertions)]
     if std::env::var(crate::tools::dev::ENV).is_ok_and(|v| v == "1") {
@@ -96,6 +97,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .add(Arc::new(crate::memory::tools::MemoryTools));
     crate::connections::start_all(&state).await;
     tokio::spawn(crate::memory::learn::run(state.clone()));
+    crate::people::install(&state);
 
     let served = axum::serve(listener, api::router(state))
         .with_graceful_shutdown(shutdown_signal())

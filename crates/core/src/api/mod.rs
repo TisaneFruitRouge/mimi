@@ -19,6 +19,7 @@ pub mod error;
 mod events;
 mod hardware;
 mod memory;
+mod people;
 mod providers;
 mod settings;
 mod web;
@@ -48,6 +49,27 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/connections/{id}",
             axum::routing::delete(connections::delete),
         )
+        .route("/people", get(people::list).post(people::create))
+        .route("/people/duplicates", get(people::duplicates))
+        .route(
+            "/people/duplicates/dismiss",
+            post(people::dismiss_duplicate),
+        )
+        .route("/people/sync", post(people::sync))
+        .route(
+            "/people/{id}",
+            get(people::get)
+                .patch(people::update)
+                .delete(people::delete),
+        )
+        .route("/people/{id}/handles", post(people::add_handle))
+        .route(
+            "/people/{id}/handles/{handle}",
+            axum::routing::delete(people::remove_handle),
+        )
+        .route("/people/{id}/merge", post(people::merge))
+        .route("/people/{id}/split", post(people::split))
+        .route("/mentions", get(people::mentions))
         .route("/hardware", get(hardware::get))
         .route("/recommendations", get(hardware::recommendations))
         .route(

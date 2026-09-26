@@ -96,6 +96,9 @@ function apply(qc: QueryClient, event: Event) {
       qc.setQueryData(keys.connections, event.connections);
       qc.invalidateQueries({ queryKey: keys.integrations });
       break;
+    case "people_changed":
+      qc.invalidateQueries({ queryKey: keys.people });
+      break;
     case "model_pull": {
       const { pull } = event;
       const same = (p: ModelPull) => p.provider_id === pull.provider_id && p.model === pull.model;

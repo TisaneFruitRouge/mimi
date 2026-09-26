@@ -13,7 +13,7 @@ fn conversation(row: &Row) -> rusqlite::Result<Conversation> {
     })
 }
 
-const MESSAGE_COLUMNS: &str = "id, conversation_id, role, content, reasoning, status, provider_id, model, locality, error, created_at, actions";
+const MESSAGE_COLUMNS: &str = "id, conversation_id, role, content, reasoning, status, provider_id, model, locality, error, created_at, actions, mentions";
 
 fn message(row: &Row) -> rusqlite::Result<Message> {
     let provider_id: Option<String> = row.get(6)?;
@@ -55,6 +55,12 @@ fn message(row: &Row) -> rusqlite::Result<Message> {
                 )
             })?
         },
+        // Unreadable mentions only lose their pills, never the message.
+        mentions: row
+            .get::<_, String>(12)
+            .ok()
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default(),
     })
 }
 
@@ -117,7 +123,7 @@ pub async fn upsert_message(db: &Db, m: Message) -> Result<(), DbError> {
         c.execute(
             &format!(
                 "INSERT INTO messages ({MESSAGE_COLUMNS})
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                  ON CONFLICT (id) DO UPDATE SET content = excluded.content,
                      reasoning = excluded.reasoning, status = excluded.status,
                      error = excluded.error, actions = excluded.actions"
@@ -135,6 +141,7 @@ pub async fn upsert_message(db: &Db, m: Message) -> Result<(), DbError> {
                 m.error,
                 m.created_at,
                 serde_json::to_string(&m.actions).expect("actions serialize"),
+                serde_json::to_string(&m.mentions).expect("mentions serialize"),
             ],
         )?;
         Ok(())
@@ -177,6 +184,48 @@ pub async fn mark_interrupted(db: &Db) -> Result<usize, DbError> {
         }
         tx.commit()?;
         Ok(rows.len())
+    })
+    .await
+}
+
+/// Stores what the model was told about a message's @ mentions, so later turns replay
+/// the same context even if the contact or event changes or disappears.
+pub async fn set_mention_context(
+    db: &Db,
+    message_id: Uuid,
+    context: String,
+) -> Result<(), DbError> {
+    db.call(move |c| {
+        c.execute(
+            "UPDATE messages SET mention_context = ?1 WHERE id = ?2",
+            (context, message_id.to_string()),
+        )?;
+        Ok(())
+    })
+    .await
+}
+
+/// Mention context of every message in a conversation that has one.
+pub async fn mention_contexts(
+    db: &Db,
+    conversation_id: Uuid,
+) -> Result<std::collections::HashMap<Uuid, String>, DbError> {
+    db.call(move |c| {
+        let mut stmt = c.prepare(
+            "SELECT id, mention_context FROM messages
+             WHERE conversation_id = ?1 AND mention_context IS NOT NULL",
+        )?;
+        let rows = stmt.query_map([conversation_id.to_string()], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+        let mut out = std::collections::HashMap::new();
+        for row in rows {
+            let (id, context) = row?;
+            if let Ok(id) = id.parse() {
+                out.insert(id, context);
+            }
+        }
+        Ok(out)
     })
     .await
 }

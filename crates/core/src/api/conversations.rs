@@ -80,7 +80,9 @@ pub async fn send(
     Path(id): Path<Uuid>,
     Json(req): Json<SendMessage>,
 ) -> ApiResult<SendMessageResult> {
-    Ok(Json(chat::send(state, id, req.content, req.model).await?))
+    Ok(Json(
+        chat::send(state, id, req.content, req.model, req.mentions).await?,
+    ))
 }
 
 /// Stops the reply being written in this conversation, keeping what was written so far.

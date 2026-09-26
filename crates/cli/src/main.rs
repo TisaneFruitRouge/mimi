@@ -302,6 +302,7 @@ async fn chat(client: &Client, message: Option<String>, resume: bool) -> anyhow:
                 &SendMessage {
                     content: text,
                     model: None,
+                    mentions: Vec::new(),
                 },
             )
             .await?;
