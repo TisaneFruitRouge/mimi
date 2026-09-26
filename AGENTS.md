@@ -6,6 +6,13 @@ rename is a find-and-replace.
 
 ## Principles (apply to every change)
 
+0. **There is no Hearth server. Ever.** Everything runs on the user's own machines. No
+   central relay, account system, telemetry, update-check or proxy operated by the
+   project. Third parties are contacted only directly from the user's machine, and only
+   when a feature needs them (Google for their calendar, Telegram for their messages, a
+   cloud model they chose). Registered app identities (e.g. Hearth's Google OAuth
+   client ID, a Telegram api_id) are just identifiers shown on consent screens; they
+   never route data through the project.
 1. **Self-hosting, privacy and security by default.** Prefer local processing. Data
    leaves the machine only when the task needs it (sending a Telegram message, creating
    a calendar event), or when the user has explicitly chosen a cloud model.
