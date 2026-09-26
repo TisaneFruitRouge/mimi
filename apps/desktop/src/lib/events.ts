@@ -1,0 +1,114 @@
+import { useEffect, useSyncExternalStore } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import type { QueryClient } from "@tanstack/react-query";
+
+import type { Conversation } from "@/bindings/Conversation";
+import type { ConversationDetail } from "@/bindings/ConversationDetail";
+import type { Event } from "@/bindings/Event";
+import type { Message } from "@/bindings/Message";
+import { keys } from "@/lib/api";
+
+// Connection state, fed by the Rust event relay.
+let connected: boolean | null = null;
+const listeners = new Set<() => void>();
+function setConnected(value: boolean) {
+  connected = value;
+  listeners.forEach((l) => l());
+}
+
+/** `null` until the first answer from the relay. */
+export function useConnected(): boolean | null {
+  return useSyncExternalStore(
+    (l) => {
+      listeners.add(l);
+      return () => listeners.delete(l);
+    },
+    () => connected,
+  );
+}
+
+/** Keeps the query cache in sync with daemon events. Mount once. */
+export function useDaemonSync(qc: QueryClient) {
+  useEffect(() => {
+    let disposed = false;
+    const unlisteners = [
+      listen<Event>("daemon-event", ({ payload }) => apply(qc, payload)),
+      listen<boolean>("daemon-connection", ({ payload }) => {
+        setConnected(payload);
+        // Anything could have changed while we were away.
+        if (payload) qc.invalidateQueries();
+      }),
+    ];
+    invoke<boolean>("daemon_connected").then((v) => !disposed && setConnected(v));
+    return () => {
+      disposed = true;
+      unlisteners.forEach((p) => p.then((un) => un()));
+    };
+  }, [qc]);
+}
+
+function apply(qc: QueryClient, event: Event) {
+  switch (event.type) {
+    case "settings_changed":
+      qc.setQueryData(keys.settings, event.settings);
+      break;
+    case "providers_changed":
+      qc.setQueryData(keys.providers, event.providers);
+      qc.invalidateQueries({ queryKey: keys.allModels });
+      qc.invalidateQueries({ queryKey: keys.recommendations });
+      break;
+    case "conversation_updated":
+      qc.setQueryData<Conversation[]>(keys.conversations, (list) =>
+        list ? sortByActivity(upsert(list, event.conversation)) : list,
+      );
+      qc.setQueryData<ConversationDetail>(keys.conversation(event.conversation.id), (d) =>
+        d ? { ...d, conversation: event.conversation } : d,
+      );
+      break;
+    case "conversation_deleted":
+      qc.setQueryData<Conversation[]>(keys.conversations, (list) =>
+        list?.filter((c) => c.id !== event.id),
+      );
+      qc.removeQueries({ queryKey: keys.conversation(event.id) });
+      break;
+    case "message_updated":
+      qc.setQueryData<ConversationDetail>(keys.conversation(event.message.conversation_id), (d) =>
+        d ? { ...d, messages: upsert(d.messages, event.message) } : d,
+      );
+      break;
+    case "message_delta":
+      qc.setQueryData<ConversationDetail>(keys.conversation(event.conversation_id), (d) =>
+        d
+          ? {
+              ...d,
+              messages: d.messages.map((m): Message =>
+                m.id === event.message_id
+                  ? {
+                      ...m,
+                      content: m.content + event.content,
+                      reasoning: m.reasoning + event.reasoning,
+                    }
+                  : m,
+              ),
+            }
+          : d,
+      );
+      break;
+    case "resync":
+      qc.invalidateQueries();
+      break;
+  }
+}
+
+function upsert<T extends { id: string }>(list: T[], item: T): T[] {
+  const i = list.findIndex((x) => x.id === item.id);
+  if (i === -1) return [...list, item];
+  const next = list.slice();
+  next[i] = item;
+  return next;
+}
+
+function sortByActivity(list: Conversation[]) {
+  return list.slice().sort((a, b) => b.updated_at - a.updated_at);
+}

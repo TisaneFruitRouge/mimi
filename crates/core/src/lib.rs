@@ -6,6 +6,7 @@ use std::time::Instant;
 use hearth_protocol::{KeyStorage, Paths};
 
 pub mod api;
+pub mod chat;
 pub mod daemon;
 pub mod db;
 pub mod events;
@@ -26,6 +27,7 @@ pub struct AppState {
     pub events: events::EventBus,
     /// Shared HTTP client for talking to model providers.
     pub http: reqwest::Client,
+    pub generations: chat::Generations,
 }
 
 impl AppState {
@@ -42,6 +44,7 @@ impl AppState {
             key_storage: KeyStorage::File,
             events: events::EventBus::new(),
             http: http_client(),
+            generations: Default::default(),
         }
     }
 }

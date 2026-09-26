@@ -12,6 +12,7 @@ use hearth_protocol::{API_PREFIX, Health, Status};
 
 use crate::{AppState, VERSION};
 
+mod conversations;
 pub mod error;
 mod events;
 mod hardware;
@@ -33,6 +34,18 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/providers/{id}/models", get(providers::models))
         .route("/hardware", get(hardware::get))
         .route("/recommendations", get(hardware::recommendations))
+        .route(
+            "/conversations",
+            get(conversations::list).post(conversations::create),
+        )
+        .route(
+            "/conversations/{id}",
+            get(conversations::get)
+                .patch(conversations::update)
+                .delete(conversations::delete),
+        )
+        .route("/conversations/{id}/messages", post(conversations::send))
+        .route("/conversations/{id}/cancel", post(conversations::cancel))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
 
     Router::new()

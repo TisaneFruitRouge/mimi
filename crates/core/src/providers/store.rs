@@ -53,13 +53,15 @@ pub async fn get(db: &Db, id: Uuid) -> Result<Option<ProviderRecord>, DbError> {
     .await
 }
 
-/// Inserts or replaces the whole record.
+/// Inserts the record, or updates its mutable fields.
 pub async fn upsert(db: &Db, record: ProviderRecord) -> Result<(), DbError> {
     db.call(move |c| {
         let p = &record.provider;
         c.execute(
             &format!(
-                "INSERT OR REPLACE INTO providers ({COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+                "INSERT INTO providers ({COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT (id) DO UPDATE SET name = excluded.name, base_url = excluded.base_url,
+                     locality = excluded.locality, api_key = excluded.api_key"
             ),
             (
                 p.id.to_string(),

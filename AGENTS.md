@@ -49,7 +49,14 @@ features go in the daemon plus the protocol types. Frontends only render them.
 - Schema changes are new files in `crates/core/src/db/migrations/`, registered in
   `MIGRATIONS`. Never edit a migration that has been committed.
 - The desktop webview calls Tauri commands. It never talks to the daemon or holds the
-  token directly.
+  token directly: the `api` command proxies `/v1` requests, and the Rust side relays
+  daemon events to the webview as `daemon-event` / `daemon-connection`.
+- Frontend layout: `src/lib/api.ts` (typed calls + query keys), `src/lib/events.ts`
+  (applies daemon events to the TanStack Query cache; prefer this over refetching),
+  `src/features/<area>/` for screens, `src/components/` for shared pieces. Model output
+  is rendered with react-markdown (no raw HTML); links open in the system browser.
+- Every place a model is chosen or used shows its locality (`LocalityBadge`). Cloud use
+  must always be visible to the user.
 
 ## Commands
 
@@ -64,6 +71,11 @@ HEARTH_HOME=/tmp/h1 ...  # any other isolated instance
 When testing `pnpm dev` from an agent session, stop it by exact PID or by the
 `setsid` process group. Never `pkill -f` with a pattern that could match other
 projects' processes or the current shell's own command line.
+
+The dev machine is the user's own desktop, in use while you work. Before sending input
+(`wtype`) confirm the app window is focused (`hyprctl activewindow`), and only screenshot
+it while it is visible: a window-region `grim` capture of a hidden window captures
+whatever the user is looking at. Prefer verifying behaviour through the API/CLI.
 
 Rust comes from mise on the dev machine (`eval "$(mise env -s bash)"` if `cargo` is not
 on PATH).

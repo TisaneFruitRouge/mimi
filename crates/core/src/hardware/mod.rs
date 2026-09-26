@@ -12,7 +12,7 @@ pub fn detect() -> HardwareInfo {
     let mut sys = System::new();
     sys.refresh_memory();
     sys.refresh_cpu_list(CpuRefreshKind::nothing());
-    let cpu_name = sys
+    let mut cpu_name = sys
         .cpus()
         .first()
         .map(|c| c.brand().trim().to_owned())
@@ -21,10 +21,11 @@ pub fn detect() -> HardwareInfo {
     let mut gpus = detect_gpus();
     // AMD APUs name their graphics in the CPU brand ("… w/ Radeon 780M Graphics"),
     // which beats the PCI database's codename.
-    if let Some((_, igpu)) = cpu_name.split_once(" w/ ") {
+    if let Some((cpu, igpu)) = cpu_name.split_once(" w/ ") {
         for g in gpus.iter_mut().filter(|g| g.kind == GpuKind::Integrated) {
             g.name = igpu.trim().to_owned();
         }
+        cpu_name = cpu.trim().to_owned();
     }
     if cfg!(target_os = "macos") && matches!(arch.as_str(), "arm64" | "aarch64") {
         // Apple Silicon: the GPU shares the (fast, unified) system memory.

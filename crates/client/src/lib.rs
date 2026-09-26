@@ -4,8 +4,9 @@
 use futures::StreamExt;
 use futures::stream::BoxStream;
 use hearth_protocol::{
-    API_PREFIX, ApiError, Discovery, Event, HardwareInfo, Health, ModelInfo, NewProvider, Paths,
-    ProbeRequest, ProbeResult, Provider, ProviderPreset, Recommendations, Settings, Status,
+    API_PREFIX, ApiError, Conversation, ConversationDetail, Discovery, Event, HardwareInfo, Health,
+    ModelInfo, NewConversation, NewProvider, Paths, ProbeRequest, ProbeResult, Provider,
+    ProviderPreset, Recommendations, SendMessage, SendMessageResult, Settings, Status,
 };
 pub use reqwest::Method;
 use serde::Serialize;
@@ -118,6 +119,46 @@ impl Client {
 
     pub async fn recommendations(&self) -> Result<Recommendations, Error> {
         self.send(Method::GET, "/recommendations", None::<()>).await
+    }
+
+    pub async fn conversations(&self) -> Result<Vec<Conversation>, Error> {
+        self.send(Method::GET, "/conversations", None::<()>).await
+    }
+
+    pub async fn create_conversation(&self, new: &NewConversation) -> Result<Conversation, Error> {
+        self.send(Method::POST, "/conversations", Some(new)).await
+    }
+
+    pub async fn conversation(&self, id: Uuid) -> Result<ConversationDetail, Error> {
+        self.send(Method::GET, &format!("/conversations/{id}"), None::<()>)
+            .await
+    }
+
+    pub async fn delete_conversation(&self, id: Uuid) -> Result<(), Error> {
+        self.send(Method::DELETE, &format!("/conversations/{id}"), None::<()>)
+            .await
+    }
+
+    pub async fn send_message(
+        &self,
+        conversation_id: Uuid,
+        message: &SendMessage,
+    ) -> Result<SendMessageResult, Error> {
+        self.send(
+            Method::POST,
+            &format!("/conversations/{conversation_id}/messages"),
+            Some(message),
+        )
+        .await
+    }
+
+    pub async fn cancel_reply(&self, conversation_id: Uuid) -> Result<(), Error> {
+        self.send(
+            Method::POST,
+            &format!("/conversations/{conversation_id}/cancel"),
+            None::<()>,
+        )
+        .await
     }
 
     /// Untyped request to any `/v1` route. `path` excludes the `/v1` prefix.

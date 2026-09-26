@@ -43,6 +43,10 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .await??
     };
     tracing::info!(?key_storage, "database opened");
+    let interrupted = crate::chat::store::mark_interrupted(&db).await?;
+    if interrupted > 0 {
+        tracing::warn!(interrupted, "marked replies cut off by the last shutdown");
+    }
 
     // Loopback only; remote access will be a separate, explicitly enabled listener.
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
@@ -67,6 +71,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         key_storage,
         events: crate::events::EventBus::new(),
         http: crate::http_client(),
+        generations: Default::default(),
     });
     tracing::info!(port, "hearth daemon listening on 127.0.0.1");
 

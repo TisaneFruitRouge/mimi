@@ -2,7 +2,12 @@ use anyhow::{Context, bail};
 use clap::{Parser, Subcommand};
 use futures::StreamExt;
 use hearth_client::Client;
-use hearth_protocol::{Locality, ModelRef, NewProvider, ProbeRequest, Provider};
+use std::io::{BufRead, Write};
+
+use hearth_protocol::{
+    Event, Locality, MessageStatus, ModelRef, NewConversation, NewProvider, ProbeRequest, Provider,
+    SendMessage,
+};
 
 /// Command-line interface to your hearth assistant.
 #[derive(Parser)]
@@ -23,6 +28,15 @@ enum Command {
     Providers(ProvidersCommand),
     /// List the models a provider offers (all providers if omitted).
     Models { provider: Option<String> },
+    /// Chat with the assistant. Without a message, starts an interactive session.
+    Chat {
+        message: Option<String>,
+        /// Continue the most recent conversation instead of starting a new one.
+        #[arg(long, short)]
+        r#continue: bool,
+    },
+    /// List conversations, most recent first.
+    Conversations,
     /// Describe this computer and suggest models for it.
     Recommend,
     /// Show or change the model used for new messages.
@@ -90,6 +104,15 @@ async fn main() -> anyhow::Result<()> {
                     }
                     Err(e) => println!("  unavailable: {e}"),
                 }
+            }
+        }
+        Command::Chat {
+            message,
+            r#continue,
+        } => chat(&client, message, r#continue).await?,
+        Command::Conversations => {
+            for c in client.conversations().await? {
+                println!("{}  {}", &c.id.to_string()[..8], c.title);
             }
         }
         Command::Recommend => {
@@ -170,6 +193,74 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn chat(client: &Client, message: Option<String>, resume: bool) -> anyhow::Result<()> {
+    let conversation = match client.conversations().await?.into_iter().next() {
+        Some(latest) if resume => latest,
+        _ => {
+            client
+                .create_conversation(&NewConversation::default())
+                .await?
+        }
+    };
+    let mut events = client.events().await?;
+    let mut send = async |text: String| -> anyhow::Result<()> {
+        let sent = client
+            .send_message(
+                conversation.id,
+                &SendMessage {
+                    content: text,
+                    model: None,
+                },
+            )
+            .await?;
+        let id = sent.assistant_message.id;
+        let mut thinking = false;
+        while let Some(event) = events.next().await {
+            match event? {
+                Event::MessageDelta {
+                    message_id,
+                    content,
+                    reasoning,
+                    ..
+                } if message_id == id => {
+                    if !reasoning.is_empty() && !thinking {
+                        thinking = true;
+                        eprint!("\x1b[2m(thinking…)\x1b[0m ");
+                    }
+                    print!("{content}");
+                    std::io::stdout().flush()?;
+                }
+                Event::MessageUpdated { message }
+                    if message.id == id && message.status != MessageStatus::Streaming =>
+                {
+                    println!();
+                    if let Some(err) = message.error {
+                        eprintln!("error: {err}");
+                    }
+                    break;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    };
+    if let Some(text) = message {
+        return send(text).await;
+    }
+    eprintln!("Chatting in \"{}\". Ctrl+D to quit.", conversation.title);
+    let stdin = std::io::stdin();
+    loop {
+        eprint!("\x1b[1m> \x1b[0m");
+        let mut line = String::new();
+        if stdin.lock().read_line(&mut line)? == 0 {
+            return Ok(());
+        }
+        if !line.trim().is_empty() {
+            send(line).await?;
+        }
+    }
+}
+
 async fn providers(client: &Client, cmd: ProvidersCommand) -> anyhow::Result<()> {
     match cmd {
         ProvidersCommand::List => {
@@ -247,6 +338,7 @@ fn find_provider<'a>(all: &'a [Provider], query: &str) -> anyhow::Result<&'a Pro
 }
 
 fn gb(bytes: u64) -> f64 {
+    // Decimal, as download sizes are advertised.
     bytes as f64 / 1e9
 }
 

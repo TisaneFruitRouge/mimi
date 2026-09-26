@@ -9,6 +9,8 @@ const host = process.env.TAURI_DEV_HOST;
 // https://vite.dev/config/
 export default defineConfig(() => ({
   plugins: [react(), tailwindcss()],
+  // Served from disk by the app, never downloaded, so bundle size matters little.
+  build: { chunkSizeWarningLimit: 2000 },
   resolve: {
     alias: { "@": path.resolve(__dirname, "./src") },
   },

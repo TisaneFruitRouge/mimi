@@ -6,7 +6,16 @@ A private personal AI assistant that you host yourself. It runs on your own comp
 uses local models by default, and sends data to outside services only when a task
 requires it, such as sending a Telegram message or creating a calendar event.
 
-**Status:** early scaffolding. Nothing useful yet.
+**Status:** early. What works today:
+
+- Chat with streaming replies, saved and encrypted on disk (SQLCipher, key in the OS
+  keychain).
+- Any OpenAI-compatible model provider: Ollama, LM Studio and llama.cpp on your
+  computer, a server on your network, or a cloud service. Every model is labeled
+  *on this device*, *on your network* or *cloud*.
+- First-run setup that looks at your hardware, finds local model servers, and
+  recommends models that fit.
+- A desktop app and a `hearth` CLI with the same capabilities.
 
 ## Goals
 

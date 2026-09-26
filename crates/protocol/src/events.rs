@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{Provider, Settings};
+use uuid::Uuid;
+
+use crate::{Conversation, Message, Provider, Settings};
 
 /// Pushed by the daemon to every client connected to `GET /v1/events` (WebSocket, one
 /// JSON event per text frame).
@@ -14,6 +16,24 @@ pub enum Event {
     },
     ProvidersChanged {
         providers: Vec<Provider>,
+    },
+    /// A conversation was created or changed (title, last activity).
+    ConversationUpdated {
+        conversation: Conversation,
+    },
+    ConversationDeleted {
+        id: Uuid,
+    },
+    /// A message was created or changed state (e.g. finished streaming).
+    MessageUpdated {
+        message: Message,
+    },
+    /// New text for a streaming message, to append to what the client has.
+    MessageDelta {
+        conversation_id: Uuid,
+        message_id: Uuid,
+        content: String,
+        reasoning: String,
     },
     /// This client fell behind and missed events. Refetch any state you display.
     Resync,

@@ -9,12 +9,14 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+pub mod chat;
 pub mod events;
 pub mod hardware;
 pub mod paths;
 pub mod providers;
 pub mod settings;
 
+pub use chat::*;
 pub use events::Event;
 pub use hardware::*;
 pub use paths::Paths;
