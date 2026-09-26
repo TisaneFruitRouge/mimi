@@ -1,0 +1,25 @@
+[package]
+name = "hearth-desktop"
+description = "hearth desktop app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+# The `_lib` suffix avoids a lib/bin name clash, see https://github.com/rust-lang/cargo/issues/8519
+name = "hearth_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+hearth-client = { path = "../../../crates/client" }
+hearth-protocol = { path = "../../../crates/protocol" }
+
+[lints]
+workspace = true

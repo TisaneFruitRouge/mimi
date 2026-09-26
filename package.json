@@ -1,0 +1,11 @@
+{
+  "name": "hearth",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "packageManager": "pnpm@10.28.2",
+  "scripts": {
+    "dev": "pnpm --filter @hearth/desktop tauri dev",
+    "build": "pnpm --filter @hearth/desktop build",
+    "typecheck": "pnpm --filter @hearth/desktop typecheck"
+  }
+}
