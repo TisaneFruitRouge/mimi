@@ -5,8 +5,8 @@ use hearth_client::Client;
 use std::io::{BufRead, Write};
 
 use hearth_protocol::{
-    ActionStatus, Event, Locality, MessageStatus, ModelRef, NewConversation, NewProvider,
-    ProbeRequest, Provider, SendMessage,
+    ActionStatus, ConnectionSetup, Event, Locality, MessageStatus, ModelRef, NewConversation,
+    NewProvider, ProbeRequest, Provider, SendMessage,
 };
 
 /// Command-line interface to your hearth assistant.
@@ -39,6 +39,13 @@ enum Command {
     },
     /// List conversations, most recent first.
     Conversations,
+    /// List connected accounts (calendars, Telegram).
+    Connections,
+    /// Connect an account.
+    #[command(subcommand)]
+    Connect(ConnectCommand),
+    /// Remove a connection by name or id prefix.
+    Disconnect { connection: String },
     /// Describe this computer and suggest models for it.
     Recommend,
     /// Show or change the model used for new messages.
@@ -46,6 +53,20 @@ enum Command {
         /// `<provider>/<model>`, where provider is a name or id prefix.
         model: Option<String>,
     },
+}
+
+#[derive(Subcommand)]
+enum ConnectCommand {
+    /// A Google calendar, by its "Secret address in iCal format".
+    Google { ics_url: String },
+    /// A CalDAV account (iCloud, Fastmail, Nextcloud…). The password is read from
+    /// HEARTH_CALDAV_PASSWORD.
+    Caldav {
+        server_url: String,
+        username: String,
+    },
+    /// A Telegram bot token from @BotFather.
+    Telegram { bot_token: String },
 }
 
 #[derive(Subcommand)]
@@ -133,6 +154,57 @@ async fn main() -> anyhow::Result<()> {
         Command::Conversations => {
             for c in client.conversations().await? {
                 println!("{}  {}", &c.id.to_string()[..8], c.title);
+            }
+        }
+        Command::Connections => {
+            for c in client.connections().await? {
+                println!(
+                    "{}  {:<16} {:<22} {:?}  {}{}",
+                    &c.id.to_string()[..8],
+                    c.integration,
+                    c.name,
+                    c.status,
+                    c.detail,
+                    c.action_url
+                        .map(|u| format!("\n          → {u}"))
+                        .unwrap_or_default()
+                );
+            }
+        }
+        Command::Connect(cmd) => {
+            let setup = match cmd {
+                ConnectCommand::Google { ics_url } => ConnectionSetup::GoogleCalendar { ics_url },
+                ConnectCommand::Caldav {
+                    server_url,
+                    username,
+                } => ConnectionSetup::Caldav {
+                    server_url,
+                    username,
+                    password: std::env::var("HEARTH_CALDAV_PASSWORD")
+                        .context("set HEARTH_CALDAV_PASSWORD to the account's app password")?,
+                },
+                ConnectCommand::Telegram { bot_token } => ConnectionSetup::Telegram { bot_token },
+            };
+            let c = client.connect(&setup).await?;
+            println!("connected {} ({})", c.name, c.detail);
+            if let Some(url) = c.action_url {
+                println!("next: open {url}");
+            }
+        }
+        Command::Disconnect { connection } => {
+            let all = client.connections().await?;
+            let q = connection.to_lowercase();
+            let found: Vec<_> = all
+                .iter()
+                .filter(|c| c.name.to_lowercase() == q || c.id.to_string().starts_with(&q))
+                .collect();
+            match found[..] {
+                [one] => {
+                    client.disconnect(one.id).await?;
+                    println!("removed {}", one.name);
+                }
+                [] => bail!("no connection matches \"{connection}\""),
+                _ => bail!("\"{connection}\" matches several connections; use the id"),
             }
         }
         Command::Recommend => {

@@ -13,6 +13,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/0003_conversations.sql"),
     include_str!("migrations/0004_web_sessions.sql"),
     include_str!("migrations/0005_message_actions.sql"),
+    include_str!("migrations/0006_connections.sql"),
 ];
 
 #[derive(Debug, thiserror::Error)]

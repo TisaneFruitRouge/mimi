@@ -4,10 +4,10 @@
 use futures::StreamExt;
 use futures::stream::BoxStream;
 use hearth_protocol::{
-    API_PREFIX, ApiError, Conversation, ConversationDetail, Discovery, Event, HardwareInfo, Health,
-    ModelInfo, NewConversation, NewProvider, Paths, ProbeRequest, ProbeResult, Provider,
-    ProviderPreset, Recommendations, SendMessage, SendMessageResult, Settings, Status,
-    WebLoginLink,
+    API_PREFIX, ApiError, Connection, ConnectionSetup, Conversation, ConversationDetail, Discovery,
+    Event, HardwareInfo, Health, ModelInfo, NewConversation, NewProvider, Paths, ProbeRequest,
+    ProbeResult, Provider, ProviderPreset, Recommendations, SendMessage, SendMessageResult,
+    Settings, Status, WebLoginLink,
 };
 pub use reqwest::Method;
 use serde::Serialize;
@@ -183,6 +183,19 @@ impl Client {
 
     pub async fn reject_action(&self, id: Uuid) -> Result<(), Error> {
         self.send(Method::POST, &format!("/actions/{id}/reject"), None::<()>)
+            .await
+    }
+
+    pub async fn connections(&self) -> Result<Vec<Connection>, Error> {
+        self.send(Method::GET, "/connections", None::<()>).await
+    }
+
+    pub async fn connect(&self, setup: &ConnectionSetup) -> Result<Connection, Error> {
+        self.send(Method::POST, "/connections", Some(setup)).await
+    }
+
+    pub async fn disconnect(&self, id: Uuid) -> Result<(), Error> {
+        self.send(Method::DELETE, &format!("/connections/{id}"), None::<()>)
             .await
     }
 

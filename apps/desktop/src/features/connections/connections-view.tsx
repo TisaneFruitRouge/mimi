@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { cn } from "cn";
 
+import type { Connection } from "@/bindings/Connection";
 import type { Integration } from "@/bindings/Integration";
 import type { IntegrationCategory } from "@/bindings/IntegrationCategory";
 import {
@@ -22,8 +23,29 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useIntegrations } from "@/lib/queries";
+import { type ConnectKind, ConnectDialog } from "@/features/connections/connect-dialogs";
+import { api } from "@/lib/api";
+import { useConnections, useIntegrations } from "@/lib/queries";
+import { openExternal } from "@/lib/transport";
+import { toast } from "sonner";
+
+const connectable = (id: string): id is ConnectKind =>
+  id === "google_calendar" || id === "caldav" || id === "telegram";
+
+/** Integrations that make sense to connect more than once. */
+const repeatable = (id: string) => id === "google_calendar" || id === "caldav";
 
 const look: Record<string, { icon: typeof Plug; tone: string }> = {
   google_calendar: { icon: CalendarDays, tone: "bg-event-soft text-event" },
@@ -47,10 +69,16 @@ const categoryLabel: Record<IntegrationCategory, string> = {
 
 export function ConnectionsView() {
   const integrations = useIntegrations();
+  const connections = useConnections().data ?? [];
   const [open, setOpen] = useState<Integration | null>(null);
+  const [connecting, setConnecting] = useState<ConnectKind | null>(null);
+  const [removing, setRemoving] = useState<Connection | null>(null);
   const all = integrations.data ?? [];
-  const connected = all.filter((i) => i.status === "connected");
-  const rest = all.filter((i) => i.status !== "connected");
+  const rest = all.filter((i) => i.status !== "connected" || repeatable(i.id));
+  const startConnect = (i: Integration) => {
+    setOpen(null);
+    if (connectable(i.id)) setConnecting(i.id);
+  };
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
@@ -65,7 +93,7 @@ export function ConnectionsView() {
 
         <section className="flex flex-col gap-3">
           <SectionLabel>Connected</SectionLabel>
-          {connected.length === 0 ? (
+          {connections.length === 0 ? (
             <div className="flex items-center gap-4 rounded-2xl border border-dashed bg-background/60 px-5 py-5">
               <div className="flex size-10 items-center justify-center rounded-xl bg-subtle text-faint">
                 <Plug className="size-5" />
@@ -78,9 +106,9 @@ export function ConnectionsView() {
               </div>
             </div>
           ) : (
-            <div className="flex flex-col divide-y rounded-2xl border bg-background">
-              {connected.map((i) => (
-                <IntegrationRow key={i.id} integration={i} onOpen={() => setOpen(i)} />
+            <div className="flex flex-col divide-y rounded-2xl border bg-background shadow-xs">
+              {connections.map((c) => (
+                <ConnectionRow key={c.id} connection={c} onRemove={() => setRemoving(c)} />
               ))}
             </div>
           )}
@@ -92,7 +120,12 @@ export function ConnectionsView() {
             {integrations.isLoading &&
               [0, 1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-40 rounded-2xl" />)}
             {rest.map((i) => (
-              <IntegrationCard key={i.id} integration={i} onOpen={() => setOpen(i)} />
+              <IntegrationCard
+                key={i.id}
+                integration={i}
+                onOpen={() => setOpen(i)}
+                onConnect={() => startConnect(i)}
+              />
             ))}
           </div>
         </section>
@@ -103,7 +136,28 @@ export function ConnectionsView() {
         </div>
       </div>
 
-      <IntegrationDialog integration={open} onClose={() => setOpen(null)} />
+      <IntegrationDialog integration={open} onClose={() => setOpen(null)} onConnect={startConnect} />
+      <ConnectDialog kind={connecting} onClose={() => setConnecting(null)} />
+      <AlertDialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Disconnect {removing?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your assistant loses access right away, and its saved sign-in is deleted from this
+              computer. Nothing is deleted on the service itself.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              onClick={() => removing && api.disconnect(removing.id).catch((e) => toast.error(e.message))}
+            >
+              Disconnect
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -131,12 +185,24 @@ function IntegrationIcon({ id, size = "md" }: { id: string; size?: "md" | "lg" }
   );
 }
 
-function IntegrationCard({ integration: i, onOpen }: { integration: Integration; onOpen: () => void }) {
+function IntegrationCard({
+  integration: i,
+  onOpen,
+  onConnect,
+}: {
+  integration: Integration;
+  onOpen: () => void;
+  onConnect: () => void;
+}) {
   const soon = i.status === "coming_soon";
+  const again = i.status === "connected";
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onOpen}
-      className="group flex flex-col gap-4 rounded-2xl border bg-background p-4 text-left shadow-xs transition hover:-translate-y-px hover:shadow-md"
+      onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onOpen()}
+      className="group flex cursor-pointer flex-col gap-4 rounded-2xl border bg-background p-4 text-left shadow-xs transition hover:-translate-y-px hover:shadow-md"
     >
       <div className="flex items-start justify-between">
         <IntegrationIcon id={i.id} />
@@ -148,32 +214,68 @@ function IntegrationCard({ integration: i, onOpen }: { integration: Integration;
         <span className="text-[14.5px] font-medium">{i.name}</span>
         <span className="text-[13px] leading-snug text-muted-foreground">{i.description}</span>
       </div>
-      <span
-        className={cn(
-          "mt-auto inline-flex h-8 items-center justify-center rounded-[9px] text-[12.5px] font-medium",
-          soon ? "bg-subtle text-faint" : "bg-foreground text-background",
-        )}
-      >
-        {soon ? "Coming soon" : "Connect"}
-      </span>
-    </button>
+      {soon ? (
+        <span className="mt-auto inline-flex h-8 items-center justify-center rounded-[9px] bg-subtle text-[12.5px] font-medium text-faint">
+          Coming soon
+        </span>
+      ) : (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onConnect();
+          }}
+          className={cn(
+            "mt-auto inline-flex h-8 items-center justify-center rounded-[9px] text-[12.5px] font-medium transition",
+            again ? "bg-subtle hover:bg-secondary" : "bg-foreground text-background hover:bg-foreground/90",
+          )}
+        >
+          {again ? "Add another" : "Connect"}
+        </button>
+      )}
+    </div>
   );
 }
 
-function IntegrationRow({ integration: i, onOpen }: { integration: Integration; onOpen: () => void }) {
+function ConnectionRow({ connection: c, onRemove }: { connection: Connection; onRemove: () => void }) {
+  const tone = { ok: "bg-private", needs_action: "bg-cloud", error: "bg-destructive" }[c.status];
   return (
-    <button onClick={onOpen} className="flex items-center gap-4 px-4 py-3.5 text-left hover:bg-subtle/60">
-      <IntegrationIcon id={i.id} />
+    <div className="flex items-center gap-4 px-4 py-3.5">
+      <IntegrationIcon id={c.integration} />
       <div className="min-w-0 flex-1">
-        <div className="text-[14.5px] font-medium">{i.name}</div>
-        <div className="truncate text-[13px] text-muted-foreground">{i.abilities.join(" · ")}</div>
+        <div className="flex items-center gap-2 text-[14.5px] font-medium">
+          {c.name}
+          <span className={cn("size-1.5 rounded-full", tone)} aria-hidden />
+        </div>
+        <div
+          className={cn(
+            "truncate text-[13px]",
+            c.status === "error" ? "text-destructive" : c.status === "needs_action" ? "text-cloud" : "text-muted-foreground",
+          )}
+        >
+          {c.detail}
+        </div>
       </div>
-      <span className="font-mono text-[11.5px] text-private">connected</span>
-    </button>
+      {c.action_url && (
+        <Button size="sm" onClick={() => openExternal(c.action_url!)}>
+          Finish setup
+        </Button>
+      )}
+      <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={onRemove}>
+        Disconnect
+      </Button>
+    </div>
   );
 }
 
-function IntegrationDialog({ integration: i, onClose }: { integration: Integration | null; onClose: () => void }) {
+function IntegrationDialog({
+  integration: i,
+  onClose,
+  onConnect,
+}: {
+  integration: Integration | null;
+  onClose: () => void;
+  onConnect: (i: Integration) => void;
+}) {
   return (
     <Dialog open={!!i} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-md">
@@ -197,10 +299,14 @@ function IntegrationDialog({ integration: i, onClose }: { integration: Integrati
                 ))}
               </ul>
             </div>
-            {i.status === "coming_soon" && (
+            {i.status === "coming_soon" ? (
               <p className="rounded-xl bg-subtle px-4 py-3 text-[13px] leading-relaxed text-muted-foreground">
                 This connection isn’t available yet. It’s part of an upcoming update.
               </p>
+            ) : (
+              <Button className="self-start" onClick={() => onConnect(i)}>
+                {i.status === "connected" ? "Add another" : `Connect ${i.name}`}
+              </Button>
             )}
           </>
         )}

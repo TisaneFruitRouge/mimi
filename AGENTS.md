@@ -86,7 +86,29 @@ features go in the daemon plus the protocol types. Frontends only render them.
   behind Ctrl/⌘K, settings in a dialog. The URL hash holds the route (`#/models`,
   `#/chat/<id>`). Setup is the Models page in setup mode until a model is chosen.
 - Integrations come from the daemon's catalog (`GET /v1/integrations`); list new ones
-  there with status `coming_soon` until their connection flow exists.
+  there with status `coming_soon` until their connection flow exists, then add their id
+  to `AVAILABLE` in `crates/core/src/integrations.rs`.
+
+## Connections (the user's own accounts)
+
+- `crates/core/src/connections/`: one row per connected account in the `connections`
+  table, with its config (secrets included) as JSON in the encrypted database. The config
+  never leaves the daemon; clients see `Connection` (name, status, one-line detail, an
+  optional `action_url` for "finish setup"). `ConnectionsChanged` events keep them live.
+- Every connection is checked against the real service before it's saved (fetch the
+  feed, discover CalDAV calendars, Telegram `getMe`), so a saved connection works.
+- No registered app identities: calendars use Google's secret iCal address (read) plus
+  pre-filled "Add to Google Calendar" pages the user saves (write), and CalDAV with
+  app-specific passwords (iCloud, Fastmail, Nextcloud, Radicale). Recurrence is
+  expanded locally (`calendar/ics.rs`), for Google and CalDAV alike.
+- Telegram is a bot the user creates with @BotFather, long-polled (nothing listens for
+  inbound connections). A one-time `/start <code>` pairs it with its owner; every other
+  chat is ignored. Messages go into a "Telegram" conversation; approval cards are sent as
+  inline Approve / Don't buttons. Bot messages aren't end-to-end encrypted: say so.
+- Never log feed URLs, tokens or passwords (reqwest errors include URLs: map them).
+- Tests fake the outside world: Radicale (`uvx radicale --auth-type=none`) for CalDAV by
+  hand, `fake_telegram` in `api/tests.rs` for the bot, public Google holiday feeds for
+  iCal parsing.
 
 ## Tools (what the assistant can do)
 
@@ -141,6 +163,6 @@ on PATH).
 
 - Rust 2024 edition, `unsafe_code` forbidden workspace-wide, clippy clean with `-D warnings`.
 - Frontend: React 19, Tailwind v4, shadcn/ui (add components with
-  `pnpm dlx shadcn@latest add <name>` from `apps/desktop`), lucide icons. Follow the
-  system light/dark setting.
+  `pnpm dlx shadcn@latest add <name>` from `apps/desktop`), lucide icons. Light theme
+  only for now.
 - License: AGPL-3.0-or-later. Check that new dependencies have compatible licenses.

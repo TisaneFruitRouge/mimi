@@ -12,7 +12,9 @@ export const useRecommendations = () =>
   useQuery({ queryKey: keys.recommendations, queryFn: api.recommendations, staleTime: 30_000 });
 export const usePulls = () => useQuery({ queryKey: keys.pulls, queryFn: api.pulls });
 export const useIntegrations = () =>
-  useQuery({ queryKey: keys.integrations, queryFn: api.integrations, staleTime: Infinity });
+  useQuery({ queryKey: keys.integrations, queryFn: api.integrations });
+export const useConnections = () =>
+  useQuery({ queryKey: keys.connections, queryFn: api.connections });
 const useCatalog = () =>
   useQuery({ queryKey: keys.catalog, queryFn: api.catalog, staleTime: Infinity });
 

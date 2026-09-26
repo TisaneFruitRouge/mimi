@@ -1,11 +1,12 @@
-import { useState } from "react";
-import { Check, CircleAlert, Loader2, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Check, CircleAlert, ExternalLink, Loader2, X } from "lucide-react";
 import { cn } from "cn";
 import { toast } from "sonner";
 
 import type { Action } from "@/bindings/Action";
 import { describeArgs } from "@/features/chat/action-formatters";
 import { api } from "@/lib/api";
+import { openExternal } from "@/lib/transport";
 
 /** What the assistant did (reads) and asked to do (approval cards) in one reply. */
 export function Actions({ actions }: { actions: Action[] }) {
@@ -49,6 +50,16 @@ function ReadStatus({ action: a }: { action: Action }) {
   return <span className="shimmer">{lowerFirst(a.summary)}…</span>;
 }
 
+/** Actions approved in this window, so a follow-up link opens here and nowhere else. */
+const approvedHere = new Set<string>();
+const openedHere = new Set<string>();
+
+/** A link the user has to finish something at, e.g. saving an event in Google Calendar. */
+function openUrlOf(a: Action): string | null {
+  const url = (a.output as { open_url?: unknown } | null)?.open_url;
+  return typeof url === "string" && url.startsWith("https://") ? url : null;
+}
+
 function ApprovalCard({ action: a }: { action: Action }) {
   const [busy, setBusy] = useState<null | "approve" | "reject">(null);
   const rows = describeArgs(a.tool, a.arguments as Record<string, unknown>);
@@ -58,6 +69,7 @@ function ApprovalCard({ action: a }: { action: Action }) {
   const decide = async (kind: "approve" | "reject") => {
     setBusy(kind);
     try {
+      if (kind === "approve") approvedHere.add(a.id);
       await (kind === "approve" ? api.approveAction(a.id) : api.rejectAction(a.id));
     } catch (e) {
       toast.error((e as Error).message);
@@ -106,6 +118,13 @@ function ApprovalCard({ action: a }: { action: Action }) {
 
 /** An approval card after the decision: one compact line. */
 function DecidedCard({ action: a }: { action: Action }) {
+  const finishAt = a.status === "done" ? openUrlOf(a) : null;
+  useEffect(() => {
+    if (finishAt && approvedHere.has(a.id) && !openedHere.has(a.id)) {
+      openedHere.add(a.id);
+      openExternal(finishAt);
+    }
+  }, [finishAt, a.id]);
   const tone = {
     approved: "text-muted-foreground",
     running: "text-muted-foreground",
@@ -140,7 +159,15 @@ function DecidedCard({ action: a }: { action: Action }) {
       )}
     >
       <span className="mt-px">{icon}</span>
-      <span className="min-w-0 break-words">{text}</span>
+      <span className="min-w-0 flex-1 break-words">{text}</span>
+      {finishAt && (
+        <button
+          onClick={() => openExternal(finishAt)}
+          className="-my-1 flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] bg-lime px-2.5 font-sans text-[12.5px] font-medium text-lime-ink shadow-[inset_0_0_0_1px_rgba(0,0,0,0.06)] hover:brightness-95"
+        >
+          <ExternalLink className="size-3.5" /> Save in Google Calendar
+        </button>
+      )}
     </div>
   );
 }

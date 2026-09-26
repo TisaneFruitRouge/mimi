@@ -76,6 +76,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         pulls: Default::default(),
         tool_sources: Default::default(),
         approvals: Default::default(),
+        connections: Default::default(),
     });
     #[cfg(debug_assertions)]
     if std::env::var(crate::tools::dev::ENV).is_ok_and(|v| v == "1") {
@@ -85,6 +86,11 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
             .add(Arc::new(crate::tools::dev::DevTools));
     }
     tracing::info!(port, "hearth daemon listening on 127.0.0.1");
+
+    state
+        .tool_sources
+        .add(Arc::new(crate::connections::calendar::tools::CalendarTools));
+    crate::connections::start_all(&state).await;
 
     let served = axum::serve(listener, api::router(state))
         .with_graceful_shutdown(shutdown_signal())

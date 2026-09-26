@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 pub mod chat;
+pub mod connections;
 pub mod events;
 pub mod hardware;
 pub mod integrations;
@@ -18,6 +19,7 @@ pub mod providers;
 pub mod settings;
 
 pub use chat::*;
+pub use connections::*;
 pub use events::Event;
 pub use hardware::*;
 pub use integrations::*;

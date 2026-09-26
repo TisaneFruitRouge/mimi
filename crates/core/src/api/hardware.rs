@@ -119,6 +119,13 @@ pub async fn catalog() -> Json<Vec<hearth_protocol::CatalogModel>> {
     Json(recommend::catalog_models())
 }
 
-pub async fn integrations() -> Json<Vec<hearth_protocol::Integration>> {
-    Json(crate::integrations::catalog())
+pub async fn integrations(
+    State(state): State<Arc<AppState>>,
+) -> ApiResult<Vec<hearth_protocol::Integration>> {
+    let connected: Vec<String> = crate::connections::store::list(&state.db)
+        .await?
+        .into_iter()
+        .map(|c| c.integration)
+        .collect();
+    Ok(Json(crate::integrations::catalog_for(&connected)))
 }

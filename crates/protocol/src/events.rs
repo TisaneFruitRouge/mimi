@@ -3,7 +3,7 @@ use ts_rs::TS;
 
 use uuid::Uuid;
 
-use crate::{Conversation, Message, ModelPull, Provider, Settings};
+use crate::{Connection, Conversation, Message, ModelPull, Provider, Settings};
 
 /// Pushed by the daemon to every client connected to `GET /v1/events` (WebSocket, one
 /// JSON event per text frame).
@@ -34,6 +34,9 @@ pub enum Event {
         message_id: Uuid,
         content: String,
         reasoning: String,
+    },
+    ConnectionsChanged {
+        connections: Vec<Connection>,
     },
     /// A model download started, progressed or finished.
     ModelPull {

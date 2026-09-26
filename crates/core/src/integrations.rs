@@ -1,7 +1,24 @@
-//! The integrations Hearth offers. Connection flows arrive with the tools and channels
-//! work; until then everything is listed as coming soon, so the UI can be honest.
+//! The integrations Hearth offers, and which of them can be connected today.
 
 use hearth_protocol::{Integration, IntegrationCategory, IntegrationStatus};
+
+/// Integrations whose connection flow exists.
+const AVAILABLE: &[&str] = &["google_calendar", "caldav", "telegram"];
+
+/// The catalog, with each entry's status for this user.
+pub fn catalog_for(connected: &[String]) -> Vec<Integration> {
+    let mut all = catalog();
+    for i in &mut all {
+        i.status = if connected.contains(&i.id) {
+            IntegrationStatus::Connected
+        } else if AVAILABLE.contains(&i.id.as_str()) {
+            IntegrationStatus::Available
+        } else {
+            IntegrationStatus::ComingSoon
+        };
+    }
+    all
+}
 
 pub fn catalog() -> Vec<Integration> {
     let item =
@@ -19,10 +36,10 @@ pub fn catalog() -> Vec<Integration> {
             "google_calendar",
             "Google Calendar",
             Calendar,
-            "See your schedule and add events.",
+            "Your schedule, read straight from Google. No Google sign-in needed.",
             &[
                 "Read your events",
-                "Create and move events, after you approve",
+                "Prepare new events for you to save in Google Calendar",
             ],
         ),
         item(
@@ -30,10 +47,7 @@ pub fn catalog() -> Vec<Integration> {
             "iCloud & other calendars",
             Calendar,
             "Apple iCloud, Fastmail, Nextcloud or any CalDAV calendar.",
-            &[
-                "Read your events",
-                "Create and move events, after you approve",
-            ],
+            &["Read your events", "Add events, after you approve"],
         ),
         item(
             "google_contacts",
@@ -53,11 +67,10 @@ pub fn catalog() -> Vec<Integration> {
             "telegram",
             "Telegram",
             Messaging,
-            "Chat with Hearth from your phone.",
+            "Chat with your assistant from your phone, through a bot only you can use.",
             &[
-                "Receive your messages",
-                "Reply to you",
-                "Message people, after you approve",
+                "Chat with you, and only you",
+                "Ask you to approve actions, right in Telegram",
             ],
         ),
         item(

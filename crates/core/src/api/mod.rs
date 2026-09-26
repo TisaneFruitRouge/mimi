@@ -13,6 +13,7 @@ use hearth_protocol::{API_PREFIX, Health, Status};
 use crate::{AppState, VERSION};
 
 mod actions;
+mod connections;
 mod conversations;
 pub mod error;
 mod events;
@@ -38,6 +39,14 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/pulls", get(providers::pulls))
         .route("/catalog", get(hardware::catalog))
         .route("/integrations", get(hardware::integrations))
+        .route(
+            "/connections",
+            get(connections::list).post(connections::create),
+        )
+        .route(
+            "/connections/{id}",
+            axum::routing::delete(connections::delete),
+        )
         .route("/hardware", get(hardware::get))
         .route("/recommendations", get(hardware::recommendations))
         .route(

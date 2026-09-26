@@ -1119,4 +1119,290 @@ mod tool_use {
         assert_eq!(saved[0].status, MessageStatus::Interrupted);
         assert_eq!(saved[0].actions[0].status, ActionStatus::Failed);
     }
+
+    #[tokio::test]
+    async fn telegram_owner_approves_actions_with_buttons() {
+        use super::fake_telegram::FakeTelegram;
+
+        let llm = scripted_llm(|_, n| match n {
+            0 => Reply::Call("send_note", json!({"to": "Sam"})),
+            _ => Reply::Text("Done, I sent it."),
+        })
+        .await;
+        let (h, _reads, writes) = setup(&llm).await;
+        let (tg, tg_url) = FakeTelegram::start().await;
+        *h.state.connections.telegram_api.lock().unwrap() = tg_url;
+
+        let (_, conn) = h
+            .call(
+                reqwest::Method::POST,
+                "/connections",
+                json!({"integration": "telegram", "bot_token": "123:secret"}),
+            )
+            .await;
+        let code = conn["action_url"]
+            .as_str()
+            .unwrap()
+            .rsplit("start=")
+            .next()
+            .unwrap()
+            .to_owned();
+        tg.message(42, "Vincent", &format!("/start {code}"));
+        tg.message(42, "Vincent", "Please send Sam a note");
+
+        let mut approve = None;
+        for _ in 0..200 {
+            approve = tg
+                .buttons_sent_to(42)
+                .into_iter()
+                .find(|b| b.starts_with("approve:"));
+            if approve.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        let approve = approve.expect("an approval button was sent");
+        assert_eq!(
+            writes.load(Ordering::SeqCst),
+            0,
+            "nothing runs before approval"
+        );
+
+        // A tap from someone else doesn't count.
+        tg.tap(99, &approve);
+        tg.tap(42, &approve);
+        for _ in 0..200 {
+            if tg.sent_to(42).iter().any(|m| m == "Done, I sent it.") {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        assert!(
+            tg.sent_to(42).iter().any(|m| m == "Done, I sent it."),
+            "{:?}",
+            tg.sent_to(42)
+        );
+        assert_eq!(writes.load(Ordering::SeqCst), 1);
+    }
+}
+
+/// A fake Telegram Bot API: queued updates go out through getUpdates, and everything
+/// sent comes back through `sent()`.
+mod fake_telegram {
+    use std::sync::{Arc, Mutex};
+
+    use axum::extract::{Path, State};
+    use axum::routing::post;
+    use axum::{Json, Router};
+    use serde_json::{Value, json};
+
+    #[derive(Clone, Default)]
+    pub struct FakeTelegram {
+        pub updates: Arc<Mutex<Vec<Value>>>,
+        pub sent: Arc<Mutex<Vec<Value>>>,
+        next_id: Arc<Mutex<i64>>,
+    }
+
+    impl FakeTelegram {
+        pub async fn start() -> (Self, String) {
+            let fake = FakeTelegram::default();
+            let app = Router::new()
+                .route("/{bot}/{method}", post(handle))
+                .with_state(fake.clone());
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            (fake, url)
+        }
+
+        /// Queues a private message from `chat_id`.
+        pub fn message(&self, chat_id: i64, name: &str, text: &str) {
+            let mut id = self.next_id.lock().unwrap();
+            *id += 1;
+            self.updates.lock().unwrap().push(json!({
+                "update_id": *id,
+                "message": { "chat": { "id": chat_id, "type": "private", "first_name": name }, "text": text }
+            }));
+        }
+
+        /// Queues a tap on an inline button.
+        pub fn tap(&self, chat_id: i64, data: &str) {
+            let mut id = self.next_id.lock().unwrap();
+            *id += 1;
+            self.updates.lock().unwrap().push(json!({
+                "update_id": *id,
+                "callback_query": {
+                    "id": format!("cb{}", *id),
+                    "from": { "id": chat_id },
+                    "message": { "message_id": 7, "chat": { "id": chat_id, "type": "private" }, "text": "Waiting for you" },
+                    "data": data
+                }
+            }));
+        }
+
+        /// The callback data of every button sent to `chat_id`.
+        pub fn buttons_sent_to(&self, chat_id: i64) -> Vec<String> {
+            self.sent
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|m| m["chat_id"] == chat_id)
+                .flat_map(|m| {
+                    m["reply_markup"]["inline_keyboard"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .flat_map(|row| row.as_array().cloned().unwrap_or_default())
+                        .filter_map(|b| b["callback_data"].as_str().map(str::to_owned))
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        }
+
+        pub fn sent_to(&self, chat_id: i64) -> Vec<String> {
+            self.sent
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|m| m["chat_id"] == chat_id)
+                .map(|m| m["text"].as_str().unwrap_or_default().to_owned())
+                .collect()
+        }
+    }
+
+    async fn handle(
+        State(fake): State<FakeTelegram>,
+        Path((bot, method)): Path<(String, String)>,
+        Json(body): Json<Value>,
+    ) -> Json<Value> {
+        if bot != "bot123:secret" {
+            return Json(json!({ "ok": false, "error_code": 401, "description": "Unauthorized" }));
+        }
+        let result = match method.as_str() {
+            "getMe" => json!({ "username": "test_hearth_bot", "first_name": "Test" }),
+            "getUpdates" => {
+                let offset = body["offset"].as_i64().unwrap_or(0);
+                let pending: Vec<Value> = fake
+                    .updates
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|u| u["update_id"].as_i64().unwrap() >= offset)
+                    .cloned()
+                    .collect();
+                if pending.is_empty() {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+                json!(pending)
+            }
+            "sendMessage" => {
+                fake.sent.lock().unwrap().push(body);
+                json!({ "message_id": 1 })
+            }
+            _ => json!(true),
+        };
+        Json(json!({ "ok": true, "result": result }))
+    }
+}
+
+#[tokio::test]
+async fn telegram_bot_pairs_with_its_owner_and_relays_replies() {
+    use fake_telegram::FakeTelegram;
+
+    let llm = mock_llm(
+        vec!["Hello from ", "your assistant!"],
+        std::time::Duration::from_millis(1),
+    )
+    .await;
+    let (tg, tg_url) = FakeTelegram::start().await;
+    let h = Harness::new().await;
+    *h.state.connections.telegram_api.lock().unwrap() = tg_url;
+    h.use_mock(llm).await;
+
+    // A wrong token is refused up front.
+    let (status, err) = h
+        .call(
+            reqwest::Method::POST,
+            "/connections",
+            serde_json::json!({"integration": "telegram", "bot_token": "nope"}),
+        )
+        .await;
+    assert_eq!(status, 400, "{err}");
+
+    let (status, conn) = h
+        .call(
+            reqwest::Method::POST,
+            "/connections",
+            serde_json::json!({"integration": "telegram", "bot_token": "123:secret"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{conn}");
+    assert_eq!(conn["status"], "needs_action");
+    let link = conn["action_url"].as_str().unwrap().to_owned();
+    let code = link.rsplit("start=").next().unwrap().to_owned();
+    assert!(link.starts_with("https://t.me/test_hearth_bot?start="));
+
+    // A stranger can't claim the bot, even knowing it exists.
+    tg.message(99, "Mallory", "/start 000000");
+    tg.message(42, "Vincent", &format!("/start {code}"));
+
+    let wait_for = |chat: i64, n: usize| {
+        let tg = tg.clone();
+        async move {
+            for _ in 0..200 {
+                if tg.sent_to(chat).len() >= n {
+                    return tg.sent_to(chat);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            panic!(
+                "timed out waiting for {n} messages to {chat}: {:?}",
+                tg.sent_to(chat)
+            );
+        }
+    };
+    let welcome = wait_for(42, 1).await;
+    assert!(welcome[0].contains("Hi Vincent"), "{welcome:?}");
+
+    let (_, list) = h
+        .call(
+            reqwest::Method::GET,
+            "/connections",
+            serde_json::Value::Null,
+        )
+        .await;
+    assert_eq!(list[0]["status"], "ok");
+    assert!(list[0]["detail"].as_str().unwrap().contains("Vincent"));
+
+    // Only the owner gets answers.
+    tg.message(99, "Mallory", "What's on Vincent's calendar?");
+    tg.message(42, "Vincent", "Hi!");
+    let replies = wait_for(42, 2).await;
+    assert_eq!(replies[1], "Hello from your assistant!");
+    assert!(tg.sent_to(99).is_empty());
+
+    // The exchange lives in a "Telegram" conversation, visible in the app.
+    let (_, conversations) = h
+        .call(
+            reqwest::Method::GET,
+            "/conversations",
+            serde_json::Value::Null,
+        )
+        .await;
+    assert_eq!(conversations[0]["title"], "Telegram");
+
+    let (_, integrations) = h
+        .call(
+            reqwest::Method::GET,
+            "/integrations",
+            serde_json::Value::Null,
+        )
+        .await;
+    let telegram = integrations
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["id"] == "telegram")
+        .unwrap();
+    assert_eq!(telegram["status"], "connected");
 }

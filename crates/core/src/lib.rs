@@ -7,6 +7,7 @@ use hearth_protocol::{KeyStorage, Paths};
 
 pub mod api;
 pub mod chat;
+pub mod connections;
 pub mod daemon;
 pub mod db;
 pub mod events;
@@ -39,6 +40,7 @@ pub struct AppState {
     pub tool_sources: tools::ToolSources,
     /// Approval cards waiting for the user.
     pub approvals: tools::Approvals,
+    pub connections: connections::Connections,
 }
 
 impl AppState {
@@ -66,6 +68,7 @@ impl AppState {
             pulls: Default::default(),
             tool_sources: Default::default(),
             approvals: Default::default(),
+            connections: Default::default(),
         }
     }
 }
