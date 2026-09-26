@@ -1,19 +1,26 @@
 import { forwardRef, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
-import { ArrowUp, AtSign, Blocks, Check, MessageSquarePlus, Slash, Sparkles, Square } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import { ArrowUp, AtSign, Blocks, MessageSquarePlus, Plus, Sparkles } from "lucide-react";
 import { cn } from "cn";
-import { toast } from "sonner";
 
 import { LocalityIcon } from "@/components/locality-badge";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Section } from "@/features/shell/top-bar";
-import { api } from "@/lib/api";
-import { sameModel, useActiveModel, useAllModels, useModelInfo, useSettings } from "@/lib/queries";
+import { localityExplanation } from "@/lib/format";
+import { mod } from "@/lib/platform";
+import { useActiveModel } from "@/lib/queries";
 
 export interface ComposerHandle {
   setText: (text: string) => void;
 }
 
+/**
+ * The message box: a floating card with the text field on top and a quiet toolbar
+ * below. Entry points on the left (`@` mentions, `/` actions), privacy and send on the
+ * right.
+ */
 export const Composer = forwardRef<
   ComposerHandle,
   {
@@ -59,9 +66,11 @@ export const Composer = forwardRef<
     fn();
   };
 
+  const canSend = !!text.trim() && !!active;
+
   return (
-    <div className="mx-auto w-full max-w-[760px] px-5 pb-5">
-      <div className="rounded-[20px] border bg-background shadow-[0_1px_2px_rgba(22,23,26,0.04),0_12px_32px_-8px_rgba(22,23,26,0.12)] transition-shadow focus-within:border-[#cfd8b5] focus-within:shadow-[0_1px_2px_rgba(22,23,26,0.04),0_16px_40px_-8px_rgba(22,23,26,0.16)]">
+    <div className="mx-auto w-full max-w-[720px] px-6 pb-5">
+      <div className="rounded-[24px] bg-background shadow-[var(--shadow-raised)] transition-shadow duration-300 focus-within:shadow-[0_0_0_0.5px_rgb(86_118_13/0.28),0_0_0_3px_rgb(200_242_93/0.22),0_8px_24px_-6px_rgb(0_0_0/0.12)]">
         <textarea
           ref={area}
           value={text}
@@ -79,36 +88,46 @@ export const Composer = forwardRef<
               submit();
             }
           }}
-          placeholder={active ? "Ask anything, or type / for actions" : "Choose a model to start"}
+          placeholder={active ? "Ask anything" : "Choose a model to start"}
           aria-label="Message"
           rows={1}
           autoFocus
-          className="block max-h-60 min-h-[52px] w-full resize-none bg-transparent px-[18px] pt-4 pb-1 text-[15px] leading-relaxed outline-none placeholder:text-faint"
+          className="block max-h-60 min-h-[52px] w-full resize-none bg-transparent px-5 pt-4 pb-1 type-body outline-none placeholder:text-[#a1a1a6]"
         />
-        <div className="flex items-center gap-1.5 px-2.5 pt-1 pb-2.5">
+        <div className="flex items-center gap-1 px-3 pt-1 pb-3">
           <Popover>
-            <PopoverTrigger asChild>
-              <ToolbarChip icon={<AtSign />} label="people, events, apps" />
-            </PopoverTrigger>
-            <PopoverContent align="start" className="w-72 p-4">
-              <p className="text-sm font-medium">Mention people, events and apps</p>
-              <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <PopoverTrigger asChild>
+                  <ToolbarChip icon={<AtSign />} label="Mention someone or something" />
+                </PopoverTrigger>
+              </TooltipTrigger>
+              <TooltipContent>People, events and apps</TooltipContent>
+            </Tooltip>
+            <PopoverContent align="start" className="w-[300px] p-4">
+              <p className="type-callout font-medium">Mention people and events</p>
+              <p className="mt-1 type-subhead text-muted-foreground">
                 Once your calendar, contacts or messaging apps are connected, type @ to point
-                the assistant at exactly what you mean.
+                your assistant at exactly what you mean.
               </p>
-              <Button size="sm" variant="outline" className="mt-3" onClick={() => onSection("connections")}>
+              <Button size="sm" variant="secondary" className="mt-3" onClick={() => onSection("connections")}>
                 <Blocks /> Open Connections
               </Button>
             </PopoverContent>
           </Popover>
 
           <Popover open={actionsOpen} onOpenChange={setActionsOpen}>
-            <PopoverTrigger asChild>
-              <ToolbarChip icon={<Slash />} label="Actions" />
-            </PopoverTrigger>
-            <PopoverContent align="start" className="w-60 p-1.5">
-              <MenuItem icon={<MessageSquarePlus />} onClick={action(onNewConversation)}>
-                New conversation
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <PopoverTrigger asChild>
+                  <ToolbarChip icon={<Plus />} label="More" />
+                </PopoverTrigger>
+              </TooltipTrigger>
+              <TooltipContent>More · or type /</TooltipContent>
+            </Tooltip>
+            <PopoverContent align="start" className="w-[240px] p-1.5">
+              <MenuItem icon={<MessageSquarePlus />} hint={`${mod}N`} onClick={action(onNewConversation)}>
+                New chat
               </MenuItem>
               <MenuItem icon={<Sparkles />} onClick={action(() => onSection("models"))}>
                 Change model
@@ -120,31 +139,47 @@ export const Composer = forwardRef<
           </Popover>
 
           <div className="flex-1" />
-          <ModelChip onManage={() => onSection("models")} />
+          <PrivacyChip onManage={() => onSection("models")} />
 
-          {replying ? (
-            <Button
-              size="icon"
-              onClick={onStop}
-              aria-label="Stop replying"
-              className="size-9 rounded-[11px]"
-            >
-              <Square className="size-3.5 fill-current" />
-            </Button>
-          ) : (
-            <button
-              onClick={submit}
-              disabled={!text.trim() || !active}
-              aria-label="Send"
-              className="flex size-9 items-center justify-center rounded-[11px] bg-lime text-lime-ink shadow-[inset_0_0_0_1px_rgba(0,0,0,0.06)] transition hover:brightness-95 disabled:bg-subtle disabled:text-faint disabled:shadow-none"
-            >
-              <ArrowUp className="size-[18px]" strokeWidth={2.4} />
-            </button>
-          )}
+          <AnimatePresence mode="popLayout" initial={false}>
+            {replying ? (
+              <motion.button
+                key="stop"
+                initial={{ scale: 0.6, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.6, opacity: 0 }}
+                transition={{ type: "spring", stiffness: 600, damping: 30 }}
+                onClick={onStop}
+                aria-label="Stop replying"
+                className="pressable ml-1 flex size-8 items-center justify-center rounded-full bg-foreground text-background hover:bg-foreground/85"
+              >
+                <span className="size-2.5 rounded-[2.5px] bg-current" />
+              </motion.button>
+            ) : (
+              <motion.button
+                key="send"
+                initial={{ scale: 0.6, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.6, opacity: 0 }}
+                transition={{ type: "spring", stiffness: 600, damping: 30 }}
+                onClick={submit}
+                disabled={!canSend}
+                aria-label="Send"
+                className={cn(
+                  "pressable ml-1 flex size-8 items-center justify-center rounded-full",
+                  canSend
+                    ? "bg-lime text-lime-ink shadow-[inset_0_0_0_0.5px_rgb(0_0_0/0.1),0_1px_2px_rgb(86_118_13/0.3)] hover:brightness-[0.97]"
+                    : "bg-fill text-[#a1a1a6]",
+                )}
+              >
+                <ArrowUp className="size-[17px]" strokeWidth={2.6} />
+              </motion.button>
+            )}
+          </AnimatePresence>
         </div>
       </div>
       {active?.provider.locality === "cloud" && (
-        <p className="mt-2 text-center text-xs text-cloud">
+        <p className="mt-2.5 text-center type-footnote text-cloud">
           Messages go to {active.provider.name}, a cloud service.
         </p>
       )}
@@ -152,119 +187,90 @@ export const Composer = forwardRef<
   );
 });
 
+/** A quiet round button in the composer toolbar; its label shows as a tooltip. */
 const ToolbarChip = forwardRef<
   HTMLButtonElement,
-  { icon: React.ReactNode; label: string; mono?: boolean } & React.ComponentProps<"button">
->(function ToolbarChip({ icon, label, mono, className, ...props }, ref) {
+  { icon: React.ReactNode; label: string } & React.ComponentProps<"button">
+>(function ToolbarChip({ icon, label, className, ...props }, ref) {
   return (
     <button
       ref={ref}
+      aria-label={label}
       {...props}
       className={cn(
-        "flex h-8 items-center gap-1.5 rounded-[9px] bg-subtle px-2.5 text-[12.5px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground data-[state=open]:bg-secondary data-[state=open]:text-foreground [&_svg]:size-3.5",
-        mono && "font-mono text-[12px]",
+        "pressable flex size-8 items-center justify-center rounded-full text-muted-foreground hover:bg-fill hover:text-foreground data-[state=open]:bg-fill data-[state=open]:text-foreground [&_svg]:size-[17px]",
         className,
       )}
     >
       {icon}
-      {label}
     </button>
   );
 });
 
 function MenuItem({
   icon,
+  hint,
   children,
   onClick,
 }: {
   icon: React.ReactNode;
+  hint?: string;
   children: React.ReactNode;
   onClick: () => void;
 }) {
   return (
     <button
       onClick={onClick}
-      className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[13.5px] hover:bg-subtle [&_svg]:size-4 [&_svg]:text-muted-foreground"
+      className="flex w-full items-center gap-2.5 rounded-[8px] px-2.5 py-[7px] text-left text-[14px] hover:bg-fill [&_svg]:size-4 [&_svg]:text-muted-foreground"
     >
       {icon}
-      {children}
+      <span className="flex-1">{children}</span>
+      {hint && <span className="type-footnote text-faint">{hint}</span>}
     </button>
   );
 }
 
-/** Shows the active model and where it runs; switches models in place. */
-function ModelChip({ onManage }: { onManage: () => void }) {
+/** Says, in one word, whether what you write stays private; explains on click. */
+function PrivacyChip({ onManage }: { onManage: () => void }) {
   const active = useActiveModel();
-  const settings = useSettings().data;
-  const { options } = useAllModels();
-  const info = useModelInfo();
   const [open, setOpen] = useState(false);
-
-  const choose = async (ref: (typeof options)[number]["ref"]) => {
-    if (!settings) return;
-    setOpen(false);
-    try {
-      await api.putSettings({ ...settings, default_model: ref });
-    } catch (e) {
-      toast.error((e as Error).message);
-    }
-  };
-
-  const tone = active
-    ? {
-        device: "border-[#bfe3d4] text-private",
-        network: "border-[#c5d8f5] text-network",
-        cloud: "border-[#f0d6ad] text-cloud bg-cloud-soft/60",
-      }[active.provider.locality]
-    : "text-faint";
+  if (!active) return null;
+  const locality = active.provider.locality;
+  const tone = {
+    device: "text-private hover:bg-private-soft data-[state=open]:bg-private-soft",
+    network: "text-network hover:bg-network-soft data-[state=open]:bg-network-soft",
+    cloud: "bg-cloud-soft text-cloud hover:brightness-[0.98] data-[state=open]:brightness-[0.98]",
+  }[locality];
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           className={cn(
-            "flex h-8 items-center gap-1.5 rounded-[9px] border px-2.5 text-[12.5px] font-medium transition-colors hover:bg-subtle",
+            "pressable flex h-8 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium",
             tone,
           )}
         >
-          {active && <LocalityIcon locality={active.provider.locality} className="size-3.5" />}
-          {active ? (active.provider.locality === "cloud" ? "Cloud" : "Private") : "Set up"}
+          <LocalityIcon locality={locality} className="size-3.5" />
+          {locality === "cloud" ? "Cloud" : "Private"}
         </button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-72 p-1.5">
-        <div className="max-h-80 overflow-y-auto">
-          {options.map((o) => (
-            <button
-              key={`${o.ref.provider_id}/${o.ref.model}`}
-              onClick={() => choose(o.ref)}
-              className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left hover:bg-subtle"
-            >
-              <LocalityIcon
-                locality={o.locality}
-                className={cn(
-                  "size-4 shrink-0",
-                  { device: "text-private", network: "text-network", cloud: "text-cloud" }[o.locality],
-                )}
-              />
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate text-[13.5px]">{info(o.ref.model).name}</span>
-                <span className="truncate text-[11.5px] text-faint">{o.providerName}</span>
-              </span>
-              {sameModel(o.ref, active?.ref) && <Check className="size-4" />}
-            </button>
-          ))}
-        </div>
-        <div className="mt-1 border-t pt-1">
-          <button
-            onClick={() => {
-              setOpen(false);
-              onManage();
-            }}
-            className="w-full rounded-md px-2.5 py-2 text-left text-[13px] text-muted-foreground hover:bg-subtle hover:text-foreground"
-          >
-            Manage models…
-          </button>
-        </div>
+      <PopoverContent align="end" className="w-[280px] p-4">
+        <p className="type-callout font-medium">
+          {locality === "cloud" ? `Using ${active.provider.name}` : "Your conversations stay private"}
+        </p>
+        <p className="mt-1 type-subhead text-muted-foreground">{localityExplanation[locality]}</p>
+        <Button
+          size="sm"
+          variant="secondary"
+          className="mt-3"
+          onClick={() => {
+            setOpen(false);
+            onManage();
+          }}
+        >
+          <Sparkles /> Choose a model
+        </Button>
       </PopoverContent>
     </Popover>
   );

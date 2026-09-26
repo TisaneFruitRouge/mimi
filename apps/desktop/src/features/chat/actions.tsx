@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
-import { Check, CircleAlert, ExternalLink, Loader2, X } from "lucide-react";
+import { motion } from "motion/react";
+import { Check, CircleAlert, ExternalLink, Hand, Loader2, X } from "lucide-react";
 import { cn } from "cn";
 import { toast } from "sonner";
 
 import type { Action } from "@/bindings/Action";
+import { Button } from "@/components/ui/button";
 import { describeArgs } from "@/features/chat/action-formatters";
 import { api } from "@/lib/api";
 import { openExternal } from "@/lib/transport";
@@ -14,9 +16,9 @@ export function Actions({ actions }: { actions: Action[] }) {
   const asks = actions.filter((a) => a.requires_approval);
   if (actions.length === 0) return null;
   return (
-    <div className="flex flex-col gap-2.5">
+    <div className="flex flex-col gap-3">
       {reads.length > 0 && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px]">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 type-subhead">
           {reads.map((a) => (
             <ReadStatus key={a.id} action={a} />
           ))}
@@ -33,7 +35,7 @@ function ReadStatus({ action: a }: { action: Action }) {
   if (a.status === "done")
     return (
       <span className="inline-flex items-center gap-1.5 text-faint">
-        <Check className="size-3.5" />
+        <Check className="size-3.5 text-private" strokeWidth={2.4} />
         {upperFirst(a.result ?? a.summary)}
       </span>
     );
@@ -75,41 +77,41 @@ function ApprovalCard({ action: a }: { action: Action }) {
   };
 
   return (
-    <div className="overflow-hidden rounded-2xl border bg-background shadow-xs">
-      <div className="flex flex-col gap-3 px-4 pt-3.5 pb-4">
-        <div className="flex flex-col gap-0.5">
-          <span className="text-[12.5px] font-medium text-[#5b7a0e]">Needs your OK</span>
-          <span className="text-[15px] leading-snug font-medium">{a.summary}</span>
+    <motion.div
+      initial={{ opacity: 0, y: 8, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ type: "spring", stiffness: 420, damping: 32 }}
+      className="rounded-[20px] bg-background p-4 shadow-[var(--shadow-raised)]"
+    >
+      <div className="flex items-start gap-3">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-[10px] bg-lime-soft text-lime-deep">
+          <Hand className="size-[18px]" />
+        </span>
+        <div className="flex min-w-0 flex-col gap-0.5 pt-px">
+          <span className="type-footnote font-medium text-lime-deep">Needs your OK</span>
+          <span className="type-headline">{a.summary}</span>
         </div>
-        {rows.length > 0 && (
-          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[14px] leading-relaxed">
-            {rows.map((r) => (
-              <div key={r.label} className="contents">
-                <dt className="text-muted-foreground">{r.label}</dt>
-                <dd className="min-w-0 break-words whitespace-pre-wrap">{r.value}</dd>
-              </div>
-            ))}
-          </dl>
-        )}
       </div>
-      <div className="flex gap-2 border-t bg-subtle/70 px-3 py-2.5">
-        <button
-          onClick={() => decide("approve")}
-          disabled={busy !== null}
-          className="flex h-8 items-center gap-1.5 rounded-[9px] bg-lime px-3.5 text-[13px] font-medium text-lime-ink shadow-[inset_0_0_0_1px_rgba(0,0,0,0.06)] transition hover:brightness-95 disabled:opacity-60"
-        >
-          {busy === "approve" && <Loader2 className="size-3.5 animate-spin" />}
-          Approve
-        </button>
-        <button
-          onClick={() => decide("reject")}
-          disabled={busy !== null}
-          className="h-8 rounded-[9px] px-3.5 text-[13px] font-medium text-muted-foreground transition hover:bg-secondary hover:text-foreground disabled:opacity-60"
-        >
+      {rows.length > 0 && (
+        <dl className="mt-3.5 grid grid-cols-[auto_1fr] gap-x-5 gap-y-2 rounded-[14px] bg-subtle px-4 py-3 type-callout">
+          {rows.map((r) => (
+            <div key={r.label} className="contents">
+              <dt className="text-muted-foreground">{r.label}</dt>
+              <dd className="min-w-0 break-words whitespace-pre-wrap">{r.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      <div className="mt-4 flex justify-end gap-2">
+        <Button variant="secondary" onClick={() => decide("reject")} disabled={busy !== null}>
           Not now
-        </button>
+        </Button>
+        <Button variant="lime" onClick={() => decide("approve")} disabled={busy !== null} className="min-w-[96px]">
+          {busy === "approve" ? <Loader2 className="animate-spin" /> : null}
+          Approve
+        </Button>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -123,22 +125,22 @@ function DecidedCard({ action: a }: { action: Action }) {
     }
   }, [finishAt, a.id]);
   const tone = {
-    approved: "text-muted-foreground",
-    running: "text-muted-foreground",
-    done: "text-private",
-    rejected: "text-faint",
-    failed: "text-destructive",
+    approved: "bg-fill text-muted-foreground",
+    running: "bg-fill text-muted-foreground",
+    done: "bg-private-soft text-private",
+    rejected: "bg-fill text-muted-foreground",
+    failed: "bg-[#fdeeec] text-destructive",
     pending_approval: "",
   }[a.status];
   const icon =
     a.status === "done" ? (
-      <Check className="size-3.5" strokeWidth={2.5} />
+      <Check className="size-3" strokeWidth={3} />
     ) : a.status === "failed" ? (
-      <CircleAlert className="size-3.5" />
+      <CircleAlert className="size-3" strokeWidth={2.6} />
     ) : a.status === "rejected" ? (
-      <X className="size-3.5" />
+      <X className="size-3" strokeWidth={3} />
     ) : (
-      <Loader2 className="size-3.5 animate-spin" />
+      <Loader2 className="size-3 animate-spin" strokeWidth={2.6} />
     );
   const text =
     a.status === "done"
@@ -149,21 +151,20 @@ function DecidedCard({ action: a }: { action: Action }) {
           ? `Couldn't do it${a.error ? `: ${a.error}` : "."}`
           : `On it: ${lowerFirst(a.summary)}…`;
   return (
-    <div
-      className={cn(
-        "flex items-start gap-2 rounded-xl border border-dashed px-3.5 py-2.5 text-[13.5px]",
-        tone,
-      )}
-    >
-      <span className="mt-px">{icon}</span>
-      <span className="min-w-0 flex-1 break-words">{text}</span>
+    <div className="flex items-center gap-3 rounded-[14px] bg-background px-3.5 py-2.5 type-callout shadow-[var(--shadow-card)]">
+      <span className={cn("flex size-5 shrink-0 items-center justify-center rounded-full", tone)}>{icon}</span>
+      <span
+        className={cn(
+          "min-w-0 flex-1 break-words",
+          a.status === "failed" ? "text-destructive" : a.status === "done" ? "" : "text-muted-foreground",
+        )}
+      >
+        {text}
+      </span>
       {finishAt && (
-        <button
-          onClick={() => openExternal(finishAt)}
-          className="-my-1 flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] bg-lime px-2.5 font-sans text-[12.5px] font-medium text-lime-ink shadow-[inset_0_0_0_1px_rgba(0,0,0,0.06)] hover:brightness-95"
-        >
-          <ExternalLink className="size-3.5" /> Save in Google Calendar
-        </button>
+        <Button variant="lime" size="sm" onClick={() => openExternal(finishAt)} className="-my-1">
+          <ExternalLink /> Save in Google Calendar
+        </Button>
       )}
     </div>
   );

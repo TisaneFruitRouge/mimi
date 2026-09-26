@@ -1,4 +1,4 @@
-import { Blocks, MessageSquarePlus, Sparkles } from "lucide-react";
+import { Blocks, MessageSquare, SquarePen, Sparkles } from "lucide-react";
 
 import {
   CommandDialog,
@@ -7,10 +7,13 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
+  CommandShortcut,
 } from "@/components/ui/command";
 import type { Section } from "@/features/shell/top-bar";
+import { mod } from "@/lib/platform";
 import { useConversations } from "@/lib/queries";
 
+/** Spotlight-like search over conversations, plus quick jumps. */
 export function ConversationPalette({
   open,
   onOpenChange,
@@ -33,40 +36,43 @@ export function ConversationPalette({
     <CommandDialog
       open={open}
       onOpenChange={onOpenChange}
-      title="Conversations"
-      description="Search your conversations or jump somewhere"
-      className="top-[20%] translate-y-0 sm:max-w-xl"
+      title="Search"
+      description="Find a conversation or jump somewhere"
+      showCloseButton={false}
+      className="top-[18%] translate-y-0 gap-0 rounded-[20px] sm:max-w-[600px]"
     >
-      <CommandInput placeholder="Search conversations…" />
-      <CommandList className="max-h-[420px]">
-        <CommandEmpty>No conversations match.</CommandEmpty>
-        <CommandGroup heading="Go">
-          <CommandItem onSelect={run(onNewConversation)}>
-            <MessageSquarePlus /> New conversation
-          </CommandItem>
-          <CommandItem onSelect={run(() => onSection("connections"))}>
-            <Blocks /> Connections
-          </CommandItem>
-          <CommandItem onSelect={run(() => onSection("models"))}>
-            <Sparkles /> Models
-          </CommandItem>
-        </CommandGroup>
+      <CommandInput placeholder="Search conversations" />
+      <CommandList className="max-h-[440px]">
+        <CommandEmpty>No conversations found.</CommandEmpty>
         {conversations.length > 0 && (
-          <CommandGroup heading="Conversations">
+          <CommandGroup heading="Recent">
             {conversations.map((c) => (
               <CommandItem
                 key={c.id}
                 value={`${c.title} ${c.id}`}
                 onSelect={run(() => onOpenConversation(c.id))}
               >
+                <MessageSquare />
                 <span className="truncate">{c.title}</span>
-                <span className="ml-auto shrink-0 font-mono text-[11px] text-faint">
-                  {relativeTime(c.updated_at)}
-                </span>
+                <CommandShortcut>{relativeTime(c.updated_at)}</CommandShortcut>
               </CommandItem>
             ))}
           </CommandGroup>
         )}
+        <CommandGroup heading="Go to">
+          <CommandItem onSelect={run(onNewConversation)}>
+            <SquarePen /> New chat
+            <CommandShortcut>{mod}N</CommandShortcut>
+          </CommandItem>
+          <CommandItem onSelect={run(() => onSection("connections"))}>
+            <Blocks /> Connections
+            <CommandShortcut>{mod}2</CommandShortcut>
+          </CommandItem>
+          <CommandItem onSelect={run(() => onSection("models"))}>
+            <Sparkles /> Models
+            <CommandShortcut>{mod}3</CommandShortcut>
+          </CommandItem>
+        </CommandGroup>
       </CommandList>
     </CommandDialog>
   );
@@ -75,11 +81,12 @@ export function ConversationPalette({
 function relativeTime(ms: number) {
   const diff = Date.now() - ms;
   const min = Math.round(diff / 60_000);
-  if (min < 1) return "now";
-  if (min < 60) return `${min}m`;
+  if (min < 1) return "Just now";
+  if (min < 60) return `${min} min ago`;
   const h = Math.round(min / 60);
-  if (h < 24) return `${h}h`;
+  if (h < 24) return h === 1 ? "An hour ago" : `${h} hours ago`;
   const d = Math.round(h / 24);
-  if (d < 7) return `${d}d`;
+  if (d === 1) return "Yesterday";
+  if (d < 7) return new Date(ms).toLocaleDateString(undefined, { weekday: "long" });
   return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }

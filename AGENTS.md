@@ -76,18 +76,71 @@ features go in the daemon plus the protocol types. Frontends only render them.
   is rendered with react-markdown (no raw HTML); links open in the system browser.
 - Every place a model is chosen or used shows its locality (`LocalityBadge`). Cloud use
   must always be visible to the user.
-- Look and feel ("Midnight", light edition): tokens live in `src/index.css` (`--canvas`,
-  `--subtle`, `--faint`, `--lime*`, and the fixed data-flow colours `--private*` teal,
-  `--network*` blue, `--cloud*` amber). Geist and Geist Mono are bundled via
-  `@fontsource-variable`, never loaded from a CDN. Lime is the signature accent: use it
-  sparingly (send, best-fit, progress). Mono uppercase labels for section headings. Copy
-  is plain language: "model source" not "provider", no URLs unless the user typed one.
-- Navigation: three sections (Chat, Connections, Models) in the top bar, conversations
-  behind Ctrl/⌘K, settings in a dialog. The URL hash holds the route (`#/models`,
-  `#/chat/<id>`). Setup is the Models page in setup mode until a model is chosen.
+- Look and feel: see "Design system" below. Copy is plain language for non-technical
+  people: "model source" not "provider", no URLs unless the user typed one, no model
+  names outside the Models page, no tool names or technical labels in chat.
+- Navigation: three sections (Chat, Connections, Models) in a segmented control in the
+  translucent top bar; conversations behind the Search button (⌘/Ctrl K); settings in a
+  sheet (⌘/Ctrl ,). Shortcuts: ⌘/Ctrl N new chat, ⌘/Ctrl 1–3 sections. The URL hash
+  holds the route (`#/models`, `#/chat/<id>`). Setup is the Models page in setup mode
+  until a model is chosen.
 - Integrations come from the daemon's catalog (`GET /v1/integrations`); list new ones
   there with status `coming_soon` until their connection flow exists, then add their id
   to `AVAILABLE` in `crates/core/src/integrations.rs`.
+
+## Design system (frontend)
+
+Calm, precise, macOS/iOS-system-app feel on a light canvas. Everything below lives in
+`apps/desktop/src/index.css` and `src/components/`; new screens compose these rather
+than inventing their own.
+
+- **Colours** (tokens on `:root`, Tailwind names in `@theme`): `canvas` #f5f5f7 app
+  background; `background` white for cards, popovers, composer; `foreground` #1d1d1f;
+  `muted-foreground`/`faint` #6e6e73 secondary text; `fill` (translucent grey) for
+  segmented tracks, chips, hovers and secondary buttons; `subtle` for quiet insets (user
+  bubbles use #e9e9ee); `separator` for hairlines. Lime is the signature accent, used
+  sparingly: send, Approve, best fit, progress, focus (`lime`, `lime-soft`, and
+  `lime-deep` for lime-family text on white). Data-flow colours are fixed meanings:
+  `private*` teal, `network*` blue, `cloud*` amber. No hard black borders.
+- **Type scale** (utilities; use instead of ad-hoc sizes): `type-large-title` 30 (page
+  titles), `type-title` 22, `type-headline` 17 semibold, `type-body` 15, `type-callout` 14,
+  `type-subhead` 13, `type-footnote` 12. They're named `type-*`, not `text-*`, on purpose:
+  the `cn()` merger treats unknown `text-*` classes as colours and silently drops a size
+  combined with a text colour. Section headings use `section-label` (13, semibold, grey),
+  never mono uppercase labels. Mono is only for things the user literally types (e.g.
+  `/newbot`).
+- **Surfaces**: `surface` (white, 18px radius, `--shadow-card`), `grouped` (iOS grouped
+  list: white, 16px radius, hairline separators between children), `material` /
+  `material-thick` (translucent + blur, for bars and floating controls). Elevation comes
+  from `--shadow-card` < `--shadow-raised` < `--shadow-float` (popovers, sheets), never
+  from borders. Radii: controls 10, small cards 14, cards 18, sheets 22, composer 24. To
+  override a utility's background or shadow on the same element, use the important
+  suffix (`bg-subtle!`).
+- **Components** (`src/components/page.tsx`): `Page` (scroll container under the top bar;
+  reports the scroll edge so the bar gains its material and hairline), `PageHeader`
+  (large title + one-line subtitle), `Section` (label + optional action), `Grouped` +
+  `Row` (icon tile, title, detail, trailing controls; pass `onClick` for a selectable
+  row), `IconTile` (tinted rounded-square icon, sm/md/lg), `Pill` (small capsule label).
+  Buttons (`components/ui/button.tsx`): `default` (dark, primary), `lime` (signature
+  positive action), `secondary` (grey fill), `ghost`, `outline`, `destructive`; all press
+  with a slight scale. Put destructive and rarely used actions in a "…" `DropdownMenu`,
+  not in the row. Confirm destructive actions with the centred, macOS-style
+  `AlertDialog` (`AlertDialogAction variant="destructive"`).
+- **Spacing**: 4/8pt grid. Pages: max 880px wide, 24px side padding, 40px between
+  sections, 10px between a section label and its content, 12px grid gaps.
+- **Motion** (`motion` library, `motion/react`): springs, not linear easing (typical
+  stiffness 380–520, damping 30–38). Section changes fade and rise 6px; new messages and
+  approval cards rise in; popovers and sheets scale in from 0.96–0.97. Don't wrap
+  streaming content (message text) in layout animations. Everything respects
+  `prefers-reduced-motion` (`MotionConfig reducedMotion="user"` plus a CSS override).
+- **Chat**: no avatars; user messages are grey bubbles on the right; replies are plain
+  text. The composer floats over the thread (the thread pads itself by the composer's
+  measured height). Its toolbar keeps round icon buttons on the left (`@` mentions, `+`
+  more/actions, also opened by typing `/`) and the privacy chip plus the round send/stop
+  button on the right. Model switching lives in Models, not in the composer.
+- **Desktop window**: on macOS the title bar is an overlay (hidden title); the top bar
+  leaves room for the traffic lights (`macOverlayTitleBar` in `lib/platform.ts`) and is a
+  `data-tauri-drag-region`. Linux keeps native decorations.
 
 ## Connections (the user's own accounts)
 

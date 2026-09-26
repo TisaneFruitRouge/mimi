@@ -1,28 +1,24 @@
 import { useState } from "react";
+import { motion } from "motion/react";
 import {
   CalendarDays,
   Check,
   Hash,
+  Lock,
   Mail,
   MessageCircle,
+  MoreHorizontal,
   Phone,
   Plug,
   Send,
-  ShieldCheck,
   Users,
 } from "lucide-react";
 import { cn } from "cn";
+import { toast } from "sonner";
 
 import type { Connection } from "@/bindings/Connection";
 import type { Integration } from "@/bindings/Integration";
-import type { IntegrationCategory } from "@/bindings/IntegrationCategory";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Grouped, IconTile, Page, PageHeader, Pill, Row, Section } from "@/components/page";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -34,12 +30,18 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { type ConnectKind, ConnectDialog } from "@/features/connections/connect-dialogs";
 import { api } from "@/lib/api";
 import { useConnections, useIntegrations } from "@/lib/queries";
 import { openExternal } from "@/lib/transport";
-import { toast } from "sonner";
 
 const connectable = (id: string): id is ConnectKind =>
   id === "google_calendar" || id === "caldav" || id === "telegram";
@@ -54,18 +56,21 @@ const look: Record<string, { icon: typeof Plug; tone: string }> = {
   carddav: { icon: Users, tone: "bg-[#fbeedd] text-[#9a5a12]" },
   telegram: { icon: Send, tone: "bg-[#def3f7] text-[#136c86]" },
   signal: { icon: MessageCircle, tone: "bg-[#e5ecfb] text-[#3353a8]" },
-  matrix: { icon: Hash, tone: "bg-subtle text-foreground" },
+  matrix: { icon: Hash, tone: "bg-fill text-foreground" },
   whatsapp: { icon: Phone, tone: "bg-[#e1f4e6] text-[#1d7a3a]" },
   email: { icon: Mail, tone: "bg-[#efe9fb] text-[#6146ad]" },
 };
-const lookOf = (id: string) => look[id] ?? { icon: Plug, tone: "bg-subtle text-foreground" };
+const lookOf = (id: string) => look[id] ?? { icon: Plug, tone: "bg-fill text-foreground" };
 
-const categoryLabel: Record<IntegrationCategory, string> = {
-  calendar: "Calendar",
-  contacts: "Contacts",
-  messaging: "Messaging",
-  email: "Email",
-};
+/** The tinted icon that stands for an integration everywhere in the app. */
+export function IntegrationIcon({ id, size = "md" }: { id: string; size?: "sm" | "md" | "lg" }) {
+  const { icon: Icon, tone } = lookOf(id);
+  return (
+    <IconTile size={size} className={tone}>
+      <Icon />
+    </IconTile>
+  );
+}
 
 export function ConnectionsView() {
   const integrations = useIntegrations();
@@ -74,83 +79,102 @@ export function ConnectionsView() {
   const [connecting, setConnecting] = useState<ConnectKind | null>(null);
   const [removing, setRemoving] = useState<Connection | null>(null);
   const all = integrations.data ?? [];
-  const rest = all.filter((i) => i.status !== "connected" || repeatable(i.id));
+  const available = all.filter(
+    (i) => i.status === "available" || (i.status === "connected" && repeatable(i.id)),
+  );
+  const soon = all.filter((i) => i.status === "coming_soon");
   const startConnect = (i: Integration) => {
     setOpen(null);
     if (connectable(i.id)) setConnecting(i.id);
   };
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto flex w-full max-w-[960px] flex-col gap-9 px-6 pt-6 pb-12">
-        <div className="flex flex-col gap-1.5">
-          <h1 className="text-[30px] font-semibold tracking-[-0.03em]">Connections</h1>
-          <p className="max-w-xl text-[15px] text-muted-foreground">
-            Give your assistant access to the apps you use. It only sees what you connect, and
-            always asks before it sends or changes anything.
-          </p>
+    <Page>
+      <PageHeader
+        title="Connections"
+        subtitle="Let your assistant help with the apps you use. It only sees what you connect, and always asks before it sends or changes anything."
+      />
+
+      <Section title="Connected">
+        {connections.length === 0 ? (
+          <div className="surface flex items-center gap-4 px-5 py-5">
+            <IconTile className="bg-fill text-muted-foreground">
+              <Plug />
+            </IconTile>
+            <div>
+              <p className="type-body font-medium">Nothing connected yet</p>
+              <p className="type-subhead text-muted-foreground">
+                Connect a calendar or Telegram below to get started.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <Grouped>
+            {connections.map((c) => (
+              <ConnectionRow key={c.id} connection={c} onRemove={() => setRemoving(c)} />
+            ))}
+          </Grouped>
+        )}
+      </Section>
+
+      <Section title="Available">
+        <div className="grid grid-cols-3 gap-3">
+          {integrations.isLoading &&
+            [0, 1, 2].map((i) => <Skeleton key={i} className="h-[172px] rounded-[18px]" />)}
+          {available.map((i, n) => (
+            <motion.div
+              key={i.id}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ type: "spring", stiffness: 380, damping: 32, delay: n * 0.04 }}
+            >
+              <IntegrationCard integration={i} onOpen={() => setOpen(i)} onConnect={() => startConnect(i)} />
+            </motion.div>
+          ))}
         </div>
+      </Section>
 
-        <section className="flex flex-col gap-3">
-          <SectionLabel>Connected</SectionLabel>
-          {connections.length === 0 ? (
-            <div className="flex items-center gap-4 rounded-2xl border border-dashed bg-background/60 px-5 py-5">
-              <div className="flex size-10 items-center justify-center rounded-xl bg-subtle text-faint">
-                <Plug className="size-5" />
-              </div>
-              <div>
-                <p className="text-[14.5px] font-medium">Nothing connected yet</p>
-                <p className="text-[13px] text-muted-foreground">
-                  Connected apps show up here, with exactly what the assistant can do with each.
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-col divide-y rounded-2xl border bg-background shadow-xs">
-              {connections.map((c) => (
-                <ConnectionRow key={c.id} connection={c} onRemove={() => setRemoving(c)} />
-              ))}
-            </div>
-          )}
-        </section>
-
-        <section className="flex flex-col gap-3">
-          <SectionLabel>Add more</SectionLabel>
+      {soon.length > 0 && (
+        <Section title="Coming soon">
           <div className="grid grid-cols-3 gap-3">
-            {integrations.isLoading &&
-              [0, 1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-40 rounded-2xl" />)}
-            {rest.map((i) => (
-              <IntegrationCard
+            {soon.map((i) => (
+              <button
                 key={i.id}
-                integration={i}
-                onOpen={() => setOpen(i)}
-                onConnect={() => startConnect(i)}
-              />
+                onClick={() => setOpen(i)}
+                className="pressable flex items-center gap-3 rounded-[16px] bg-[rgb(255_255_255/0.55)] px-3.5 py-3 text-left shadow-[0_0_0_0.5px_rgb(0_0_0/0.05)] hover:bg-background"
+              >
+                <span className="opacity-60 grayscale-[0.4]">
+                  <IntegrationIcon id={i.id} size="sm" />
+                </span>
+                <span className="min-w-0 flex-1 truncate type-callout font-medium text-muted-foreground">
+                  {i.name}
+                </span>
+              </button>
             ))}
           </div>
-        </section>
+        </Section>
+      )}
 
-        <div className="flex items-center gap-3 rounded-2xl bg-private-soft px-5 py-4 text-[13.5px] text-private">
-          <ShieldCheck className="size-[18px] shrink-0" />
-          Sign-ins are stored encrypted on this computer. Disconnecting an app deletes them.
-        </div>
-      </div>
+      <p className="flex items-center justify-center gap-1.5 type-footnote text-faint">
+        <Lock className="size-3" />
+        Sign-ins are stored encrypted on this computer. Disconnecting deletes them.
+      </p>
 
-      <IntegrationDialog integration={open} onClose={() => setOpen(null)} onConnect={startConnect} />
+      <IntegrationSheet integration={open} onClose={() => setOpen(null)} onConnect={startConnect} />
       <ConnectDialog kind={connecting} onClose={() => setConnecting(null)} />
       <AlertDialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Disconnect {removing?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              Your assistant loses access right away, and its saved sign-in is deleted from this
-              computer. Nothing is deleted on the service itself.
+              Your assistant loses access right away and the saved sign-in is deleted. Nothing is
+              deleted on the service itself.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive text-white hover:bg-destructive/90"
+              variant="destructive"
               onClick={() => removing && api.disconnect(removing.id).catch((e) => toast.error(e.message))}
             >
               Disconnect
@@ -158,30 +182,7 @@ export function ConnectionsView() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
-  );
-}
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <h2 className="font-mono text-[11.5px] font-medium tracking-[0.06em] text-faint uppercase">
-      {children}
-    </h2>
-  );
-}
-
-function IntegrationIcon({ id, size = "md" }: { id: string; size?: "md" | "lg" }) {
-  const { icon: Icon, tone } = lookOf(id);
-  return (
-    <div
-      className={cn(
-        "flex shrink-0 items-center justify-center",
-        size === "lg" ? "size-12 rounded-2xl" : "size-10 rounded-xl",
-        tone,
-      )}
-    >
-      <Icon className={size === "lg" ? "size-6" : "size-5"} />
-    </div>
+    </Page>
   );
 }
 
@@ -194,7 +195,6 @@ function IntegrationCard({
   onOpen: () => void;
   onConnect: () => void;
 }) {
-  const soon = i.status === "coming_soon";
   const again = i.status === "connected";
   return (
     <div
@@ -202,72 +202,75 @@ function IntegrationCard({
       tabIndex={0}
       onClick={onOpen}
       onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onOpen()}
-      className="group flex cursor-pointer flex-col gap-4 rounded-2xl border bg-background p-4 text-left shadow-xs transition hover:-translate-y-px hover:shadow-md"
+      className="surface flex h-full cursor-pointer flex-col gap-4 p-4 text-left transition-shadow duration-200 hover:shadow-[var(--shadow-raised)]"
     >
-      <div className="flex items-start justify-between">
-        <IntegrationIcon id={i.id} />
-        <span className="font-mono text-[10.5px] tracking-wide text-faint uppercase">
-          {categoryLabel[i.category]}
-        </span>
-      </div>
+      <IntegrationIcon id={i.id} />
       <div className="flex flex-col gap-1">
-        <span className="text-[14.5px] font-medium">{i.name}</span>
-        <span className="text-[13px] leading-snug text-muted-foreground">{i.description}</span>
+        <span className="type-body font-medium">{i.name}</span>
+        <span className="line-clamp-2 type-subhead text-muted-foreground">{i.description}</span>
       </div>
-      {soon ? (
-        <span className="mt-auto inline-flex h-8 items-center justify-center rounded-[9px] bg-subtle text-[12.5px] font-medium text-faint">
-          Coming soon
-        </span>
-      ) : (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onConnect();
-          }}
-          className={cn(
-            "mt-auto inline-flex h-8 items-center justify-center rounded-[9px] text-[12.5px] font-medium transition",
-            again ? "bg-subtle hover:bg-secondary" : "bg-foreground text-background hover:bg-foreground/90",
-          )}
-        >
-          {again ? "Add another" : "Connect"}
-        </button>
-      )}
-    </div>
-  );
-}
-
-function ConnectionRow({ connection: c, onRemove }: { connection: Connection; onRemove: () => void }) {
-  const tone = { ok: "bg-private", needs_action: "bg-cloud", error: "bg-destructive" }[c.status];
-  return (
-    <div className="flex items-center gap-4 px-4 py-3.5">
-      <IntegrationIcon id={c.integration} />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 text-[14.5px] font-medium">
-          {c.name}
-          <span className={cn("size-1.5 rounded-full", tone)} aria-hidden />
-        </div>
-        <div
-          className={cn(
-            "truncate text-[13px]",
-            c.status === "error" ? "text-destructive" : c.status === "needs_action" ? "text-cloud" : "text-muted-foreground",
-          )}
-        >
-          {c.detail}
-        </div>
-      </div>
-      {c.action_url && (
-        <Button size="sm" onClick={() => openExternal(c.action_url!)}>
-          Finish setup
-        </Button>
-      )}
-      <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={onRemove}>
-        Disconnect
+      <Button
+        size="sm"
+        variant={again ? "secondary" : "default"}
+        className="mt-auto self-start rounded-full px-4"
+        onClick={(e) => {
+          e.stopPropagation();
+          onConnect();
+        }}
+      >
+        {again ? "Add another" : "Connect"}
       </Button>
     </div>
   );
 }
 
-function IntegrationDialog({
+function ConnectionRow({ connection: c, onRemove }: { connection: Connection; onRemove: () => void }) {
+  const dot = { ok: "bg-private", needs_action: "bg-cloud", error: "bg-destructive" }[c.status];
+  return (
+    <Row
+      icon={<IntegrationIcon id={c.integration} />}
+      title={
+        <span className="flex items-center gap-2">
+          <span className="truncate">{c.name}</span>
+          <span className={cn("size-1.5 shrink-0 rounded-full", dot)} aria-hidden />
+        </span>
+      }
+      detail={
+        <span
+          className={cn(
+            c.status === "error" && "text-destructive",
+            c.status === "needs_action" && "text-cloud",
+          )}
+        >
+          {c.detail}
+        </span>
+      }
+      trailing={
+        <>
+          {c.action_url && (
+            <Button size="sm" variant="lime" className="rounded-full px-3.5" onClick={() => openExternal(c.action_url!)}>
+              Finish setup
+            </Button>
+          )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon-sm" aria-label={`Options for ${c.name}`} className="rounded-full text-muted-foreground">
+                <MoreHorizontal />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem variant="destructive" onSelect={onRemove}>
+                Disconnect
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </>
+      }
+    />
+  );
+}
+
+function IntegrationSheet({
   integration: i,
   onClose,
   onConnect,
@@ -278,37 +281,33 @@ function IntegrationDialog({
 }) {
   return (
     <Dialog open={!!i} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="gap-0 p-0 sm:max-w-[420px]">
         {i && (
-          <>
-            <DialogHeader className="flex-row items-center gap-4 space-y-0 text-left">
-              <IntegrationIcon id={i.id} size="lg" />
-              <div className="flex flex-col gap-1">
-                <DialogTitle>{i.name}</DialogTitle>
-                <DialogDescription>{i.description}</DialogDescription>
-              </div>
-            </DialogHeader>
-            <div className="flex flex-col gap-2.5">
-              <span className="text-sm font-medium">What your assistant can do with it</span>
-              <ul className="flex flex-col gap-2">
+          <div className="flex flex-col items-center gap-5 px-7 pt-8 pb-7 text-center">
+            <IntegrationIcon id={i.id} size="lg" />
+            <div className="flex flex-col gap-1.5">
+              <DialogTitle className="type-title">{i.name}</DialogTitle>
+              <DialogDescription>{i.description}</DialogDescription>
+            </div>
+            <div className="flex w-full flex-col gap-2 text-left">
+              <span className="section-label">What your assistant can do</span>
+              <Grouped className="bg-subtle! shadow-none!">
                 {i.abilities.map((a) => (
-                  <li key={a} className="flex items-start gap-2.5 text-[13.5px]">
-                    <Check className="mt-0.5 size-4 shrink-0 text-private" />
+                  <div key={a} className="flex items-start gap-3 px-4 py-3 type-callout">
+                    <Check className="mt-0.5 size-4 shrink-0 text-private" strokeWidth={2.4} />
                     {a}
-                  </li>
+                  </div>
                 ))}
-              </ul>
+              </Grouped>
             </div>
             {i.status === "coming_soon" ? (
-              <p className="rounded-xl bg-subtle px-4 py-3 text-[13px] leading-relaxed text-muted-foreground">
-                This connection isn’t available yet. It’s part of an upcoming update.
-              </p>
+              <Pill className="h-8 px-4 type-subhead">Coming in an upcoming update</Pill>
             ) : (
-              <Button className="self-start" onClick={() => onConnect(i)}>
+              <Button size="lg" className="w-full" onClick={() => onConnect(i)}>
                 {i.status === "connected" ? "Add another" : `Connect ${i.name}`}
               </Button>
             )}
-          </>
+          </div>
         )}
       </DialogContent>
     </Dialog>

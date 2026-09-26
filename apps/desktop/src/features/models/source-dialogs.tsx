@@ -120,7 +120,7 @@ export function AddSourceDialog({
 
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-[520px]">
         {!draft ? (
           <>
             <DialogHeader>
@@ -144,12 +144,12 @@ export function AddSourceDialog({
             {only !== "cloud" && (
               <button
                 onClick={() => pick(null)}
-                className="flex items-center gap-3 rounded-xl border border-dashed p-3.5 text-left hover:bg-subtle"
+                className="pressable flex items-center gap-3 rounded-[14px] bg-subtle p-3.5 text-left hover:bg-fill"
               >
                 <Server className="size-4 text-muted-foreground" />
                 <div>
-                  <div className="text-sm font-medium">A server on your network</div>
-                  <div className="text-[13px] text-muted-foreground">
+                  <div className="type-callout font-medium">A server on your network</div>
+                  <div className="type-subhead text-muted-foreground">
                     For example a computer with a big graphics card at home.
                   </div>
                 </div>
@@ -188,7 +188,7 @@ export function AddSourceDialog({
                   <Input
                     value={draft.baseUrl}
                     onChange={(e) => update({ baseUrl: e.target.value })}
-                    className="font-mono text-[13px]"
+                    className="text-[14px]"
                     autoFocus
                   />
                 </Field>
@@ -202,19 +202,19 @@ export function AddSourceDialog({
                     autoFocus={!!draft.presetId}
                     placeholder={draft.needsKey ? "Paste your key" : "Only if the server needs one"}
                   />
-                  <p className="text-xs text-muted-foreground">
+                  <p className="type-footnote text-muted-foreground">
                     Stored encrypted on this computer and never shown again.
                   </p>
                 </Field>
               )}
               {draft.presetId && !draft.needsKey && (
-                <p className="text-[13.5px] text-muted-foreground">
+                <p className="type-callout text-muted-foreground">
                   Make sure {draft.name} is running, then connect.
                 </p>
               )}
-              {error && <p className="text-[13.5px] text-destructive">{error}</p>}
+              {error && <p className="type-subhead text-destructive">{error}</p>}
               {probe && (
-                <div className="flex items-center gap-2.5 rounded-xl bg-subtle px-3.5 py-3 text-[13.5px]">
+                <div className="flex items-center gap-2.5 rounded-[14px] bg-private-soft px-4 py-3 type-callout">
                   <CircleCheck className="size-4 text-private" />
                   <span className="flex-1">
                     Connected · {probe.models.length} model{probe.models.length === 1 ? "" : "s"}
@@ -251,7 +251,7 @@ function PresetGroup({
 }) {
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-2 text-sm font-medium [&_svg]:size-4 [&_svg]:text-muted-foreground">
+      <div className="section-label flex items-center gap-2 px-0 [&_svg]:size-4">
         {icon}
         {title}
         {hint && <span className="font-normal text-muted-foreground">· {hint}</span>}
@@ -261,10 +261,10 @@ function PresetGroup({
           <button
             key={p.id}
             onClick={() => onPick(p)}
-            className="rounded-xl border p-3 text-left transition-colors hover:bg-subtle"
+            className="pressable rounded-[14px] bg-background p-3 text-left shadow-[var(--shadow-card)] transition-shadow hover:shadow-[var(--shadow-raised)]"
           >
-            <div className="text-[13.5px] font-medium">{p.name}</div>
-            <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{p.description}</div>
+            <div className="type-callout font-medium">{p.name}</div>
+            <div className="mt-0.5 line-clamp-2 type-footnote text-muted-foreground">{p.description}</div>
           </button>
         ))}
       </div>
@@ -331,7 +331,7 @@ export function EditSourceDialog({ provider, onClose }: { provider: Provider | n
             <Input value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
           <Field label="Address">
-            <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} className="font-mono text-[13px]" />
+            <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} className="text-[14px]" />
           </Field>
           <Field label="API key">
             <Input
@@ -354,7 +354,7 @@ export function EditSourceDialog({ provider, onClose }: { provider: Provider | n
                 ))}
               </SelectContent>
             </Select>
-            <p className="text-xs text-muted-foreground">
+            <p className="type-footnote text-muted-foreground">
               Detected from the address. Change it only for your own server behind a public name.
             </p>
           </Field>

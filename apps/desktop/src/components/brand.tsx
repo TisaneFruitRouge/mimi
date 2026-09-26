@@ -22,7 +22,7 @@ export function LogoMark({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        "flex size-8 shrink-0 items-center justify-center rounded-[10px] bg-lime text-lime-ink shadow-[inset_0_0_0_1px_rgba(0,0,0,0.06)]",
+        "flex size-7 shrink-0 items-center justify-center rounded-[8px] bg-lime text-lime-ink shadow-[inset_0_0_0_0.5px_rgb(0_0_0/0.1),0_1px_2px_rgb(86_118_13/0.25)]",
         className,
       )}
     >
@@ -34,7 +34,7 @@ export function LogoMark({ className }: { className?: string }) {
 /** The assistant's avatar next to its replies. */
 export function AssistantMark() {
   return (
-    <div className="flex size-7 shrink-0 items-center justify-center rounded-lg border bg-background text-[#6f8f14] shadow-xs">
+    <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-lime text-lime-ink shadow-[inset_0_0_0_0.5px_rgb(0_0_0/0.1)]">
       <FlameIcon className="size-4" />
     </div>
   );

@@ -31,12 +31,12 @@ export function LocalityBadge({
       <TooltipTrigger asChild>
         <span
           className={cn(
-            "inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium",
+            "inline-flex h-[22px] shrink-0 items-center gap-1 rounded-full px-2.5 text-[12px] font-medium",
             localityStyles[locality],
             className,
           )}
         >
-          <LocalityIcon locality={locality} className="size-3.5" />
+          <LocalityIcon locality={locality} className="size-3" />
           {label ?? localityLabel[locality]}
         </span>
       </TooltipTrigger>

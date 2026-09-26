@@ -25,7 +25,7 @@ export type ConnectKind = "google_calendar" | "caldav" | "telegram";
 export function ConnectDialog({ kind, onClose }: { kind: ConnectKind | null; onClose: () => void }) {
   return (
     <Dialog open={kind !== null} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="gap-5 sm:max-w-lg">
+      <DialogContent className="gap-6 sm:max-w-[500px]">
         {kind === "google_calendar" && <GoogleCalendar onDone={onClose} />}
         {kind === "caldav" && <CalDav onDone={onClose} />}
         {kind === "telegram" && <Telegram onDone={onClose} />}
@@ -54,13 +54,13 @@ function useConnect() {
 }
 
 function Steps({ children }: { children: React.ReactNode }) {
-  return <ol className="flex flex-col gap-3 text-[14px] leading-relaxed">{children}</ol>;
+  return <ol className="flex flex-col gap-4 type-callout">{children}</ol>;
 }
 
 function Step({ n, children }: { n: number; children: React.ReactNode }) {
   return (
     <li className="flex gap-3">
-      <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-subtle font-mono text-[12px] text-muted-foreground">
+      <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-fill type-footnote font-semibold text-muted-foreground tabular-nums">
         {n}
       </span>
       <div className="flex min-w-0 flex-1 flex-col gap-2 pt-0.5">{children}</div>
@@ -72,7 +72,7 @@ function Note({ icon = "lock", children }: { icon?: "lock" | "warn"; children: R
   return (
     <div
       className={cn(
-        "flex gap-2.5 rounded-xl px-3.5 py-3 text-[13px] leading-relaxed",
+        "flex gap-2.5 rounded-[14px] px-4 py-3 type-subhead",
         icon === "lock" ? "bg-private-soft text-private" : "bg-cloud-soft text-cloud",
       )}
     >
@@ -86,10 +86,10 @@ function Done({ connection, onDone, extra }: { connection: Connection; onDone: (
   return (
     <>
       <div className="flex flex-col items-center gap-3 py-4 text-center">
-        <CircleCheck className="size-10 text-private" strokeWidth={1.6} />
+        <CircleCheck className="size-12 text-private" strokeWidth={1.5} />
         <div>
-          <p className="text-[16px] font-medium">{connection.name} is connected</p>
-          <p className="text-[13.5px] text-muted-foreground">{connection.detail}</p>
+          <p className="type-headline">{connection.name} is connected</p>
+          <p className="type-callout text-muted-foreground">{connection.detail}</p>
         </div>
       </div>
       <DialogFooter className="sm:justify-between">
@@ -166,14 +166,14 @@ function GoogleCalendar({ onDone }: { onDone: () => void }) {
               onChange={(e) => setUrl(e.target.value)}
               placeholder="https://calendar.google.com/calendar/ical/…/basic.ics"
               aria-label="Secret address in iCal format"
-              className="font-mono text-[12.5px]"
+              className="text-[14px]"
               autoFocus
             />
             <Button type="submit" disabled={busy || !url.trim()}>
               {busy && <Loader2 className="animate-spin" />} Connect
             </Button>
           </form>
-          {error && <p className="text-[13px] text-destructive">{error}</p>}
+          {error && <p className="type-subhead text-destructive">{error}</p>}
         </Step>
       </Steps>
       <Note>
@@ -236,14 +236,16 @@ function CalDav({ onDone }: { onDone: () => void }) {
         <DialogTitle>Connect a calendar account</DialogTitle>
         <DialogDescription>Read and add events in iCloud, Fastmail, Nextcloud and other calendars.</DialogDescription>
       </DialogHeader>
-      <div className="flex gap-1.5">
+      <div className="grid grid-cols-4 rounded-[10px] bg-fill p-[3px]">
         {caldavServices.map((s) => (
           <button
             key={s.id}
             onClick={() => setServiceId(s.id)}
             className={cn(
-              "h-8 rounded-lg border px-3 text-[13px] font-medium transition-colors",
-              s.id === serviceId ? "border-foreground bg-foreground text-background" : "hover:bg-subtle",
+              "h-7 rounded-[7px] text-[13px] font-medium transition-all duration-200",
+              s.id === serviceId
+                ? "bg-background text-foreground shadow-[0_0_0_0.5px_rgb(0_0_0/0.06),0_1px_3px_rgb(0_0_0/0.12)]"
+                : "text-muted-foreground hover:text-foreground",
             )}
           >
             {s.name}
@@ -265,7 +267,7 @@ function CalDav({ onDone }: { onDone: () => void }) {
               value={server}
               onChange={(e) => setServer(e.target.value)}
               placeholder={serviceId === "nextcloud" ? "https://cloud.example.com" : "https://"}
-              className="font-mono text-[13px]"
+              className="text-[14px]"
             />
           </div>
         )}
@@ -282,7 +284,7 @@ function CalDav({ onDone }: { onDone: () => void }) {
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="off"
           />
-          <p className="text-[12.5px] leading-relaxed text-muted-foreground">
+          <p className="type-subhead text-muted-foreground">
             {service.help}{" "}
             {service.helpUrl && (
               <button type="button" className="font-medium text-foreground underline underline-offset-2" onClick={() => openExternal(service.helpUrl!)}>
@@ -291,7 +293,7 @@ function CalDav({ onDone }: { onDone: () => void }) {
             )}
           </p>
         </div>
-        {error && <p className="text-[13px] text-destructive">{error}</p>}
+        {error && <p className="type-subhead text-destructive">{error}</p>}
         <DialogFooter>
           <Button type="submit" disabled={busy || !serverUrl.trim() || !username.trim() || !password}>
             {busy && <Loader2 className="animate-spin" />} Connect
@@ -350,14 +352,14 @@ function Telegram({ onDone }: { onDone: () => void }) {
               onChange={(e) => setToken(e.target.value)}
               placeholder="123456789:AA…"
               aria-label="Bot token"
-              className="font-mono text-[13px]"
+              className="text-[14px]"
               autoFocus
             />
             <Button type="submit" disabled={busy || !token.trim()}>
               {busy && <Loader2 className="animate-spin" />} Connect
             </Button>
           </form>
-          {error && <p className="text-[13px] text-destructive">{error}</p>}
+          {error && <p className="type-subhead text-destructive">{error}</p>}
         </Step>
       </Steps>
       <Note icon="warn">
@@ -384,17 +386,17 @@ function TelegramPairing({ connection }: { connection: Connection }) {
         </DialogDescription>
       </DialogHeader>
       <div className="flex items-center gap-5">
-        <div className="shrink-0 rounded-2xl border bg-white p-2">
+        <div className="shrink-0 rounded-[18px] bg-white p-2.5 shadow-[var(--shadow-card)]">
           {qr ? <img src={qr} alt="QR code to open your bot" className="size-36" /> : <div className="size-36" />}
         </div>
-        <div className="flex flex-col gap-3 text-[14px] leading-relaxed">
+        <div className="flex flex-col gap-3 type-callout">
           <span>Scan with your phone's camera, or open it on this computer.</span>
           {url && (
             <Button className="self-start" onClick={() => openExternal(url)}>
               <ExternalLink /> Open {connection.name}
             </Button>
           )}
-          <span className="flex items-center gap-2 text-[13px] text-muted-foreground">
+          <span className="flex items-center gap-2 type-subhead text-muted-foreground">
             <Loader2 className="size-3.5 animate-spin" /> Waiting for you to press Start…
           </span>
         </div>

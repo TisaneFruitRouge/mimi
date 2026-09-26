@@ -4,9 +4,11 @@
 @plugin "@tailwindcss/typography";
 
 /*
- * Hearth's look ("Midnight", light edition): crisp neutral surfaces, Geist type,
- * a lime signature accent used sparingly (send, highlights), and fixed meanings for
- * where data goes: teal = private, amber = cloud.
+ * Hearth's look ("Midnight", light edition), refined toward the calm precision of
+ * macOS/iOS system apps: neutral surfaces, translucent materials, hairline separators,
+ * layered soft shadows, Geist type on a strict scale, and a lime signature accent used
+ * sparingly. Fixed meanings for where data goes: teal = private, blue = your network,
+ * amber = cloud. See AGENTS.md ("Look and feel") for how to use these.
  */
 
 @custom-variant dark (&:is(.dark *));
@@ -15,13 +17,14 @@
     --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
     --font-mono: "Geist Mono Variable", ui-monospace, monospace;
 
-    --radius-sm: calc(var(--radius) * 0.6);
-    --radius-md: calc(var(--radius) * 0.8);
-    --radius-lg: var(--radius);
-    --radius-xl: calc(var(--radius) * 1.4);
-    --radius-2xl: calc(var(--radius) * 1.8);
-    --radius-3xl: calc(var(--radius) * 2.2);
-    --radius-4xl: calc(var(--radius) * 2.6);
+    /* Radii: controls 10, cards 16–20, sheets 22, composer 24. */
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 10px;
+    --radius-xl: 14px;
+    --radius-2xl: 18px;
+    --radius-3xl: 22px;
+    --radius-4xl: 28px;
 
     --color-background: var(--background);
     --color-foreground: var(--foreground);
@@ -45,10 +48,13 @@
     /* Hearth-specific */
     --color-canvas: var(--canvas);
     --color-subtle: var(--subtle);
+    --color-fill: var(--fill);
     --color-faint: var(--faint);
+    --color-separator: var(--separator);
     --color-lime: var(--lime);
     --color-lime-ink: var(--lime-ink);
     --color-lime-soft: var(--lime-soft);
+    --color-lime-deep: var(--lime-deep);
     --color-private: var(--private);
     --color-private-soft: var(--private-soft);
     --color-network: var(--network);
@@ -57,44 +63,62 @@
     --color-cloud-soft: var(--cloud-soft);
     --color-event: var(--event);
     --color-event-soft: var(--event-soft);
+
+    /* Elevation: hairline + soft layered shadows, never a hard border. */
+    --shadow-card: 0 0 0 0.5px rgb(0 0 0 / 0.06), 0 1px 2px rgb(0 0 0 / 0.04), 0 2px 8px -2px rgb(0 0 0 / 0.04);
+    --shadow-raised: 0 0 0 0.5px rgb(0 0 0 / 0.07), 0 2px 4px rgb(0 0 0 / 0.04), 0 8px 24px -6px rgb(0 0 0 / 0.1);
+    --shadow-float: 0 0 0 0.5px rgb(0 0 0 / 0.08), 0 8px 20px -4px rgb(0 0 0 / 0.1), 0 24px 56px -12px rgb(0 0 0 / 0.16);
+
+    --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+    --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+
+    --animate-rise: rise 0.42s var(--ease-out-soft) both;
+    --animate-fade: fade 0.3s var(--ease-out-soft) both;
 }
 
 :root {
-    --radius: 0.75rem;
+    --radius: 10px;
 
-    --canvas: #f6f6f4;          /* app background */
-    --background: #ffffff;      /* cards, dock, popovers */
-    --foreground: #16171a;
+    --canvas: #f5f5f7;          /* app background */
+    --background: #ffffff;      /* cards, composer, popovers */
+    --foreground: #1d1d1f;
     --card: #ffffff;
-    --card-foreground: #16171a;
+    --card-foreground: #1d1d1f;
     --popover: #ffffff;
-    --popover-foreground: #16171a;
-    --primary: #16171a;
+    --popover-foreground: #1d1d1f;
+    --primary: #1d1d1f;
     --primary-foreground: #ffffff;
-    --secondary: #efefec;
-    --secondary-foreground: #16171a;
-    --muted: #efefec;
-    --muted-foreground: #5c616b;
-    --subtle: #f2f2ef;          /* quiet fills: user messages, tiles */
-    --faint: #737883;           /* meta text; 4.5:1 on white */
-    --accent: #efefec;
-    --accent-foreground: #16171a;
-    --destructive: #c8341f;
-    --border: #e4e4df;
-    --input: #dcdcd6;
-    --ring: #8fb82a;
+    --secondary: #ececef;
+    --secondary-foreground: #1d1d1f;
+    --muted: #ececef;
+    --muted-foreground: #6e6e73; /* secondary text; 5:1 on white */
+    --subtle: #f0f0f3;          /* quiet fills: user messages, tiles, chips */
+    --fill: rgb(118 118 128 / 0.12); /* system fill: segmented tracks, hovers */
+    --faint: #6e6e73;           /* meta text */
+    --separator: rgb(60 60 67 / 0.12);
+    --accent: #f0f0f3;
+    --accent-foreground: #1d1d1f;
+    --destructive: #d12f1c;
+    --border: rgb(0 0 0 / 0.08);
+    --input: rgb(0 0 0 / 0.1);
+    --ring: #9cc93a;
 
     --lime: #c8f25d;
-    --lime-ink: #16171a;
-    --lime-soft: #eef9d3;
-    --private: #0b7a5c;
-    --private-soft: #e1f4ec;
+    --lime-ink: #1d1d1f;
+    --lime-soft: #f0f9d9;
+    --lime-deep: #56760d;       /* lime-family text on white */
+    --private: #0a7a5b;
+    --private-soft: #e3f5ee;
     --network: #1f64c7;
-    --network-soft: #e5eefc;
-    --cloud: #9a5600;
-    --cloud-soft: #fdf0dc;
+    --network-soft: #e6effd;
+    --cloud: #975400;
+    --cloud-soft: #fdf1df;
     --event: #2f5bd3;
-    --event-soft: #e8eefd;
+    --event-soft: #e9eefd;
+
+    /* Translucent "material" behind bars and floating surfaces. */
+    --material: rgb(245 245 247 / 0.72);
+    --material-thick: rgb(255 255 255 / 0.82);
 }
 
 @layer base {
@@ -106,10 +130,153 @@
   }
   body {
     @apply bg-canvas font-sans text-foreground antialiased;
+    font-size: 15px;
+    letter-spacing: -0.006em;
     font-feature-settings: "ss01", "cv11";
+    -webkit-tap-highlight-color: transparent;
   }
   ::selection {
     background: var(--lime-soft);
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  button,
+  [role="button"] {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  /* Quiet, overlay-like scrollbars, as on macOS. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(0 0 0 / 0.18) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background: rgb(0 0 0 / 0.18) padding-box;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+/* --- Type scale (Apple-like). Use these instead of ad-hoc sizes. --- */
+@utility type-large-title {
+  font-size: 30px;
+  line-height: 36px;
+  font-weight: 650;
+  letter-spacing: -0.028em;
+}
+@utility type-title {
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 620;
+  letter-spacing: -0.022em;
+}
+@utility type-headline {
+  font-size: 17px;
+  line-height: 22px;
+  font-weight: 600;
+  letter-spacing: -0.016em;
+}
+@utility type-body {
+  font-size: 15px;
+  line-height: 22px;
+  letter-spacing: -0.008em;
+}
+@utility type-callout {
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: -0.006em;
+}
+@utility type-subhead {
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: -0.003em;
+}
+@utility type-footnote {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+/* --- Surfaces --- */
+
+/* A translucent bar or floating surface that content scrolls under. */
+@utility material {
+  background: var(--material);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+}
+@utility material-thick {
+  background: var(--material-thick);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+  backdrop-filter: saturate(180%) blur(24px);
+}
+
+/* A white card on the canvas. */
+@utility surface {
+  background: var(--background);
+  border-radius: 18px;
+  box-shadow: var(--shadow-card);
+}
+
+/* iOS-style grouped list: rows separated by inset hairlines. */
+@utility grouped {
+  background: var(--background);
+  border-radius: 16px;
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+  & > * + * {
+    box-shadow: inset 0 0.5px 0 var(--separator);
+  }
+}
+
+/* A button that sinks slightly when pressed. */
+@utility pressable {
+  transition:
+    transform 0.16s var(--ease-out-soft),
+    background-color 0.15s,
+    color 0.15s,
+    box-shadow 0.2s,
+    filter 0.15s;
+  &:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+}
+
+/* A section heading inside a page (macOS Settings style). */
+@utility section-label {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  letter-spacing: -0.003em;
+  color: var(--muted-foreground);
+  padding-inline: 4px;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 
@@ -117,30 +284,30 @@
 .streaming-caret .prose > :last-child::after {
   content: "";
   display: inline-block;
-  width: 0.45em;
+  width: 0.42em;
   height: 1.05em;
   margin-left: 3px;
   vertical-align: -0.17em;
-  border-radius: 2px;
+  border-radius: 3px;
   background: var(--lime);
-  box-shadow: 0 0 0 1px #9dc53a inset;
-  animation: caret-blink 1s steps(2, start) infinite;
+  box-shadow: 0 0 0 0.5px rgb(86 118 13 / 0.5) inset;
+  animation: caret-pulse 1.1s ease-in-out infinite;
 }
 
-@keyframes caret-blink {
-  to {
-    visibility: hidden;
+@keyframes caret-pulse {
+  50% {
+    opacity: 0.25;
   }
 }
 
 /* Soft shimmer for "thinking" labels. */
 .shimmer {
-  background: linear-gradient(90deg, var(--faint) 0%, var(--foreground) 50%, var(--faint) 100%);
-  background-size: 200% 100%;
+  background: linear-gradient(90deg, var(--faint) 0%, var(--faint) 35%, var(--foreground) 50%, var(--faint) 65%, var(--faint) 100%);
+  background-size: 250% 100%;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  animation: shimmer 2s linear infinite;
+  animation: shimmer 2.2s linear infinite;
 }
 
 @keyframes shimmer {
@@ -149,5 +316,20 @@
   }
   to {
     background-position: -100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .shimmer {
+    animation: none;
+    color: var(--faint);
+    background: none;
   }
 }
