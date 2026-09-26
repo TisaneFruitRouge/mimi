@@ -4,8 +4,8 @@
 use futures::StreamExt;
 use futures::stream::BoxStream;
 use hearth_protocol::{
-    API_PREFIX, ApiError, Discovery, Event, Health, ModelInfo, NewProvider, Paths, ProbeRequest,
-    ProbeResult, Provider, ProviderPreset, Settings, Status,
+    API_PREFIX, ApiError, Discovery, Event, HardwareInfo, Health, ModelInfo, NewProvider, Paths,
+    ProbeRequest, ProbeResult, Provider, ProviderPreset, Recommendations, Settings, Status,
 };
 pub use reqwest::Method;
 use serde::Serialize;
@@ -110,6 +110,14 @@ impl Client {
             None::<()>,
         )
         .await
+    }
+
+    pub async fn hardware(&self) -> Result<HardwareInfo, Error> {
+        self.send(Method::GET, "/hardware", None::<()>).await
+    }
+
+    pub async fn recommendations(&self) -> Result<Recommendations, Error> {
+        self.send(Method::GET, "/recommendations", None::<()>).await
     }
 
     /// Untyped request to any `/v1` route. `path` excludes the `/v1` prefix.

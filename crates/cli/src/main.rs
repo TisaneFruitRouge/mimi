@@ -23,6 +23,8 @@ enum Command {
     Providers(ProvidersCommand),
     /// List the models a provider offers (all providers if omitted).
     Models { provider: Option<String> },
+    /// Describe this computer and suggest models for it.
+    Recommend,
     /// Show or change the model used for new messages.
     DefaultModel {
         /// `<provider>/<model>`, where provider is a name or id prefix.
@@ -88,6 +90,55 @@ async fn main() -> anyhow::Result<()> {
                     }
                     Err(e) => println!("  unavailable: {e}"),
                 }
+            }
+        }
+        Command::Recommend => {
+            let r = client.recommendations().await?;
+            let hw = &r.hardware;
+            println!(
+                "{} · {} cores · {:.0} GB RAM",
+                hw.cpu_name,
+                hw.cpu_cores,
+                gb(hw.total_memory_bytes)
+            );
+            for g in &hw.gpus {
+                println!(
+                    "{} ({:?}{})",
+                    g.name,
+                    g.kind,
+                    g.vram_bytes
+                        .map(|v| format!(", {:.0} GB", gb(v)))
+                        .unwrap_or_default()
+                );
+            }
+            println!("\n{}\n", r.summary);
+            if !r.installed.is_empty() {
+                println!("Models you already have:");
+                for m in &r.installed {
+                    let note = if m.fits {
+                        ""
+                    } else {
+                        "  (too large for this computer)"
+                    };
+                    println!("  {}/{}{note}", m.provider_name, m.model.model);
+                }
+            }
+            if !r.suggested.is_empty() {
+                println!("Worth downloading:");
+                for m in &r.suggested {
+                    println!(
+                        "  {:<14} {:>5.1} GB  {}",
+                        m.id,
+                        gb(m.download_bytes),
+                        m.description
+                    );
+                }
+            }
+            for s in r.detected_servers.iter().filter(|s| !s.already_added) {
+                println!(
+                    "Found {} running at {}; add it with `hearth providers add {}`.",
+                    s.name, s.base_url, s.preset_id
+                );
             }
         }
         Command::DefaultModel { model } => {
@@ -193,6 +244,10 @@ fn find_provider<'a>(all: &'a [Provider], query: &str) -> anyhow::Result<&'a Pro
         [] => bail!("no provider matches \"{query}\""),
         _ => bail!("\"{query}\" matches several providers; use the id"),
     }
+}
+
+fn gb(bytes: u64) -> f64 {
+    bytes as f64 / 1e9
 }
 
 fn locality_label(l: Locality) -> &'static str {

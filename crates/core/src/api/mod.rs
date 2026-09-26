@@ -14,6 +14,7 @@ use crate::{AppState, VERSION};
 
 pub mod error;
 mod events;
+mod hardware;
 mod providers;
 mod settings;
 
@@ -30,6 +31,8 @@ pub fn router(state: Arc<AppState>) -> Router {
             axum::routing::patch(providers::update).delete(providers::delete),
         )
         .route("/providers/{id}/models", get(providers::models))
+        .route("/hardware", get(hardware::get))
+        .route("/recommendations", get(hardware::recommendations))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
 
     Router::new()

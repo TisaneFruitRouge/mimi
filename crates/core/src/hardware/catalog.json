@@ -1,0 +1,18 @@
+{
+  "_comment": "Open models suggested for download, keyed by Ollama tag. Curate as better models ship. download_gb is the Q4 download size; moe marks mixture-of-experts models, which stay fast on CPUs despite their size.",
+  "models": [
+    { "id": "qwen3:1.7b",  "name": "Qwen3 1.7B",  "download_gb": 1.4, "moe": false, "description": "Very small and quick. Fine for simple questions and short texts." },
+    { "id": "llama3.2:3b", "name": "Llama 3.2 3B", "download_gb": 2.0, "moe": false, "description": "Small all-rounder for everyday questions." },
+    { "id": "qwen3:4b",    "name": "Qwen3 4B",    "download_gb": 2.5, "moe": false, "description": "Small but capable, with a thinking mode for harder questions." },
+    { "id": "gemma3:4b",   "name": "Gemma 3 4B",  "download_gb": 3.3, "moe": false, "description": "Small, good at writing, understands images." },
+    { "id": "qwen3:8b",    "name": "Qwen3 8B",    "download_gb": 5.2, "moe": false, "description": "Solid everyday assistant, good at following instructions." },
+    { "id": "gemma3:12b",  "name": "Gemma 3 12B", "download_gb": 8.1, "moe": false, "description": "Strong writer with image understanding." },
+    { "id": "qwen3:14b",   "name": "Qwen3 14B",   "download_gb": 9.3, "moe": false, "description": "Noticeably smarter than 8B models, still reasonably quick on a GPU." },
+    { "id": "gpt-oss:20b", "name": "gpt-oss 20B", "download_gb": 14.0, "moe": true, "description": "OpenAI's open model. Good reasoning and tool use, fast for its size." },
+    { "id": "gemma3:27b",  "name": "Gemma 3 27B", "download_gb": 17.0, "moe": false, "description": "Large, high-quality writing and image understanding." },
+    { "id": "qwen3:30b",   "name": "Qwen3 30B-A3B", "download_gb": 19.0, "moe": true, "description": "Large but fast mixture-of-experts model." },
+    { "id": "qwen3:32b",   "name": "Qwen3 32B",   "download_gb": 20.0, "moe": false, "description": "Among the strongest models that fit on a single large GPU." },
+    { "id": "llama3.3:70b", "name": "Llama 3.3 70B", "download_gb": 43.0, "moe": false, "description": "Very capable; needs a workstation-class GPU or lots of unified memory." },
+    { "id": "gpt-oss:120b", "name": "gpt-oss 120B", "download_gb": 65.0, "moe": true, "description": "Near frontier quality for those with the memory to run it." }
+  ]
+}

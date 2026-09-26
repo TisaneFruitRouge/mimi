@@ -10,6 +10,7 @@ pub mod daemon;
 pub mod db;
 pub mod events;
 mod fsutil;
+pub mod hardware;
 pub mod keys;
 pub mod providers;
 pub mod settings;

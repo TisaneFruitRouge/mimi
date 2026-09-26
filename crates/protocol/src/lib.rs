@@ -10,11 +10,13 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 pub mod events;
+pub mod hardware;
 pub mod paths;
 pub mod providers;
 pub mod settings;
 
 pub use events::Event;
+pub use hardware::*;
 pub use paths::Paths;
 pub use providers::*;
 pub use settings::*;
