@@ -42,6 +42,8 @@ pub enum Event {
     ModelPull {
         pull: ModelPull,
     },
+    /// Something in the memory changed: refetch the Memory screen.
+    MemoryChanged,
     /// This client fell behind and missed events. Refetch any state you display.
     Resync,
 }

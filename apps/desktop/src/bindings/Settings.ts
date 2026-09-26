@@ -13,4 +13,8 @@ assistant_name: string,
 /**
  * Model used for new messages. `None` until the user finishes setup.
  */
-default_model: ModelRef | null, };
+default_model: ModelRef | null, 
+/**
+ * Whether the assistant learns new things about the user from conversations.
+ */
+memory_learning: boolean, };

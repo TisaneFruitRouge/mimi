@@ -50,6 +50,13 @@ impl Generations {
             .remove(&conversation_id);
     }
 
+    pub fn is_running(&self, conversation_id: Uuid) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&conversation_id)
+    }
+
     /// Returns whether a reply was in progress.
     pub fn cancel(&self, conversation_id: Uuid) -> bool {
         let map = self.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -108,7 +115,24 @@ pub async fn send(
             return Err(e.into());
         }
     };
-    let prompt = build_prompt(&settings.assistant_name, &history, &content);
+    // What's remembered about the user that matters for this message; the previous
+    // user message helps with follow-ups ("and what does she like?").
+    let previous = history
+        .iter()
+        .rev()
+        .find(|m| m.role == MessageRole::User)
+        .map(|m| m.content.as_str());
+    let recall = crate::memory::recall::recall(&state.db, &content, previous)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("recalling memories failed: {e}");
+            Default::default()
+        });
+    let memory = PromptMemory {
+        block: crate::memory::recall::prompt_block(&recall),
+        learning: settings.memory_learning,
+    };
+    let prompt = build_prompt(&settings.assistant_name, &history, &content, &memory);
     tracing::debug!(
         %conversation_id,
         prompt_messages = prompt.len(),
@@ -274,6 +298,8 @@ async fn generate(
     }
     state.generations.finish(conversation_id);
     state.events.publish(Event::MessageUpdated { message });
+    // Once the conversation goes quiet, learn from it.
+    state.learner.schedule(conversation_id);
 }
 
 impl Turn {
@@ -569,9 +595,21 @@ fn replay(m: &Message) -> Vec<ChatMessage> {
     out
 }
 
-fn build_prompt(assistant_name: &str, history: &[Message], new_message: &str) -> Vec<ChatMessage> {
+/// Memory for one prompt: what's recalled, and whether new things may be remembered.
+#[derive(Default)]
+struct PromptMemory {
+    block: Option<String>,
+    learning: bool,
+}
+
+fn build_prompt(
+    assistant_name: &str,
+    history: &[Message],
+    new_message: &str,
+    memory: &PromptMemory,
+) -> Vec<ChatMessage> {
     let now = jiff::Zoned::now();
-    let system = format!(
+    let mut system = format!(
         "You are {assistant_name}, a personal assistant. You run on the user's own \
          computer, and their conversations stay private. Be helpful, direct and warm. \
          Answer in the user's language. Use Markdown when it helps readability. When a \
@@ -580,6 +618,22 @@ fn build_prompt(assistant_name: &str, history: &[Message], new_message: &str) ->
          Current date and time: {}.",
         now.strftime("%A, %B %-d, %Y, %H:%M (%Z)")
     );
+    // Short on purpose: small local models follow a few clear lines best.
+    system.push_str(
+        "\n\nYou have a private long-term memory about the user. Use what you remember \
+         naturally, without saying where it comes from. If something may have been \
+         mentioned before but isn't below, look it up with memory_search.",
+    );
+    if memory.learning {
+        system.push_str(
+            " When the user tells you something lasting about themselves or people in \
+             their life, save it with memory_write, then carry on with your answer.",
+        );
+    }
+    if let Some(block) = &memory.block {
+        system.push_str("\n\n");
+        system.push_str(block);
+    }
 
     // Newest history first until the budget runs out, then back in order.
     let mut budget = HISTORY_BUDGET_CHARS.saturating_sub(new_message.len());

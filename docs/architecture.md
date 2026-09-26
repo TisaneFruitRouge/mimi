@@ -101,6 +101,59 @@ Details:
 - **Models without tool support:** some models reject the `tools` parameter. The
   reply is retried once as plain chat.
 
+## Memory
+
+`crates/core/src/memory/`. What the assistant knows about the user, built to stay
+small in the prompt however much accumulates. It works like a tiny file system:
+
+| Tier | What | In the prompt |
+|---|---|---|
+| Profile (`profile.md`) | The few key facts about the user: name, city, language, work, household. Capped at 1,200 characters. | Always |
+| Library (`people/sam.md`, `habits/mornings.md`, `preferences/food.md`, `places/…`, `work/…`, `interests/…`, `health/…`, `notes/…`) | Short markdown notes, usually bullet facts, one per person or topic (4,000 characters max each). | Only what's relevant |
+
+- **Storage:** the `memory_notes` table in the encrypted database, with an FTS5 index
+  (`memory_fts`, `unicode61 remove_diacritics`) kept in step by triggers. Every change
+  first records the note's previous state in `memory_revisions`, so any change can be
+  undone.
+- **Recall, every message:** the user's message (plus their previous one, for
+  follow-ups) becomes an FTS query (stopwords dropped, longer words matched as
+  prefixes). The profile and up to 4 matching notes, 1,600 characters at most, go into
+  the system prompt inside a delimited `<memory>` block that's labelled as data, not
+  instructions.
+- **Tools:** `memory_search`, `memory_read` and `memory_list` for anything not already
+  recalled, and `memory_write` (add facts, de-duplicated), `memory_update` (rewrite a
+  note) and `memory_forget` (remove facts or a note). None needs approval, since memory is
+  local and private. Writes show in the chat as one quiet line ("Remembered that Sam is
+  your brother") with Undo (`POST /v1/memory/undo/{revision}`). Reads aren't shown.
+- **Learning in the background:** after a reply, a conversation is scheduled to be
+  learned from once it's been quiet for 2 minutes (`HEARTH_MEMORY_QUIET_SECS`).
+  - **The pass:** the active model gets the current profile, the list of notes, the
+    notes related to the conversation, and the new messages since the last pass
+    (`memory_learned`). It replies with a JSON plan of facts to add or remove per note,
+    which is applied with de-duplication and the profile cap.
+  - **Sources:** only the user's own messages count as sources; the assistant's replies
+    are context.
+  - **Exclusions:** a message where the user asks not to remember something is left out
+    before the model sees it.
+  - **Restarts:** unread conversations are picked up after a restart.
+- **Never stored:** anything that looks like a secret (passwords, codes, card or
+  account numbers, keys). This is checked on every write path, including the Memory
+  screen.
+- **The user in control:**
+  - The Memory screen (`#/memory`, from Settings) shows and edits the profile and every
+    note.
+  - "Learn from conversations" can be paused (`Settings.memory_learning`). Paused, the
+    writing tools disappear and nothing said meanwhile is learned later.
+  - "Forget everything" deletes it all.
+  - When a cloud model is active, the screen says that relevant memories are sent with
+    messages.
+- **People:** knowledge about people lives in `people/<name>.md`. Notes have an optional
+  `subject` column, unused for now, as the seam for linking them to contact ids from the
+  contacts directory.
+- **API:** `GET /v1/memory`, `GET|PUT|DELETE /v1/memory/note?path=`,
+  `PUT /v1/memory/profile`, `PUT /v1/memory/learning`, `POST /v1/memory/undo/{revision}`,
+  `POST /v1/memory/forget-all`. Changes publish `memory_changed`.
+
 ## Planned
 
 - **Background service**: install `hearthd` as a systemd user unit (Linux) or a launchd
@@ -111,8 +164,9 @@ Details:
   never the default, and are labeled wherever they're in use. Recommendations come from
   detected hardware: cloud models on weak machines, large local models on big GPUs, and
   models the user already has installed.
-- **Storage**: SQLite with SQLCipher, `sqlite-vec` for semantic memory, FTS5 for keyword
-  search. Secrets in the OS keychain.
+- **Semantic memory search**: optional local embeddings (e.g. an Ollama embedding model)
+  alongside FTS5, stored as plain vectors and compared in Rust (no loadable SQLite
+  extensions: the workspace forbids unsafe code).
 - **Integrations**: MCP. Each tool declares its capabilities (hosts, paths, outbound
   messaging) and the user approves them. Untrusted plugins run sandboxed.
 - **Remote access**: a separate, opt-in listener with its own device pairing and

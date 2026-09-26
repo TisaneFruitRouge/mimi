@@ -130,6 +130,25 @@ features go in the daemon plus the protocol types. Frontends only render them.
 - Debug builds have two fake tools (`dev_lookup`, `dev_send_note`) enabled with
   `HEARTH_DEV_TOOLS=1`, for exercising approval cards against a scripted model.
 
+## Memory (what the assistant knows about the user)
+
+- `crates/core/src/memory/`; full design in `docs/architecture.md` › Memory. Two tiers:
+  a capped **profile** (`profile.md`, 1,200 chars, always in the prompt) and a
+  **library** of short notes by path (`people/sam.md`, `habits/…`, `preferences/…`,
+  `places/…`, `work/…`, `interests/…`, `health/…`, `notes/…`), found through FTS5 and
+  recalled into the prompt within a strict budget (`memory/recall.rs`). Keep the prompt
+  small: local models have ~8k-token contexts.
+- Memory tools don't need approval (memory is local), but writes must stay visible in the
+  chat and undoable: return `revision` from every write so the UI can offer Undo.
+- Only the user's own statements become memories. Never weaken `looks_secret`, the
+  "don't remember this" opt-out (`learn.rs`), or the rule that external content (tool
+  output, calendars, other people's messages) is context, not a source of facts.
+- Schema: `memory_notes` + `memory_fts` (triggers keep them in step), `memory_revisions`
+  (undo), `memory_learned` (learning progress per conversation). `subject` on notes is
+  the seam for linking a note to a contact id.
+- Try it for real with `HEARTH_MEMORY_QUIET_SECS=15` so the background learning pass
+  runs soon after a chat; it logs `learning pass done … notes_changed=N`.
+
 ## Commands
 
 ```sh

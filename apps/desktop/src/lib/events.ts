@@ -110,6 +110,9 @@ function apply(qc: QueryClient, event: Event) {
       }
       break;
     }
+    case "memory_changed":
+      qc.invalidateQueries({ queryKey: keys.memory });
+      break;
     case "resync":
       qc.invalidateQueries();
       break;

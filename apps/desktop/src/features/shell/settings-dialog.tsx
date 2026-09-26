@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ExternalLink, Lock, LogOut } from "lucide-react";
+import { BookOpen, ChevronRight, ExternalLink, Lock, LogOut } from "lucide-react";
 import { toast } from "sonner";
 
 import { LocalityBadge } from "@/components/locality-badge";
@@ -20,9 +20,11 @@ import { isTauri, openInBrowser, request } from "@/lib/transport";
 export function SettingsDialog({
   open,
   onOpenChange,
+  onOpenMemory,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onOpenMemory: () => void;
 }) {
   const settings = useSettings().data;
   const providers = useProviders().data ?? [];
@@ -64,6 +66,20 @@ export function SettingsDialog({
               </Button>
             </div>
           </form>
+
+          <section className="flex flex-col gap-2">
+            <h3 className="text-sm font-medium">Memory</h3>
+            <button
+              onClick={onOpenMemory}
+              className="flex items-center gap-3 rounded-xl border px-3.5 py-3 text-left transition-colors hover:bg-subtle"
+            >
+              <BookOpen className="size-4 shrink-0 text-muted-foreground" />
+              <span className="flex-1 text-[13.5px]">
+                See and change what your assistant remembers about you
+              </span>
+              <ChevronRight className="size-4 text-faint" />
+            </button>
+          </section>
 
           <section className="flex flex-col gap-2">
             <h3 className="text-sm font-medium">Your data</h3>

@@ -1,4 +1,4 @@
-import { Blocks, MessageSquarePlus, Sparkles } from "lucide-react";
+import { Blocks, BookOpen, MessageSquarePlus, Sparkles } from "lucide-react";
 
 import {
   CommandDialog,
@@ -49,6 +49,9 @@ export function ConversationPalette({
           </CommandItem>
           <CommandItem onSelect={run(() => onSection("models"))}>
             <Sparkles /> Models
+          </CommandItem>
+          <CommandItem onSelect={run(() => onSection("memory"))}>
+            <BookOpen /> Memory
           </CommandItem>
         </CommandGroup>
         {conversations.length > 0 && (

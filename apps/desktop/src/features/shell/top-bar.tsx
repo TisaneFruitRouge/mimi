@@ -5,7 +5,8 @@ import { LogoMark } from "@/components/brand";
 import { Button } from "@/components/ui/button";
 import { useSettings } from "@/lib/queries";
 
-export type Section = "chat" | "connections" | "models";
+/** Top-bar sections, plus pages reached from elsewhere (Memory, from Settings). */
+export type Section = "chat" | "connections" | "models" | "memory";
 
 const sections: { id: Section; label: string }[] = [
   { id: "chat", label: "Chat" },

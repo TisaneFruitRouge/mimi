@@ -15,6 +15,7 @@ mod fsutil;
 pub mod hardware;
 pub mod integrations;
 pub mod keys;
+pub mod memory;
 pub mod providers;
 pub mod settings;
 pub mod tools;
@@ -41,6 +42,8 @@ pub struct AppState {
     /// Approval cards waiting for the user.
     pub approvals: tools::Approvals,
     pub connections: connections::Connections,
+    /// Conversations waiting to be learned from once they go quiet.
+    pub learner: memory::learn::Learner,
 }
 
 impl AppState {
@@ -69,6 +72,7 @@ impl AppState {
             tool_sources: Default::default(),
             approvals: Default::default(),
             connections: Default::default(),
+            learner: Default::default(),
         }
     }
 }

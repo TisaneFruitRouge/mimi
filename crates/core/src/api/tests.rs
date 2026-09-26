@@ -1184,6 +1184,217 @@ mod tool_use {
         );
         assert_eq!(writes.load(Ordering::SeqCst), 1);
     }
+
+    // --- Memory ---------------------------------------------------------------------
+
+    fn system_prompt(req: &Value) -> String {
+        req["messages"][0]["content"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    #[tokio::test]
+    async fn memories_are_recalled_into_the_prompt_and_writes_can_be_undone() {
+        use crate::memory::{PROFILE_PATH, store};
+        use hearth_protocol::MemorySource;
+
+        let llm = scripted_llm(|_, n| match n {
+            0 => Reply::Call(
+                "memory_write",
+                json!({"path": "people/sam.md", "facts": ["Sam's birthday is 3 May"]}),
+            ),
+            _ => Reply::Text("Noted! How about climbing gear?"),
+        })
+        .await;
+        let mut h = Harness::new().await;
+        h.use_mock(llm.port).await;
+        h.state
+            .tool_sources
+            .add(Arc::new(crate::memory::tools::MemoryTools));
+        let state = h.state.clone();
+        let db = &state.db;
+        store::put(
+            db,
+            PROFILE_PATH,
+            None,
+            "- The user's name is Vincent",
+            MemorySource::You,
+            None,
+        )
+        .await
+        .unwrap();
+        store::put(
+            db,
+            "people/sam.md",
+            None,
+            "- Sam is the user's brother\n- Sam loves climbing",
+            MemorySource::Learned,
+            None,
+        )
+        .await
+        .unwrap();
+        store::put(
+            db,
+            "places/office.md",
+            None,
+            "- The office is in Oerlikon",
+            MemorySource::Learned,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let (conv_id, id) = h
+            .start("Sam's birthday is on 3 May. What should I get my brother Sam?")
+            .await;
+        let (reply, _) = h.wait_for_reply(&id).await;
+        assert_eq!(reply.status, MessageStatus::Complete);
+
+        // The profile and the relevant note (and only that) went into the prompt.
+        let system = system_prompt(&llm.requests()[0]);
+        assert!(
+            system.contains("<memory>") && system.contains("Vincent"),
+            "{system}"
+        );
+        assert!(system.contains("Sam loves climbing"), "{system}");
+        assert!(!system.contains("Oerlikon"), "{system}");
+
+        let [action] = &reply.actions[..] else {
+            panic!("{:?}", reply.actions)
+        };
+        assert_eq!(action.tool, "memory_write");
+        assert!(!action.requires_approval);
+        assert_eq!(
+            action.result.as_deref(),
+            Some("remembered that Sam's birthday is 3 May")
+        );
+        let revision = action.output.as_ref().unwrap()["revision"]
+            .as_i64()
+            .unwrap();
+        let note = store::get(db, "people/sam.md").await.unwrap().unwrap();
+        assert!(note.body.contains("3 May"));
+
+        // Undo from the chat line: the fact is gone and the line says so.
+        let (status, _) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/memory/undo/{revision}"),
+                json!(null),
+            )
+            .await;
+        assert_eq!(status, 200);
+        let note = store::get(db, "people/sam.md").await.unwrap().unwrap();
+        assert!(!note.body.contains("3 May"));
+        let (_, detail) = h
+            .call(
+                reqwest::Method::GET,
+                &format!("/conversations/{conv_id}"),
+                json!(null),
+            )
+            .await;
+        assert_eq!(
+            detail["messages"][1]["actions"][0]["output"]["undone"],
+            true
+        );
+        let (status, _) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/memory/undo/{revision}"),
+                json!(null),
+            )
+            .await;
+        assert_eq!(status, 409);
+
+        // The Memory screen sees it all, and can't be used to store secrets.
+        let (_, overview) = h.call(reqwest::Method::GET, "/memory", json!(null)).await;
+        assert!(overview["profile"].as_str().unwrap().contains("Vincent"));
+        assert_eq!(overview["notes"].as_array().unwrap().len(), 2);
+        assert_eq!(overview["learning"], true);
+        let (status, _) = h
+            .call(
+                reqwest::Method::PUT,
+                "/memory/note?path=notes/bank.md",
+                json!({"body": "- The bank password is hunter2"}),
+            )
+            .await;
+        assert_eq!(status, 400);
+        let (status, _) = h
+            .call(reqwest::Method::POST, "/memory/forget-all", json!(null))
+            .await;
+        assert_eq!(status, 200);
+        let (_, overview) = h.call(reqwest::Method::GET, "/memory", json!(null)).await;
+        assert_eq!(overview["profile"], "");
+        assert!(overview["notes"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn learning_files_what_the_user_said_and_respects_opt_outs() {
+        use crate::memory::{PROFILE_PATH, store};
+
+        const PLAN: &str = r#"{"profile": {"add": ["The user lives in Geneva", "The user's card number is 4111 1111 1111 1111"]},
+            "notes": [{"path": "people/Léa", "add": ["Léa is the user's sister", "Léa is a nurse"]}]}"#;
+        let llm = scripted_llm(|req, _| {
+            if system_prompt(req).contains("maintain a private memory") {
+                Reply::Text(PLAN)
+            } else {
+                Reply::Text("That's lovely!")
+            }
+        })
+        .await;
+        let mut h = Harness::new().await;
+        h.use_mock(llm.port).await;
+
+        let (conv_id, id) = h
+            .start("I just moved to Geneva, and my sister Léa is a nurse here.")
+            .await;
+        h.wait_for_reply(&id).await;
+        let (_, sent) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/conversations/{conv_id}/messages"),
+                json!({"content": "Don't remember this, but I'm seeing a therapist."}),
+            )
+            .await;
+        h.wait_for_reply(sent["assistant_message"]["id"].as_str().unwrap())
+            .await;
+
+        let conv: uuid::Uuid = conv_id.parse().unwrap();
+        let changed = crate::memory::learn::learn_from(&h.state, conv)
+            .await
+            .unwrap();
+        assert_eq!(changed, 2);
+
+        let learning_request = llm
+            .requests()
+            .into_iter()
+            .find(|r| system_prompt(r).contains("maintain a private memory"))
+            .unwrap();
+        let shown = learning_request["messages"][1]["content"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(shown.contains("moved to Geneva"));
+        assert!(!shown.contains("therapist"), "opt-out leaked: {shown}");
+
+        let db = &h.state.db;
+        let profile = store::get(db, PROFILE_PATH).await.unwrap().unwrap();
+        assert!(profile.body.contains("Geneva"));
+        assert!(!profile.body.contains("4111"), "secrets must be dropped");
+        let lea = store::get(db, "people/léa.md").await.unwrap().unwrap();
+        assert!(lea.body.contains("nurse"));
+        assert_eq!(lea.source, hearth_protocol::MemorySource::Learned);
+
+        // Nothing new since: the next pass has nothing to read.
+        let before = llm.requests().len();
+        assert_eq!(
+            crate::memory::learn::learn_from(&h.state, conv)
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(llm.requests().len(), before);
+    }
 }
 
 /// A fake Telegram Bot API: queued updates go out through getUpdates, and everything
