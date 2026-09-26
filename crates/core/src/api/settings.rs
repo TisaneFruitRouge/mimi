@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::State;
-use hearth_protocol::Settings;
+use hearth_protocol::{Event, Settings};
 
 use super::error::{ApiResult, AppError};
 use crate::{AppState, settings};
@@ -22,5 +22,8 @@ pub async fn put(
         ));
     }
     settings::save(&state.db, &new).await?;
+    state.events.publish(Event::SettingsChanged {
+        settings: new.clone(),
+    });
     Ok(Json(new))
 }

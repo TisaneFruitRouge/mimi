@@ -8,6 +8,7 @@ use hearth_protocol::{KeyStorage, Paths};
 pub mod api;
 pub mod daemon;
 pub mod db;
+pub mod events;
 mod fsutil;
 pub mod keys;
 pub mod settings;
@@ -20,6 +21,7 @@ pub struct AppState {
     pub started: Instant,
     pub db: db::Db,
     pub key_storage: KeyStorage,
+    pub events: events::EventBus,
 }
 
 impl AppState {
@@ -34,6 +36,7 @@ impl AppState {
             started: Instant::now(),
             db: db::Db::open_in_memory().unwrap(),
             key_storage: KeyStorage::File,
+            events: events::EventBus::new(),
         }
     }
 }

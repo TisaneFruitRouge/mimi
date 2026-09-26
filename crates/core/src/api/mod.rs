@@ -13,12 +13,14 @@ use hearth_protocol::{API_PREFIX, Health, Status};
 use crate::{AppState, VERSION};
 
 pub mod error;
+mod events;
 mod settings;
 
 pub fn router(state: Arc<AppState>) -> Router {
     let authed = Router::new()
         .route("/status", get(status))
         .route("/settings", get(settings::get).put(settings::put))
+        .route("/events", get(events::subscribe))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
 
     Router::new()

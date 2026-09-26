@@ -1,14 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { Status } from "@/bindings/Status";
 
-// Mirrors hearth_protocol::Status.
-export interface Status {
-  version: string;
-  pid: number;
-  uptime_secs: number;
-  data_dir: string;
-}
+export type { Status };
 
 // Mirrors CommandError in src-tauri/src/lib.rs.
-export type DaemonError = { kind: "not_running" } | { kind: "other"; message: string };
+export type DaemonError =
+  | { kind: "not_running" }
+  | { kind: "api"; code: string; message: string }
+  | { kind: "other"; message: string };
 
-export const daemonStatus = () => invoke<Status>("daemon_status");
+export const daemonStatus = () => invoke<Status>("api", { method: "GET", path: "/status" });

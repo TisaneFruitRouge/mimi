@@ -65,6 +65,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         started: Instant::now(),
         db,
         key_storage,
+        events: crate::events::EventBus::new(),
     });
     tracing::info!(port, "hearth daemon listening on 127.0.0.1");
 

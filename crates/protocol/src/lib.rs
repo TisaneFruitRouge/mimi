@@ -9,9 +9,11 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+pub mod events;
 pub mod paths;
 pub mod settings;
 
+pub use events::Event;
 pub use paths::Paths;
 pub use settings::*;
 
