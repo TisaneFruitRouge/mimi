@@ -123,7 +123,9 @@ impl Tool for AddEvent {
     }
 
     fn description(&self) -> &str {
-        "Add an event to one of the user's calendars. The user is asked to approve it first. \
+        "Add an event to one of the user's calendars, only when they ask to put something in \
+         their calendar or schedule a meeting/appointment. Not for \"remind me …\": that's \
+         reminder_add, when available. The user is asked to approve it first. \
          Google calendars can't be written to directly: for those, a pre-filled Google \
          Calendar page opens and the user presses Save there; tell them so."
     }

@@ -434,7 +434,9 @@ impl Tool for AddReminder {
         "reminder_add"
     }
     fn description(&self) -> &str {
-        "Set a reminder for the user: anything they ask to be reminded of, once \
+        "Set a reminder for the user. Use this whenever they say \"remind me\", \"don't let me \
+         forget\" or similar, never calendar_add_event: a reminder is a nudge to them, not an \
+         event in their calendar. Anything they ask to be reminded of, once \
          (\"tomorrow at 9\", \"in 20 minutes\"), repeating (\"every Monday at 8\"), or relative \
          to a calendar event (\"an hour before the \
          dentist\"). They get it on their phone (Telegram, if connected) and computer. Times \
