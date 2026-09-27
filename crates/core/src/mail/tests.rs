@@ -45,6 +45,7 @@ fn setup_for(fake: &FakeMail, password: &str) -> ConnectionSetup {
 async fn account_without_loop(fake: &FakeMail) -> (Arc<AppState>, Account) {
     let state = Arc::new(AppState::for_tests("t"));
     let (name, config) = connect(
+        &reqwest::Client::new(),
         ME.to_owned(),
         PASSWORD.to_owned(),
         Some("other".to_owned()),
@@ -101,6 +102,7 @@ async fn eventually(what: &str, mut check: impl AsyncFnMut() -> bool) {
 async fn connecting_checks_the_account_and_refuses_what_it_cant_do() {
     let fake = FakeMail::start(ME, PASSWORD).await;
     let err = connect(
+        &reqwest::Client::new(),
         ME.to_owned(),
         "wrong".to_owned(),
         Some("other".to_owned()),
@@ -111,6 +113,7 @@ async fn connecting_checks_the_account_and_refuses_what_it_cant_do() {
     assert!(err.contains("app password"), "{err}");
 
     let ok = connect(
+        &reqwest::Client::new(),
         ME.to_owned(),
         PASSWORD.to_owned(),
         Some("other".to_owned()),
@@ -125,6 +128,7 @@ async fn connecting_checks_the_account_and_refuses_what_it_cant_do() {
     let mut remote = servers(&fake);
     remote.imap_host = "imap.example.com".to_owned();
     let err = connect(
+        &reqwest::Client::new(),
         ME.to_owned(),
         PASSWORD.to_owned(),
         Some("other".to_owned()),
@@ -138,9 +142,15 @@ async fn connecting_checks_the_account_and_refuses_what_it_cant_do() {
     );
 
     // Outlook needs a Microsoft sign-in: said honestly, without trying.
-    let err = connect("sam@outlook.com".to_owned(), "x".to_owned(), None, None)
-        .await
-        .unwrap_err();
+    let err = connect(
+        &reqwest::Client::new(),
+        "sam@outlook.com".to_owned(),
+        "x".to_owned(),
+        None,
+        None,
+    )
+    .await
+    .unwrap_err();
     assert!(err.contains("Microsoft sign-in"), "{err}");
     assert_eq!(guess_preset("a@gmail.com"), Some("gmail"));
     assert_eq!(guess_preset("a@me.com"), Some("icloud"));

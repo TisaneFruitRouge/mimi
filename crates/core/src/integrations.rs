@@ -107,7 +107,7 @@ pub fn catalog() -> Vec<Integration> {
             "email",
             "Email",
             Email,
-            "Gmail, iCloud, Fastmail and most other mail, with an app password.",
+            "Any mailbox: iCloud, Gmail, Migadu, Fastmail, your own domain…",
             &[
                 "Sort new mail: needs a reply, important, everything else",
                 "Summarize what matters",

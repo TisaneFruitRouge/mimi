@@ -13,6 +13,16 @@ use super::error::{ApiResult, AppError};
 use crate::AppState;
 use crate::mail::{self, store};
 
+/// Works out a mailbox's servers from its address, for the connect dialog.
+pub async fn discover(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<mimi_protocol::MailDiscoverRequest>,
+) -> ApiResult<mimi_protocol::MailDiscovery> {
+    Ok(Json(
+        mail::discover::discover(&req.email, &state.http).await,
+    ))
+}
+
 pub async fn presets() -> ApiResult<Vec<MailPreset>> {
     Ok(Json(mail::presets()))
 }

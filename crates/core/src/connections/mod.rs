@@ -238,9 +238,10 @@ pub async fn create(state: &Arc<AppState>, setup: ConnectionSetup) -> Result<Con
             preset,
             servers,
         } => {
-            let (name, config) = crate::mail::connect(email, password, preset, servers)
-                .await
-                .map_err(AppError::bad_request)?;
+            let (name, config) =
+                crate::mail::connect(&state.http, email, password, preset, servers)
+                    .await
+                    .map_err(AppError::bad_request)?;
             let taken = store::list(&state.db)
                 .await?
                 .into_iter()

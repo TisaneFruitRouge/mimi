@@ -21,6 +21,7 @@ use crate::AppState;
 use crate::connections::store as connection_store;
 
 pub mod contacts;
+pub mod discover;
 pub mod model;
 pub mod net;
 pub mod parse;
@@ -44,7 +45,7 @@ pub const DETAIL: &str = "Reads your mail. Sends only what you approve.";
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum MailError {
     #[error(
-        "The mail server didn't accept that address and password. Use an app password, not your usual one."
+        "The mail server didn't accept that address and password. Some services (iCloud, Gmail, Yahoo…) need an app password instead of your usual one."
     )]
     Login,
     #[error("Couldn't reach {0}. Check the server name and your internet connection.")]
@@ -244,6 +245,7 @@ pub fn guess_preset(email: &str) -> Option<&'static str> {
 /// Works out an account's settings from what the user entered, then checks them against
 /// the real servers: signs in over IMAP and SMTP. Returns the connection's name and config.
 pub async fn connect(
+    http: &reqwest::Client,
     email: String,
     password: String,
     preset: Option<String>,
@@ -255,21 +257,23 @@ pub async fn connect(
         return Err("Enter your full email address.".to_owned());
     }
     if password.is_empty() {
-        return Err("Enter the app password.".to_owned());
+        return Err("Enter your password.".to_owned());
     }
-    let preset_id = preset
-        .filter(|p| !p.is_empty())
-        .or_else(|| guess_preset(&email).map(str::to_owned))
-        .unwrap_or_else(|| "other".to_owned());
-    let chosen = presets()
-        .into_iter()
-        .find(|p| p.id == preset_id)
-        .ok_or("Unknown mail service.")?;
-    if !chosen.supported {
-        return Err(chosen.help);
-    }
-    let servers = match (chosen.servers, custom) {
-        (Some(s), _) => s,
+    let explicit = preset.filter(|p| !p.is_empty() && p != "other");
+    let (preset_id, servers) = match (explicit, custom) {
+        // A service picked in the dialog.
+        (Some(id), _) => {
+            let chosen = presets()
+                .into_iter()
+                .find(|p| p.id == id)
+                .ok_or("Unknown mail service.")?;
+            if !chosen.supported {
+                return Err(chosen.help);
+            }
+            let servers = chosen.servers.ok_or("Enter your mail server details.")?;
+            (id, servers)
+        }
+        // Servers typed by the user.
         (None, Some(mut s)) => {
             s.imap_host = s.imap_host.trim().to_owned();
             s.smtp_host = s.smtp_host.trim().to_owned();
@@ -280,9 +284,21 @@ pub async fn connect(
             if s.imap_host.is_empty() || s.smtp_host.is_empty() {
                 return Err("Enter both server names.".to_owned());
             }
-            s
+            ("other".to_owned(), s)
         }
-        (None, None) => return Err("Enter your mail server details.".to_owned()),
+        // Just an address: find the servers the way mail apps do.
+        (None, None) => {
+            let found = discover::discover(&email, http).await;
+            if !found.supported {
+                return Err(found
+                    .help
+                    .unwrap_or_else(|| "This mail service can't be connected.".to_owned()));
+            }
+            let servers = found.servers.ok_or(
+                "Mimi couldn't find the mail servers for this address. Enter them under “Server settings”.",
+            )?;
+            (found.preset.unwrap_or_else(|| "other".to_owned()), servers)
+        }
     };
     let mut config = EmailConfig {
         email: email.clone(),
@@ -296,9 +312,10 @@ pub async fn connect(
         preset: preset_id.clone(),
         servers,
     };
-    // iCloud's IMAP login is sometimes only the part before the @.
-    let mut usernames = vec![None];
-    if preset_id == "icloud" {
+    // Most services sign in with the full address; some (iCloud at times, older
+    // hosting) want only the part before the @. A username from the settings wins.
+    let mut usernames = vec![config.servers.username.clone()];
+    if config.servers.username.is_none() {
         usernames.push(email.split('@').next().map(str::to_owned));
     }
     let mut last = MailError::Login;

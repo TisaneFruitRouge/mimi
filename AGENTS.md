@@ -254,6 +254,14 @@ than inventing their own.
   seeded mail on 127.0.0.1:3143 (IMAP) / 3025 (SMTP) as `me@example.org` / `app-pass`
   (connect with "Other", security "None"). Never point tests at a real mailbox.
 
+- **Finding servers** (`mail/discover.rs`): users only type their address and password.
+  Order: known consumer domains → the domain's MX mapped to known hosts (Migadu, Google
+  Workspace, iCloud custom domains, Fastmail, mailbox.org, Posteo, Infomaniak, OVH,
+  Gandi, Zoho…) → the domain's own autoconfig file (HTTPS) → RFC 6186 SRV → probing
+  `imap.`/`mail.` hosts. Never a third-party lookup service. The password field only
+  says "App password" for services that require one. Add new hosts to `known_mx` /
+  `known_domain`; `cargo test -p mimi-core live_discovery -- --ignored` checks real domains.
+
 ## People and @ mentions
 
 - `crates/core/src/people/`: one directory of people. A person has contact cards

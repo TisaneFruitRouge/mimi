@@ -36,6 +36,7 @@ import type { CalendarEvent } from "@/bindings/CalendarEvent";
 import type { MailBox } from "@/bindings/MailBox";
 import type { MailDraft } from "@/bindings/MailDraft";
 import type { MailOverview } from "@/bindings/MailOverview";
+import type { MailDiscovery } from "@/bindings/MailDiscovery";
 import type { MailPreset } from "@/bindings/MailPreset";
 import type { MailSummary } from "@/bindings/MailSummary";
 import type { MailThread } from "@/bindings/MailThread";
@@ -127,6 +128,7 @@ export const api = {
   personMail: (id: string) =>
     call<MailThread[]>("GET", `/mail/threads?person=${encodeURIComponent(id)}&limit=5`),
 
+  mailDiscover: (email: string) => call<MailDiscovery>("POST", "/mail/discover", { email }),
   mailPresets: () => call<MailPreset[]>("GET", "/mail/presets"),
   mailOverview: () => call<MailOverview>("GET", "/mail"),
   mailThreads: (view: MailBox | null, q: string) => {

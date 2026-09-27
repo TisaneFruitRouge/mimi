@@ -130,6 +130,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/schedule/undo/{revision}", post(schedule::undo))
         .route("/mail", get(mail::overview))
         .route("/mail/presets", get(mail::presets))
+        .route("/mail/discover", post(mail::discover))
         .route("/mail/threads", get(mail::threads))
         .route("/mail/threads/{id}", get(mail::thread))
         .route("/mail/threads/{id}/read", post(mail::read))

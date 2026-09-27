@@ -189,3 +189,27 @@ pub struct MailSummary {
 pub struct MarkRead {
     pub read: bool,
 }
+
+/// What Mimi worked out about a mailbox from its address alone.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MailDiscovery {
+    /// The provider's name when it's a service Mimi recognises ("Migadu", "Gmail").
+    pub provider: Option<String>,
+    /// The connect dialog preset it corresponds to, if any.
+    pub preset: Option<String>,
+    /// The servers to use; `None` when nothing was found and the user must enter them.
+    pub servers: Option<MailServers>,
+    /// Whether this service wants an app-specific password rather than the usual one.
+    pub needs_app_password: bool,
+    pub help: Option<String>,
+    pub help_url: Option<String>,
+    /// False for services that don't let other apps read mail (e.g. no IMAP).
+    pub supported: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MailDiscoverRequest {
+    pub email: String,
+}
