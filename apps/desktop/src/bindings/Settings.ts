@@ -17,4 +17,17 @@ default_model: ModelRef | null,
 /**
  * Whether the assistant learns new things about the user from conversations.
  */
-memory_learning: boolean, };
+memory_learning: boolean, 
+/**
+ * The model chosen during setup while it's still downloading. When its download
+ * finishes, the daemon makes it the default model, even if no window is open.
+ */
+pending_model: ModelRef | null, 
+/**
+ * Whether the first-run welcome has been completed.
+ */
+onboarding_done: boolean, 
+/**
+ * Where the welcome was left, so closing the app midway resumes there.
+ */
+onboarding_step: number, };

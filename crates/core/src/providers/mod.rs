@@ -13,7 +13,38 @@ pub use openai::{
     ChatChunk, ChatMessage, FunctionSpec, OpenAiCompatible, ProviderError, Role, ToolCall, ToolSpec,
 };
 
-/// A client for a stored provider.
+/// A client for chatting with `model` from a stored source. The built-in runtime starts
+/// (or switches to) that model first.
+pub async fn chat_client(
+    state: &crate::AppState,
+    record: &store::ProviderRecord,
+    model: &str,
+) -> Result<OpenAiCompatible, String> {
+    if record.provider.kind == mimi_protocol::ProviderKind::Builtin {
+        let endpoint = state.runtime.ensure(state, model).await?;
+        return Ok(OpenAiCompatible::new(
+            state.http.clone(),
+            endpoint.url,
+            Some(endpoint.key),
+        ));
+    }
+    connect(&state.http, record)
+}
+
+/// The models a source offers. The built-in source lists what's been downloaded.
+pub async fn list_models(
+    state: &crate::AppState,
+    record: &store::ProviderRecord,
+) -> Result<Vec<mimi_protocol::ModelInfo>, ProviderError> {
+    if record.provider.kind == mimi_protocol::ProviderKind::Builtin {
+        return Ok(crate::runtime::download::installed(&state.paths));
+    }
+    let client = connect(&state.http, record).map_err(ProviderError::Status)?;
+    client.list_models().await
+}
+
+/// A client for a stored provider's HTTP API. Not for the built-in source, whose
+/// address changes; use [`chat_client`] or [`list_models`].
 pub fn connect(
     http: &reqwest::Client,
     record: &store::ProviderRecord,

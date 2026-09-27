@@ -2,7 +2,8 @@
 import type { PullState } from "./PullState";
 
 /**
- * Progress of a model download through a model source that supports it (Ollama).
+ * Progress of a model download through a model source that supports it (the built-in
+ * runtime or Ollama).
  */
 export type ModelPull = { provider_id: string, model: string, state: PullState, 
 /**

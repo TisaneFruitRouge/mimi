@@ -75,6 +75,7 @@ export function Row({
   title,
   detail,
   trailing,
+  accessory,
   onClick,
   className,
 }: {
@@ -82,6 +83,8 @@ export function Row({
   title: React.ReactNode;
   detail?: React.ReactNode;
   trailing?: React.ReactNode;
+  /** Controls after a clickable row, outside its button (e.g. a "…" menu). */
+  accessory?: React.ReactNode;
   onClick?: () => void;
   className?: string;
 }) {
@@ -96,12 +99,19 @@ export function Row({
     </>
   );
   const base = cn("flex min-h-[60px] items-center gap-3.5 px-4 py-2.5 text-left", className);
-  return onClick ? (
+  const row = onClick ? (
     <button onClick={onClick} className={cn(base, "w-full transition-colors hover:bg-[rgb(118_118_128/0.06)]")}>
       {body}
     </button>
   ) : (
     <div className={base}>{body}</div>
+  );
+  if (!accessory) return row;
+  return (
+    <div className="flex items-center">
+      <div className="min-w-0 flex-1">{row}</div>
+      <div className="flex shrink-0 items-center pr-3">{accessory}</div>
+    </div>
   );
 }
 

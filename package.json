@@ -10,6 +10,7 @@
     "web": "pnpm build && MIMI_HOME=\"${MIMI_HOME:-$PWD/.dev}\" cargo run -q -p mimi-cli -- open",
     "mimi": "MIMI_HOME=\"${MIMI_HOME:-$PWD/.dev}\" cargo run -q -p mimi-cli --",
     "build": "pnpm --filter @mimi/desktop build",
+    "bundle": "scripts/prepare-bundle.sh && pnpm --filter @mimi/desktop tauri build --config src-tauri/tauri.bundle.conf.json",
     "typecheck": "pnpm --filter @mimi/desktop typecheck",
     "check": "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace && pnpm typecheck"
   },

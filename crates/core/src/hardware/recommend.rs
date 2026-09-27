@@ -20,6 +20,36 @@ struct CatalogEntry {
     description: String,
     download_gb: f64,
     moe: bool,
+    gguf: Option<GgufSource>,
+}
+
+/// Where the built-in runtime downloads a model from: one GGUF file on Hugging Face.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct GgufSource {
+    pub repo: String,
+    pub file: String,
+    pub bytes: u64,
+    /// Hex SHA-256 of the whole file, from the repository's LFS metadata.
+    pub sha256: String,
+    pub quant: String,
+}
+
+/// The GGUF download for a catalog model, if the built-in runtime can run it.
+pub fn gguf_source(id: &str) -> Option<GgufSource> {
+    CATALOG
+        .models
+        .iter()
+        .find(|m| m.id == id)
+        .and_then(|m| m.gguf.clone())
+}
+
+/// Every catalog model the built-in runtime can download, with its source.
+pub fn gguf_sources() -> Vec<(String, GgufSource)> {
+    CATALOG
+        .models
+        .iter()
+        .filter_map(|m| m.gguf.clone().map(|g| (m.id.clone(), g)))
+        .collect()
 }
 
 static CATALOG: LazyLock<Catalog> = LazyLock::new(|| {
@@ -70,7 +100,7 @@ fn fits(size: u64, moe: bool, b: Budget) -> bool {
     needed <= b.bytes && (b.accelerated || moe || needed <= CPU_DENSE_LIMIT)
 }
 
-fn tier(b: Budget) -> HardwareTier {
+pub fn tier(b: Budget) -> HardwareTier {
     let usable = if b.accelerated {
         b.bytes
     } else {

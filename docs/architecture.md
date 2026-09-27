@@ -229,13 +229,103 @@ Linux trays need libayatana-appindicator at runtime; without it there's no tray 
 closing the window quits the app (the service, if on, keeps the assistant running).
 Release builds are single-instance: launching again brings the window forward.
 
+## Models and the built-in runtime
+
+Model sources are OpenAI-compatible endpoints (Ollama, LM Studio, a server on the
+network, a cloud service) plus one that is part of Mimi: **Built into Mimi**, backed by
+llama.cpp's `llama-server`, which ships with the installers. Nobody has to install a
+model runner.
+
+```
+ chat / memory learning
+        │ providers::chat_client(source, model)
+        ├── OpenAI-compatible source ──► its URL (Ollama, LM Studio, cloud, …)
+        └── built-in source ──► Runtime::ensure(model)
+                                  │ start or reuse llama-server:
+                                  │ 127.0.0.1:<random port>, per-start API key file,
+                                  │ context by hardware tier, GPU layers auto
+                                  └► http://127.0.0.1:<port>/v1
+```
+
+- **One model at a time.** `ensure` reuses the running server when it serves the same
+  model and is alive, else stops it and starts a new one, then waits for `/health`
+  (large models can take a while to load; the chat shows the reply as pending). It's
+  started lazily on the first message, stopped after 20 idle minutes (never during a
+  reply), when its model is deleted, and when the daemon exits. A crashed server is
+  restarted by the next message. Output goes to `logs/model-runtime.log`.
+- **Security.** It listens on loopback only, on a random port, and requires a random
+  key generated at every start, written to an owner-only file (`--api-key-file`, so the
+  key isn't visible in the process list). The web UI is disabled (`--no-webui`) and it
+  never fetches anything itself (`--offline`).
+- **Context size** follows the hardware tier: 4k (minimal), 8k (light), 16k (standard),
+  32k (strong, workstation).
+- **GPU.** macOS builds use Metal. Linux builds use Vulkan, which covers AMD, Intel and
+  NVIDIA; ggml loads the Vulkan backend as a plugin and falls back to its CPU backends
+  (picked for the CPU's instruction set) when there's no Vulkan driver.
+- **Downloads.** Every catalog model pins a single GGUF file on Hugging Face (repo,
+  file, size, SHA-256). The daemon downloads it directly from huggingface.co into
+  `models/`, as `<file>.part` until complete. Stopping or a failure keeps the part;
+  starting again resumes with an HTTP Range request and re-hashes what's there. The
+  file only takes its real name once its SHA-256 matches, and there must be room for
+  the rest plus a margin before a download starts. Progress, stop and resume use the
+  same `ModelPull` events as Ollama pulls. Deleting a model removes the file (refused
+  while it's the default).
+- **Finding the binary** (`runtime::find_binary`): `MIMI_LLAMA_SERVER`, beside `mimid`
+  (`llama/llama-server`, `llama-server`), the bundle's resources (`Mimi.app/Contents/
+  Resources/llama/`, `/usr/lib/Mimi/llama/`, `$APPDIR/usr/lib/Mimi/llama/`), then
+  `PATH`. Without one there's no built-in source and Mimi recommends Ollama instead.
+
+## First run
+
+The onboarding (`apps/desktop/src/features/onboarding/`) replaces the old setup mode:
+
+1. **Welcome**: what Mimi is and the privacy promise.
+2. **Model**: a plain-language summary of this computer, models already on it, the
+   recommended downloads for it (built-in runtime, else Ollama), local servers found
+   running, or a cloud service (with the trade-off said plainly; recommended first on
+   weak machines).
+3. **Connections** (optional): calendar and Telegram, through the Connections dialogs.
+4. **About you** (optional): name, place and free text, appended to the memory profile.
+5. **Finish**: waits for the download if one is running; "Start chatting".
+
+Progress is in the settings (`onboarding_step`, `onboarding_done`), so closing the app
+midway resumes there, and it never shows again once finished (Settings has "Show the
+welcome again"). A model picked for download is saved as `pending_model`; whichever
+download finishes it, the daemon makes it the default model on its own, so the user
+can keep going (or close the app) while it downloads.
+
+## Packaging and releases
+
+Installers are Tauri bundles with two extra pieces, configured only in
+`apps/desktop/src-tauri/tauri.bundle.conf.json` so development and CI builds don't need
+them:
+
+- `mimid` as a sidecar (`externalBin: binaries/mimid`, built for the target triple by
+  `scripts/prepare-bundle.sh`). It lands beside the app's executable, where
+  `mimi_service::daemon_binary` looks.
+- `llama-server` and its libraries as resources (`resources/llama/` → `llama/`),
+  fetched by `scripts/fetch-llama-server.sh` from a pinned llama.cpp release with
+  SHA-256 checks, and trimmed to what `llama-server` loads.
+
+| Platform | Installers | llama.cpp build |
+|---|---|---|
+| Linux x86_64 | .deb, .rpm, AppImage | Vulkan (CPU fallback) |
+| macOS arm64 / x86_64 | .dmg (unsigned for now) | Metal |
+
+`pnpm bundle` builds them locally. Pushing a version tag (`v0.2.0`, matching
+`tauri.conf.json`) runs `.github/workflows/release.yml`, which builds all of them and
+attaches them to a draft GitHub Release. `scripts/install.sh` (`curl … | sh`) picks the
+right file for the machine from GitHub Releases, checks its SHA-256 and installs it: the
+.deb/.rpm on apt/dnf/zypper systems, else the AppImage in `~/Applications` with a menu
+entry, and on macOS `Mimi.app` in `/Applications`. There is no automatic update check
+(principle 0); running the installer again updates.
+
+Later: Developer ID signing and notarization for macOS (until then the install script
+removes the quarantine flag, and a .dmg opened by hand needs right-click › Open), Linux
+arm64 packages.
+
 ## Planned
 
-- **Models**: bundle and manage `llama-server` (Metal on macOS, Vulkan on Linux); also
-  connect to Ollama or any OpenAI-compatible endpoint. Cloud providers are allowed but
-  never the default, and are labeled wherever they're in use. Recommendations come from
-  detected hardware: cloud models on weak machines, large local models on big GPUs, and
-  models the user already has installed.
 - **Semantic memory search**: optional local embeddings (e.g. an Ollama embedding model)
   alongside FTS5, stored as plain vectors and compared in Rust (no loadable SQLite
   extensions: the workspace forbids unsafe code).

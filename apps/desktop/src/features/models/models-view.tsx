@@ -56,6 +56,7 @@ import {
   useProviders,
   usePulls,
   useRecommendations,
+  useRuntime,
   useSettings,
 } from "@/lib/queries";
 import { openExternal } from "@/lib/transport";
@@ -333,8 +334,11 @@ const YourModels = forwardRef<HTMLElement>(function YourModels(_, ref) {
   const { options, loading } = useAllModels();
   const settings = useSettings().data;
   const rec = useRecommendations().data;
+  const providers = useProviders().data ?? [];
   const info = useModelInfo();
+  const [removing, setRemoving] = useState<ModelRef | null>(null);
   if (!loading && options.length === 0) return null;
+  const builtin = (r: ModelRef) => providers.find((p) => p.id === r.provider_id)?.kind === "builtin";
 
   const fits = (ref: ModelRef) => rec?.installed.find((i) => sameModel(i.model, ref))?.fits ?? true;
   const use = async (ref: ModelRef) => {
@@ -374,11 +378,58 @@ const YourModels = forwardRef<HTMLElement>(function YourModels(_, ref) {
                   </span>
                 </>
               }
+              accessory={
+                builtin(o.ref) ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={`Options for ${name}`}
+                        className="rounded-full text-muted-foreground"
+                      >
+                        <MoreHorizontal />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        variant="destructive"
+                        disabled={current}
+                        onSelect={() => setRemoving(o.ref)}
+                      >
+                        {current ? "In use, choose another first" : "Remove from this computer"}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : undefined
+              }
             />
           );
         })}
         {loading && options.length === 0 && <Skeleton className="m-4 h-10" />}
       </Grouped>
+      <AlertDialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove {removing ? info(removing.model).name : ""}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              It's deleted from this computer to free up space. You can download it again any time.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() =>
+                removing &&
+                api.deleteModel(removing.provider_id, removing.model).catch((e) => toast.error(e.message))
+              }
+            >
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 });
@@ -394,7 +445,9 @@ function SuggestedCard({
 }) {
   const pull = usePulls().data?.find((p) => p.model === model.id && p.provider_id === providerId);
   const qc = useQueryClient();
+  const canStop = useProviders().data?.find((p) => p.id === providerId)?.kind === "builtin";
   const running = pull?.state === "running";
+  const paused = pull?.state === "cancelled";
   const pct =
     pull?.total_bytes && pull.completed_bytes != null
       ? Math.round((pull.completed_bytes / pull.total_bytes) * 100)
@@ -429,19 +482,39 @@ function SuggestedCard({
         {running ? (
           <>
             <Progress value={pct ?? 0} />
-            <span className="type-footnote text-muted-foreground">
-              {pull.status}
-              {pct != null && ` · ${pct}%`}
-            </span>
+            <div className="flex items-center justify-between gap-2">
+              <span className="type-footnote text-muted-foreground">
+                {pull.status}
+                {pct != null && ` · ${pct}%`}
+              </span>
+              {canStop && providerId && (
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  className="-mr-1 text-muted-foreground"
+                  onClick={() => api.cancelPull(providerId, model.id).catch((e) => toast.error(e.message))}
+                >
+                  Stop
+                </Button>
+              )}
+            </div>
           </>
         ) : pull?.state === "failed" ? (
           <span className="type-footnote text-destructive">{pull.error}</span>
+        ) : paused ? (
+          <span className="type-footnote text-muted-foreground">
+            Paused{pct != null && ` at ${pct}%`}. It continues where it stopped.
+          </span>
         ) : null}
         {!running &&
           (providerId ? (
             <Button variant={best ? "lime" : "secondary"} onClick={download}>
               <Download />
-              {pull?.state === "failed" ? "Try again" : `Download · ${formatBytes(model.download_bytes)}`}
+              {pull?.state === "failed"
+                ? "Try again"
+                : paused
+                  ? "Resume"
+                  : `Download · ${formatBytes(model.download_bytes)}`}
             </Button>
           ) : (
             <GetOllama size={model.download_bytes} />
@@ -501,6 +574,7 @@ const sourceIcon = {
 
 function Sources({ onAdd }: { onAdd: () => void }) {
   const providers = useProviders().data ?? [];
+  const runtime = useRuntime().data;
   const [editing, setEditing] = useState<Provider | null>(null);
   const [removing, setRemoving] = useState<Provider | null>(null);
   return (
@@ -527,8 +601,13 @@ function Sources({ onAdd }: { onAdd: () => void }) {
                   </IconTile>
                 }
                 title={p.name}
-                detail={{ device: "On this computer", network: "On your network", cloud: "Cloud service" }[p.locality]}
+                detail={
+                  p.kind === "builtin"
+                    ? `Runs models right here${runtime?.models_bytes ? ` · ${formatBytes(runtime.models_bytes)} of models` : ""}`
+                    : { device: "On this computer", network: "On your network", cloud: "Cloud service" }[p.locality]
+                }
                 trailing={
+                  p.kind === "builtin" ? undefined : (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button
@@ -548,6 +627,7 @@ function Sources({ onAdd }: { onAdd: () => void }) {
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
+                  )
                 }
               />
             );

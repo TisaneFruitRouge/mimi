@@ -166,7 +166,7 @@ pub async fn learn_from(state: &Arc<AppState>, conversation_id: Uuid) -> Result<
         .await
         .map_err(|e| e.to_string())?
         .ok_or("the model's source is gone")?;
-    let client = providers::connect(&state.http, &provider)?;
+    let client = providers::chat_client(state, &provider, &model.model).await?;
 
     let profile = store::profile(db).await.map_err(|e| e.to_string())?;
     let known = store::list(db).await.map_err(|e| e.to_string())?;

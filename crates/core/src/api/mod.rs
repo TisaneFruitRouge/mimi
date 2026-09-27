@@ -38,6 +38,12 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/providers/{id}/models", get(providers::models))
         .route("/providers/{id}/pull", post(providers::pull))
+        .route("/providers/{id}/pull/cancel", post(providers::cancel_pull))
+        .route(
+            "/providers/{id}/models/{model}",
+            axum::routing::delete(providers::delete_model),
+        )
+        .route("/runtime", get(providers::runtime))
         .route("/pulls", get(providers::pulls))
         .route("/catalog", get(hardware::catalog))
         .route("/integrations", get(hardware::integrations))

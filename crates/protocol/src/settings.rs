@@ -14,6 +14,13 @@ pub struct Settings {
     pub default_model: Option<ModelRef>,
     /// Whether the assistant learns new things about the user from conversations.
     pub memory_learning: bool,
+    /// The model chosen during setup while it's still downloading. When its download
+    /// finishes, the daemon makes it the default model, even if no window is open.
+    pub pending_model: Option<ModelRef>,
+    /// Whether the first-run welcome has been completed.
+    pub onboarding_done: bool,
+    /// Where the welcome was left, so closing the app midway resumes there.
+    pub onboarding_step: u8,
 }
 
 impl Default for Settings {
@@ -22,6 +29,9 @@ impl Default for Settings {
             assistant_name: "Mimi".to_owned(),
             default_model: None,
             memory_learning: true,
+            pending_model: None,
+            onboarding_done: false,
+            onboarding_step: 0,
         }
     }
 }

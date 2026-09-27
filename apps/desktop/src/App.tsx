@@ -8,6 +8,7 @@ import { ChatView } from "@/features/chat/chat-view";
 import { ConnectionsView } from "@/features/connections/connections-view";
 import { MemoryView } from "@/features/memory/memory-view";
 import { ModelsView } from "@/features/models/models-view";
+import { Onboarding } from "@/features/onboarding/onboarding";
 import { PeopleView } from "@/features/people/people-view";
 import { ConversationPalette } from "@/features/shell/conversation-palette";
 import { SettingsDialog } from "@/features/shell/settings-dialog";
@@ -32,6 +33,8 @@ export default function App() {
     [screen, key] = [<Offline />, "offline"];
   } else if (!settings.data) {
     [screen, key] = [<Splash />, "splash"];
+  } else if (!settings.data.onboarding_done) {
+    [screen, key] = [<Onboarding />, "onboarding"];
   } else if (!settings.data.default_model) {
     [screen, key] = [<Setup />, "setup"];
   } else {

@@ -21,6 +21,18 @@ impl Pulls {
         self.lock().values().cloned().collect()
     }
 
+    pub fn get(&self, key: &(Uuid, String)) -> Option<ModelPull> {
+        self.lock().get(key).cloned()
+    }
+
+    pub fn set(&self, key: (Uuid, String), pull: ModelPull) {
+        self.lock().insert(key, pull);
+    }
+
+    pub fn remove(&self, key: &(Uuid, String)) {
+        self.lock().remove(key);
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<(Uuid, String), ModelPull>> {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -118,6 +130,7 @@ async fn run(state: Arc<AppState>, client: OpenAiCompatible, mut pull: ModelPull
             pull.state = PullState::Done;
             pull.status = "Ready".to_owned();
             pull.completed_bytes = pull.total_bytes;
+            crate::settings::adopt_pending(&state, pull.provider_id, &pull.model).await;
         }
         Err(e) => {
             tracing::warn!(model = %pull.model, "model download failed: {e}");

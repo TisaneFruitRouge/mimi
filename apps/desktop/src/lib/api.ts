@@ -15,6 +15,7 @@ import type { Person } from "@/bindings/Person";
 import type { PersonSummary } from "@/bindings/PersonSummary";
 import type { PersonUpdate } from "@/bindings/PersonUpdate";
 import type { ModelPull } from "@/bindings/ModelPull";
+import type { RuntimeStatus } from "@/bindings/RuntimeStatus";
 import type { ModelInfo } from "@/bindings/ModelInfo";
 import type { NewProvider } from "@/bindings/NewProvider";
 import type { ProbeResult } from "@/bindings/ProbeResult";
@@ -71,6 +72,11 @@ export const api = {
   pull: (providerId: string, model: string) =>
     call<ModelPull>("POST", `/providers/${providerId}/pull`, { model }),
   pulls: () => call<ModelPull[]>("GET", "/pulls"),
+  cancelPull: (providerId: string, model: string) =>
+    call<null>("POST", `/providers/${providerId}/pull/cancel`, { model }),
+  deleteModel: (providerId: string, model: string) =>
+    call<null>("DELETE", `/providers/${providerId}/models/${encodeURIComponent(model)}`),
+  runtime: () => call<RuntimeStatus>("GET", "/runtime"),
   catalog: () => call<CatalogModel[]>("GET", "/catalog"),
   integrations: () => call<Integration[]>("GET", "/integrations"),
   connections: () => call<Connection[]>("GET", "/connections"),
@@ -137,6 +143,7 @@ export const keys = {
   allModels: ["models"] as const,
   recommendations: ["recommendations"] as const,
   pulls: ["pulls"] as const,
+  runtime: ["runtime"] as const,
   catalog: ["catalog"] as const,
   integrations: ["integrations"] as const,
   connections: ["connections"] as const,

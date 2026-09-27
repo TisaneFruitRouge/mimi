@@ -3,8 +3,8 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Path, State};
 use mimi_protocol::{
-    Event, ModelInfo, ModelPull, NewProvider, ProbeRequest, ProbeResult, Provider, ProviderPreset,
-    ProviderUpdate, PullRequest,
+    Event, ModelInfo, ModelPull, NewProvider, ProbeRequest, ProbeResult, Provider, ProviderKind,
+    ProviderPreset, ProviderUpdate, PullRequest,
 };
 use uuid::Uuid;
 
@@ -25,6 +25,11 @@ pub async fn create(
     State(state): State<Arc<AppState>>,
     Json(new): Json<NewProvider>,
 ) -> ApiResult<Provider> {
+    if new.kind == ProviderKind::Builtin {
+        return Err(AppError::bad_request(
+            "The built-in model source is part of Mimi; it can't be added by hand.",
+        ));
+    }
     let url = providers::parse_base_url(&new.base_url).map_err(AppError::bad_request)?;
     let record = ProviderRecord {
         provider: Provider {
@@ -54,6 +59,11 @@ pub async fn update(
     let mut record = store::get(&state.db, id)
         .await?
         .ok_or_else(|| AppError::not_found("Provider"))?;
+    if record.provider.kind == ProviderKind::Builtin {
+        return Err(AppError::bad_request(
+            "The built-in model source can't be changed.",
+        ));
+    }
     if let Some(name) = update.name {
         record.provider.name = valid_name(&name)?;
     }
@@ -77,6 +87,14 @@ pub async fn update(
 }
 
 pub async fn delete(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>) -> ApiResult<()> {
+    if store::get(&state.db, id)
+        .await?
+        .is_some_and(|r| r.provider.kind == ProviderKind::Builtin)
+    {
+        return Err(AppError::bad_request(
+            "The built-in model source is part of Mimi; remove its models instead.",
+        ));
+    }
     if !store::delete(&state.db, id).await? {
         return Err(AppError::not_found("Provider"));
     }
@@ -103,8 +121,7 @@ pub async fn models(
     let record = store::get(&state.db, id)
         .await?
         .ok_or_else(|| AppError::not_found("Provider"))?;
-    let client = providers::connect(&state.http, &record).map_err(AppError::bad_request)?;
-    Ok(Json(client.list_models().await?))
+    Ok(Json(providers::list_models(&state, &record).await?))
 }
 
 /// Tries connection details without saving them. If the address fails and has no path,
@@ -172,6 +189,11 @@ pub async fn pull(
     let record = store::get(&state.db, id)
         .await?
         .ok_or_else(|| AppError::not_found("Provider"))?;
+    if record.provider.kind == ProviderKind::Builtin {
+        return crate::runtime::download::start(state.clone(), id, model)
+            .map(Json)
+            .map_err(AppError::bad_request);
+    }
     let client = providers::connect(&state.http, &record).map_err(AppError::bad_request)?;
     if !client.is_ollama().await {
         return Err(AppError::bad_request(
@@ -188,4 +210,66 @@ pub async fn pull(
 
 pub async fn pulls(State(state): State<Arc<AppState>>) -> Json<Vec<ModelPull>> {
     Json(state.pulls.running())
+}
+
+/// Stops a model download through the built-in source. What was downloaded is kept, so
+/// starting it again resumes.
+pub async fn cancel_pull(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PullRequest>,
+) -> ApiResult<()> {
+    let record = store::get(&state.db, id)
+        .await?
+        .ok_or_else(|| AppError::not_found("Provider"))?;
+    if record.provider.kind != ProviderKind::Builtin || !state.downloads.cancel(req.model.trim()) {
+        return Err(AppError::new(
+            axum::http::StatusCode::CONFLICT,
+            "not_downloading",
+            "That model isn't downloading.",
+        ));
+    }
+    Ok(Json(()))
+}
+
+/// Deletes a downloaded model from the built-in source, to free space.
+pub async fn delete_model(
+    State(state): State<Arc<AppState>>,
+    Path((id, model)): Path<(Uuid, String)>,
+) -> ApiResult<()> {
+    let record = store::get(&state.db, id)
+        .await?
+        .ok_or_else(|| AppError::not_found("Provider"))?;
+    if record.provider.kind != ProviderKind::Builtin {
+        return Err(AppError::bad_request(
+            "Models from this source are managed by the app that provides them.",
+        ));
+    }
+    let current = settings::load(&state.db).await?;
+    if current
+        .default_model
+        .as_ref()
+        .is_some_and(|m| m.provider_id == id && m.model == model)
+    {
+        return Err(AppError::bad_request(
+            "Your assistant is using this model. Choose another one first.",
+        ));
+    }
+    state.downloads.cancel(&model);
+    state.runtime.stop_model(&state, &model).await;
+    let removed =
+        crate::runtime::download::remove(&state.paths, &model).map_err(AppError::internal)?;
+    if !removed {
+        return Err(AppError::not_found("Model"));
+    }
+    publish(&state).await?;
+    state.events.publish(Event::RuntimeChanged {
+        runtime: state.runtime.status(&state),
+    });
+    Ok(Json(()))
+}
+
+/// The built-in runtime: whether it's installed, what's loaded, space used.
+pub async fn runtime(State(state): State<Arc<AppState>>) -> Json<mimi_protocol::RuntimeStatus> {
+    Json(state.runtime.status(&state))
 }

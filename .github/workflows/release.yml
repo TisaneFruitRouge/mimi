@@ -1,0 +1,94 @@
+name: Release
+
+# Builds the installers for a version tag (v0.2.0, …) and attaches them to a GitHub
+# Release. Everything the installers contain is built here or downloaded from pinned,
+# checksummed llama.cpp releases (scripts/fetch-llama-server.sh). The regular CI stays
+# fast: it never downloads llama.cpp or bundles.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create the release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag matches the app version
+        run: |
+          version=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match version $version in tauri.conf.json."
+            exit 1
+          fi
+      - name: Create a draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --draft --title "Mimi ${GITHUB_REF_NAME#v}" \
+              --notes "Install with one command: \`curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | sh\`"
+
+  bundle:
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Ubuntu 22.04 keeps the glibc requirement low, so the packages run on older distros.
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: deb,rpm,appimage
+          - os: macos-14
+            target: aarch64-apple-darwin
+            bundles: dmg
+          - os: macos-14
+            target: x86_64-apple-darwin
+            bundles: dmg
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf \
+            libayatana-appindicator3-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build the daemon and fetch llama-server
+        run: scripts/prepare-bundle.sh ${{ matrix.target }}
+
+      - name: Build the installers
+        working-directory: apps/desktop
+        run: >
+          pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+          --config src-tauri/tauri.bundle.conf.json
+
+      - name: Attach them to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          dir=target/${{ matrix.target }}/release/bundle
+          files=$(find "$dir" -maxdepth 2 -type f \
+            \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.dmg' \))
+          echo "$files"
+          gh release upload "$GITHUB_REF_NAME" $files --clobber

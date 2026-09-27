@@ -3,7 +3,7 @@ use ts_rs::TS;
 
 use uuid::Uuid;
 
-use crate::{Connection, Conversation, Message, ModelPull, Provider, Settings};
+use crate::{Connection, Conversation, Message, ModelPull, Provider, RuntimeStatus, Settings};
 
 /// Pushed by the daemon to every client connected to `GET /v1/events` (WebSocket, one
 /// JSON event per text frame).
@@ -43,6 +43,10 @@ pub enum Event {
     /// A model download started, progressed or finished.
     ModelPull {
         pull: ModelPull,
+    },
+    /// The built-in runtime started or stopped a model, or failed to.
+    RuntimeChanged {
+        runtime: RuntimeStatus,
     },
     /// Something in the memory changed: refetch the Memory screen.
     MemoryChanged,

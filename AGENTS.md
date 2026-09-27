@@ -82,8 +82,10 @@ features go in the daemon plus the protocol types. Frontends only render them.
 - Navigation: three sections (Chat, Connections, Models) in a segmented control in the
   translucent top bar; conversations behind the Search button (⌘/Ctrl K); settings in a
   sheet (⌘/Ctrl ,). Shortcuts: ⌘/Ctrl N new chat, ⌘/Ctrl 1–3 sections. The URL hash
-  holds the route (`#/models`, `#/chat/<id>`). Setup is the Models page in setup mode
-  until a model is chosen.
+  holds the route (`#/models`, `#/chat/<id>`). First run is the onboarding (see "Built-in
+  model runtime, onboarding and installers"), which may name models like the Models
+  page; the Models page in setup mode remains the fallback when a finished setup has
+  lost its model.
 - Integrations come from the daemon's catalog (`GET /v1/integrations`); list new ones
   there with status `coming_soon` until their connection flow exists, then add their id
   to `AVAILABLE` in `crates/core/src/integrations.rs`.
@@ -250,6 +252,58 @@ than inventing their own.
   created. The desktop lifecycle has an opt-in test that runs real processes without a
   window: `MIMI_HOME=… MIMI_PORT=… MIMI_KEY_STORE=file MIMI_DAEMON_BIN=$PWD/target/debug/mimid
   cargo test -p mimi-desktop lifecycle -- --ignored`.
+
+## Built-in model runtime, onboarding and installers
+
+- **Built-in runtime** (`crates/core/src/runtime/`): Mimi ships llama.cpp's
+  `llama-server` and runs models itself, so nobody needs Ollama. The daemon creates a
+  "Built into Mimi" model source (`ProviderKind::Builtin`, device locality) at startup
+  whenever it finds the binary; it can't be added, edited or removed through the API.
+  `Runtime::ensure` starts `llama-server` on demand for the requested model (one at a
+  time, restarted when the model changes or the process died), on a random loopback port
+  with a per-start API key passed via `--api-key-file` (never on the command line), waits
+  for `/health`, and unloads after 20 idle minutes. Context size follows the hardware
+  tier (4k-32k); GPU layers use llama.cpp's automatic fit. Log:
+  `<data>/logs/model-runtime.log`. Status: `GET /v1/runtime` + `RuntimeChanged` events.
+- Always get a chat client through `providers::chat_client` (and list models through
+  `providers::list_models`): they route the built-in source to the runtime. Don't call
+  `providers::connect` for a record that might be built-in.
+- **Finding `llama-server`**: `MIMI_LLAMA_SERVER`, then beside `mimid`
+  (`llama/llama-server` or `llama-server`), then the bundle's resource folder
+  (`../Resources/llama/` on macOS, `../lib/<app>/llama/` on Linux), then `PATH`.
+  For development: `scripts/fetch-llama-server.sh`, then
+  `MIMI_LLAMA_SERVER=$PWD/apps/desktop/src-tauri/resources/llama/llama-server`.
+- **Downloads** (`runtime/download.rs`): GGUF files straight from Hugging Face, pinned
+  per catalog entry in `hardware/catalog.json` (`gguf`: repo, file, bytes, sha256). Kept
+  in `<data>/models/` as `<file>.part` until the SHA-256 matches; a stopped or failed
+  download resumes with a Range request. Progress goes through the same `ModelPull`
+  events as Ollama pulls. `POST /providers/{id}/pull/cancel` stops one; `DELETE
+  /providers/{id}/models/{model}` deletes one (refused for the model in use). A new
+  catalog model needs its `gguf` block too (single-file GGUFs only; the sha256 is on the
+  Hugging Face file page).
+- **Onboarding** (`apps/desktop/src/features/onboarding/`): shown while
+  `settings.onboarding_done` is false; the step is saved in `settings.onboarding_step`,
+  so closing the app resumes there. Welcome and privacy promise -> model (hardware
+  summary, installed models, suggested downloads, detected servers, or a cloud service
+  with an honest note) -> optional calendar/Telegram (the Connections dialogs) -> "about
+  you" (appended to the memory profile) -> finish. A model chosen for download is saved as
+  `settings.pending_model`; the daemon makes it the default when the download finishes
+  (`settings::adopt_pending`), even with no window open. Settings > "Show the welcome
+  again" reruns it. Migration 0010 marks existing setups as onboarded.
+- **Installers**: `pnpm bundle` = `scripts/prepare-bundle.sh` (frontend, release
+  `mimid` for the target as `src-tauri/binaries/mimid-<triple>`, llama-server into
+  `src-tauri/resources/llama/`) + `tauri build --config src-tauri/tauri.bundle.conf.json`.
+  The sidecar and resources are only in that extra config, so `tauri dev`, CI and plain
+  builds need neither. Both folders are gitignored: never commit binaries. Linux uses
+  llama.cpp's Vulkan build (the GPU backend is a plugin; without a Vulkan driver it runs
+  on the CPU); macOS uses Metal. Bump llama.cpp by editing `RELEASE` and the checksums
+  in `scripts/fetch-llama-server.sh`.
+- **Releases**: pushing a `v*` tag that matches `tauri.conf.json`'s version runs
+  `.github/workflows/release.yml` (deb/rpm/AppImage on Ubuntu 22.04, arm64 and x64 dmg
+  on macOS) into a draft GitHub Release; publish it by hand. `scripts/install.sh` is the
+  one-command installer (`curl ... | sh`). No automatic update checks, ever (principle
+  0). macOS builds are unsigned for now (the install script clears the quarantine
+  flag); Developer ID signing and notarization are a later step.
 
 ## Commands
 

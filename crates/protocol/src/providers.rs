@@ -9,6 +9,9 @@ pub enum ProviderKind {
     /// Anything that speaks the OpenAI chat completions API: Ollama, llama.cpp,
     /// LM Studio, vLLM, and most cloud providers.
     OpenaiCompatible,
+    /// Mimi's own runtime (llama.cpp), managed by the daemon: models are downloaded into
+    /// Mimi and run on this computer. Created automatically when the runtime is present.
+    Builtin,
 }
 
 /// Where a provider runs, and so where your conversations go when you use it.
@@ -120,9 +123,12 @@ pub enum PullState {
     Running,
     Done,
     Failed,
+    /// Stopped by the user. What was downloaded so far is kept, so starting again resumes.
+    Cancelled,
 }
 
-/// Progress of a model download through a model source that supports it (Ollama).
+/// Progress of a model download through a model source that supports it (the built-in
+/// runtime or Ollama).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct ModelPull {
@@ -142,4 +148,32 @@ pub struct ModelPull {
 #[ts(export)]
 pub struct PullRequest {
     pub model: String,
+}
+
+/// The built-in model runtime.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RuntimeStatus {
+    /// Whether this installation includes the runtime.
+    pub available: bool,
+    pub state: RuntimeState,
+    /// The model currently loaded, if any.
+    pub model: Option<String>,
+    /// Why it last failed to start, in plain language.
+    pub error: Option<String>,
+    /// Space used by downloaded models.
+    #[ts(type = "number")]
+    pub models_bytes: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum RuntimeState {
+    /// Nothing loaded; a model starts when it's first needed.
+    Idle,
+    /// Loading a model into memory.
+    Starting,
+    Ready,
+    Failed,
 }

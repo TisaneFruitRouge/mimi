@@ -11,6 +11,7 @@ export const useConversations = () =>
 export const useRecommendations = () =>
   useQuery({ queryKey: keys.recommendations, queryFn: api.recommendations, staleTime: 30_000 });
 export const usePulls = () => useQuery({ queryKey: keys.pulls, queryFn: api.pulls });
+export const useRuntime = () => useQuery({ queryKey: keys.runtime, queryFn: api.runtime });
 export const useIntegrations = () =>
   useQuery({ queryKey: keys.integrations, queryFn: api.integrations });
 export const useConnections = () =>

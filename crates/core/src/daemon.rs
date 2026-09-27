@@ -80,6 +80,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         connections: Default::default(),
         learner: Default::default(),
         people: Default::default(),
+        runtime: Default::default(),
+        downloads: Default::default(),
     });
     #[cfg(debug_assertions)]
     if std::env::var(crate::tools::dev::ENV).is_ok_and(|v| v == "1") {
@@ -100,9 +102,27 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
     tokio::spawn(crate::memory::learn::run(state.clone()));
     crate::people::install(&state);
 
-    let served = axum::serve(listener, api::router(state))
+    match crate::runtime::find_binary() {
+        Some(path) => tracing::info!(path = %path.display(), "built-in model runtime found"),
+        None => tracing::info!("no built-in model runtime; local models need Ollama or similar"),
+    }
+    crate::runtime::ensure_source(&state).await;
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                tick.tick().await;
+                state.runtime.unload_if_idle(&state).await;
+            }
+        });
+    }
+
+    let served = axum::serve(listener, api::router(state.clone()))
         .with_graceful_shutdown(shutdown_signal())
         .await;
+    // The runtime is a child process: take it down with the daemon.
+    state.runtime.stop(&state).await;
     let _ = fs::remove_file(&discovery_file);
     served?;
     Ok(())

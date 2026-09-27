@@ -33,6 +33,11 @@ const HISTORY_BUDGET_CHARS: usize = 32_000;
 pub struct Generations(Mutex<HashMap<Uuid, CancellationToken>>);
 
 impl Generations {
+    /// Whether any reply is being written right now.
+    pub fn any(&self) -> bool {
+        !self.0.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
+    }
+
     fn start(&self, conversation_id: Uuid) -> Option<CancellationToken> {
         let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
         if map.contains_key(&conversation_id) {
@@ -104,7 +109,25 @@ pub async fn send(
                 "The chosen model's provider was removed. Choose another model.",
             )
         })?;
-    let client = providers::connect(&state.http, &provider).map_err(AppError::bad_request)?;
+    // Check the source up front so the user hears about a broken setup right away. The
+    // client itself is made in the reply task: the built-in runtime may need a while to
+    // load the model, and the message should appear immediately.
+    if provider.provider.kind == mimi_protocol::ProviderKind::Builtin {
+        if !state.runtime.available() {
+            return Err(AppError::bad_request(
+                "Mimi's built-in model runtime isn't installed on this computer. Choose another model in Models.",
+            ));
+        }
+        if crate::runtime::download::installed_path(&state.paths, &model.model).is_none() {
+            return Err(AppError::new(
+                axum::http::StatusCode::BAD_REQUEST,
+                "no_model",
+                "The chosen model isn't on this computer anymore. Download it again or choose another in Models.",
+            ));
+        }
+    } else {
+        providers::connect(&state.http, &provider).map_err(AppError::bad_request)?;
+    }
     let mention_context = crate::people::mentions::resolve(&state, &mentions).await;
 
     let cancel = state.generations.start(conversation_id).ok_or_else(|| {
@@ -214,7 +237,7 @@ pub async fn send(
     let tools = state.tool_sources.registry(&state).await;
     tokio::spawn(generate(
         state.clone(),
-        client,
+        provider,
         model.model,
         prompt,
         assistant_message.clone(),
@@ -250,30 +273,42 @@ struct Turn {
 
 async fn generate(
     state: Arc<AppState>,
-    client: providers::OpenAiCompatible,
+    provider: providers::store::ProviderRecord,
     model: String,
     prompt: Vec<ChatMessage>,
     message: Message,
     cancel: CancellationToken,
     tools: ToolRegistry,
 ) {
-    let mut turn = Turn {
-        state,
-        client,
-        model,
-        prompt,
-        message,
-        cancel,
-        tools,
-        separate: false,
+    let client = tokio::select! {
+        c = providers::chat_client(&state, &provider, &model) => c,
+        _ = cancel.cancelled() => Err(String::new()),
     };
-    let outcome = turn.run().await;
-    let Turn {
-        state,
-        mut message,
-        cancel,
-        ..
-    } = turn;
+    let (state, mut message, cancel, outcome) = match client {
+        Ok(client) => {
+            let mut turn = Turn {
+                state,
+                client,
+                model,
+                prompt,
+                message,
+                cancel,
+                tools,
+                separate: false,
+            };
+            let outcome = turn.run().await;
+            let Turn {
+                state,
+                message,
+                cancel,
+                ..
+            } = turn;
+            (state, message, cancel, outcome)
+        }
+        // Stopped while the model was still loading: nothing to report.
+        Err(_) if cancel.is_cancelled() => (state, message, cancel, Ok(())),
+        Err(e) => (state, message, cancel, Err(e)),
+    };
     let conversation_id = message.conversation_id;
 
     message.status = match &outcome {

@@ -18,6 +18,7 @@ pub mod keys;
 pub mod memory;
 pub mod people;
 pub mod providers;
+pub mod runtime;
 pub mod settings;
 pub mod tools;
 pub mod web;
@@ -47,6 +48,9 @@ pub struct AppState {
     pub learner: memory::learn::Learner,
     /// The people directory: contact sources and the sync trigger.
     pub people: people::People,
+    /// The built-in model runtime (llama.cpp) and its model downloads.
+    pub runtime: runtime::Runtime,
+    pub downloads: runtime::download::Downloads,
 }
 
 impl AppState {
@@ -77,6 +81,8 @@ impl AppState {
             connections: Default::default(),
             learner: Default::default(),
             people: Default::default(),
+            runtime: runtime::Runtime::with_binary(None),
+            downloads: Default::default(),
         }
     }
 }

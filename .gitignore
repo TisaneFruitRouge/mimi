@@ -6,3 +6,5 @@ dist
 .DS_Store
 /.dev
 /.claude/
+/apps/desktop/src-tauri/binaries
+/apps/desktop/src-tauri/resources

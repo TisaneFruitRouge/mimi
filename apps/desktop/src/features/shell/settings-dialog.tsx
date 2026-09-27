@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BookOpen, ChevronRight, ExternalLink, Loader2, Lock, LogOut, Power } from "lucide-react";
+import { BookOpen, ChevronRight, ExternalLink, Loader2, Lock, LogOut, Power, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 
 import { LocalityBadge } from "@/components/locality-badge";
@@ -94,6 +94,23 @@ export function SettingsDialog({
                 </Button>
               )}
             </form>
+            <Row
+              icon={
+                <IconTile size="sm" className="bg-fill text-muted-foreground">
+                  <RotateCcw />
+                </IconTile>
+              }
+              title="Show the welcome again"
+              detail="Choose a model, connect apps and introduce yourself"
+              trailing={<ChevronRight className="size-4 text-faint" />}
+              onClick={() => {
+                if (!settings) return;
+                onOpenChange(false);
+                api
+                  .putSettings({ ...settings, onboarding_done: false, onboarding_step: 0 })
+                  .catch((e) => toast.error((e as Error).message));
+              }}
+            />
           </Group>
 
           <Group title="Memory">

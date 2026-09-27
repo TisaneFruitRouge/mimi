@@ -110,9 +110,13 @@ function apply(qc: QueryClient, event: Event) {
       if (pull.state === "done") {
         qc.invalidateQueries({ queryKey: keys.allModels });
         qc.invalidateQueries({ queryKey: keys.recommendations });
+        qc.invalidateQueries({ queryKey: keys.runtime });
       }
       break;
     }
+    case "runtime_changed":
+      qc.setQueryData(keys.runtime, event.runtime);
+      break;
     case "memory_changed":
       qc.invalidateQueries({ queryKey: keys.memory });
       break;

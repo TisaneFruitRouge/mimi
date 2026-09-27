@@ -36,8 +36,7 @@ pub async fn recommendations(State(state): State<Arc<AppState>>) -> ApiResult<Re
         .collect();
     let listings = join_all(private.iter().map(|p| async {
         let record = store::get(&state.db, p.id).await.ok().flatten()?;
-        let client = providers::connect(&state.http, &record).ok()?;
-        tokio::time::timeout(PROBE_TIMEOUT, client.list_models())
+        tokio::time::timeout(PROBE_TIMEOUT, providers::list_models(&state, &record))
             .await
             .ok()?
             .ok()
@@ -90,14 +89,24 @@ pub async fn recommendations(State(state): State<Arc<AppState>>) -> ApiResult<Re
         })
         .collect();
 
-    // The first private source that can download models, preferring this computer.
-    let mut download_provider_id = None;
+    // The source that downloads models: Mimi's own runtime when it's installed, else the
+    // first private Ollama, preferring this computer.
+    let builtin = if state.runtime.available() {
+        crate::runtime::builtin_source(&state).await
+    } else {
+        None
+    };
+    let mut download_provider_id = builtin;
     for locality in [Locality::Device, Locality::Network] {
+        if download_provider_id.is_some() {
+            break;
+        }
         for p in private.iter().filter(|p| p.locality == locality) {
             let Ok(Some(record)) = store::get(&state.db, p.id).await else {
                 continue;
             };
-            if let Ok(client) = providers::connect(&state.http, &record)
+            if record.provider.kind == mimi_protocol::ProviderKind::OpenaiCompatible
+                && let Ok(client) = providers::connect(&state.http, &record)
                 && client.is_ollama().await
             {
                 download_provider_id = Some(p.id);
@@ -110,6 +119,17 @@ pub async fn recommendations(State(state): State<Arc<AppState>>) -> ApiResult<Re
     }
 
     let mut rec = recommend::recommend(hardware, available, detected);
+    // The built-in runtime downloads GGUF files, whose sizes differ a little from Ollama's.
+    if builtin.is_some() {
+        rec.suggested
+            .retain_mut(|m| match recommend::gguf_source(&m.id) {
+                Some(gguf) => {
+                    m.download_bytes = gguf.bytes;
+                    true
+                }
+                None => false,
+            });
+    }
     rec.download_provider_id = download_provider_id;
     Ok(Json(rec))
 }
