@@ -192,8 +192,34 @@ impl Bot {
         Ok(())
     }
 
+    /// Sends a message with a row of inline buttons: (label, callback data).
+    pub(crate) async fn send_with_buttons(
+        &self,
+        chat_id: i64,
+        html: &str,
+        buttons: &[(&str, String)],
+    ) -> Result<(), TgError> {
+        let row: Vec<serde_json::Value> = buttons
+            .iter()
+            .map(|(text, data)| json!({ "text": text, "callback_data": data }))
+            .collect();
+        self.call::<serde_json::Value>(
+            "sendMessage",
+            json!({
+                "chat_id": chat_id,
+                "text": html,
+                "parse_mode": "HTML",
+                "link_preview_options": { "is_disabled": true },
+                "reply_markup": { "inline_keyboard": [row] }
+            }),
+            Duration::from_secs(20),
+        )
+        .await
+        .map(drop)
+    }
+
     /// Asks the owner to approve an action, with buttons.
-    async fn ask_approval(
+    pub(crate) async fn ask_approval(
         &self,
         chat_id: i64,
         action: &mimi_protocol::Action,
@@ -460,6 +486,38 @@ async fn on_button(state: &AppState, bot: &Bot, config: &TelegramConfig, query: 
         bot.settle(&query, "Unknown button.", None).await;
         return;
     };
+    // Reminder buttons: Done / Snooze.
+    let snooze = match verb.as_str() {
+        "snooze" => Some(10),
+        "snooze60" => Some(60),
+        _ => None,
+    };
+    if verb == "done" || snooze.is_some() {
+        let handled = match snooze {
+            Some(minutes) => crate::schedule::snooze(state, id, minutes).await,
+            None => crate::schedule::mark_done(state, id).await,
+        };
+        let (toast, outcome) = match (handled, snooze) {
+            (false, _) => (
+                "This was already handled.",
+                "<i>Already handled</i>".to_owned(),
+            ),
+            (true, Some(m)) => (
+                "Snoozed",
+                format!(
+                    "💤 <b>Snoozed for {}</b>",
+                    if m == 60 {
+                        "an hour".to_owned()
+                    } else {
+                        format!("{m} minutes")
+                    }
+                ),
+            ),
+            (true, None) => ("Done", "✅ <b>Done</b>".to_owned()),
+        };
+        bot.settle(&query, toast, Some(&outcome)).await;
+        return;
+    }
     let (decision, toast, outcome) = match verb.as_str() {
         "approve" => (
             crate::tools::Decision::Approve(None),
@@ -482,6 +540,26 @@ async fn on_button(state: &AppState, bot: &Bot, config: &TelegramConfig, query: 
         )
         .await;
     }
+}
+
+/// The paired owner of the first Telegram bot, for messages Mimi sends on its own
+/// (reminders, routine results). `None` if no bot is connected and paired.
+pub async fn owner(state: &AppState) -> Option<(Bot, i64)> {
+    let rows = super::store::list(&state.db).await.ok()?;
+    rows.into_iter()
+        .filter(|r| r.integration == TELEGRAM)
+        .filter_map(|r| serde_json::from_value::<TelegramConfig>(r.config).ok())
+        .find_map(|c| {
+            let chat = c.owner_chat_id?;
+            Some((
+                Bot::new(
+                    state.http.clone(),
+                    &state.connections.telegram_api(),
+                    &c.bot_token,
+                ),
+                chat,
+            ))
+        })
 }
 
 async fn ensure_conversation(state: &Arc<AppState>, config: &mut TelegramConfig) -> Option<Uuid> {

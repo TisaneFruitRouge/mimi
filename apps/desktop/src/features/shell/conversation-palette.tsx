@@ -1,4 +1,4 @@
-import { Blocks, BookOpen, MessageSquare, SquarePen, Sparkles, Users } from "lucide-react";
+import { Bell, Blocks, BookOpen, MessageSquare, SquarePen, Sparkles, Users } from "lucide-react";
 
 import {
   CommandDialog,
@@ -77,6 +77,9 @@ export function ConversationPalette({
           </CommandItem>
           <CommandItem onSelect={run(() => onSection("people"))}>
             <Users /> People
+          </CommandItem>
+          <CommandItem keywords={["routines", "alarm", "schedule"]} onSelect={run(() => onSection("reminders"))}>
+            <Bell /> Reminders and routines
           </CommandItem>
         </CommandGroup>
       </CommandList>

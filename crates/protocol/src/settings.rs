@@ -21,6 +21,8 @@ pub struct Settings {
     pub onboarding_done: bool,
     /// Where the welcome was left, so closing the app midway resumes there.
     pub onboarding_step: u8,
+    /// Whether reminders and routine results also show as notifications on this computer.
+    pub desktop_notifications: bool,
 }
 
 impl Default for Settings {
@@ -32,6 +34,7 @@ impl Default for Settings {
             pending_model: None,
             onboarding_done: false,
             onboarding_step: 0,
+            desktop_notifications: true,
         }
     }
 }

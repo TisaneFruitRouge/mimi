@@ -85,7 +85,8 @@ features go in the daemon plus the protocol types. Frontends only render them.
   holds the route (`#/models`, `#/chat/<id>`). First run is the onboarding (see "Built-in
   model runtime, onboarding and installers"), which may name models like the Models
   page; the Models page in setup mode remains the fallback when a finished setup has
-  lost its model.
+  lost its model. Reminders (`#/reminders`) is reached from the bell in the top bar and
+  the ⌘K palette, not from the segmented control.
 - Integrations come from the daemon's catalog (`GET /v1/integrations`); list new ones
   there with status `coming_soon` until their connection flow exists, then add their id
   to `AVAILABLE` in `crates/core/src/integrations.rs`.
@@ -228,6 +229,45 @@ than inventing their own.
   the seam for linking a note to a contact id.
 - Try it for real with `MIMI_MEMORY_QUIET_SECS=15` so the background learning pass
   runs soon after a chat; it logs `learning pass done … notes_changed=N`.
+
+## Reminders and routines (the scheduler)
+
+- `crates/core/src/schedule/`; full design in `docs/architecture.md` › Reminders and
+  routines. A **reminder** tells the user something; a **routine** runs an instruction
+  as a chat turn in its own conversation and delivers the answer.
+- **Store rules, not instants.** `Schedule` (protocol) holds local wall-clock rules
+  (`once`, `daily`, `weekdays`, `weekly`, `monthly`, `yearly`, `interval`,
+  `before_event`); `next_at` is only a cache, recomputed by `rules::next_after` in the
+  computer's current zone. Put all date arithmetic in `rules.rs` (pure, tested with fixed
+  zones: DST gaps move forward, repeated hours use the first, short months clamp).
+- **The loop** (`schedule::run`) sleeps until the earliest `next_at`/`snoozed_until`,
+  capped at 60 s (monotonic sleeps stop during suspend), and wakes early on
+  `state.scheduler.poke()`. Anything that changes an item must go through
+  `schedule::create/update/delete/undo` (they re-arm and poke); never write
+  `schedule_items` elsewhere. `tick(state, now)` takes the clock so tests can move it.
+- **Catch-up never floods:** a due item fires once, marked late after 2 minutes; past 12
+  hours it's recorded as missed and not sent. The next occurrence is computed after
+  `max(due, now)`, so a week offline is one record, not seven reminders.
+- **Event-relative items** re-find their event (calendar + uid, closest occurrence)
+  every 15 minutes and right before firing; gone → `ended` with a plain reason;
+  calendar unreachable → keep the last known time.
+- **Delivery:** reminders go to the Telegram owner (Done / Snooze 10 min / 1 hour
+  buttons, `done:`/`snooze:`/`snooze60:` callbacks), desktop notifications
+  (`notify.rs`, fail-soft, `Settings.desktop_notifications`; `MIMI_NO_NOTIFICATIONS=1`
+  and tests never show one), and the app (`ScheduleDelivered` event → toast). Sending
+  runs in spawned tasks so one slow channel never holds up the loop.
+- **Routines keep the approval rule.** Their tool calls go through approvals like any
+  chat; pending ones are relayed to Telegram and the desktop, and the run waits (up to
+  30 minutes) in its own task, never blocking the scheduler. A run whose previous run
+  is still going is skipped, not queued.
+- **Tools** (`schedule/tools.rs`): `reminder_add`, `routine_add`, `schedule_list`,
+  `schedule_change`, `schedule_cancel`. No approval (the user's own local schedule), but
+  every write returns `schedule_revision` and shows as a quiet line with Undo, like
+  memory. Changes merge with the existing rule ("make it 8:00" keeps "every weekday").
+- Schema: `schedule_items`, `schedule_deliveries` (history), `schedule_revisions`
+  (undo). Try it for real with a scratch daemon, `MIMI_NO_NOTIFICATIONS=1`, and
+  `MIMI_TELEGRAM_API` pointed at a fake bot server; "remind me in 2 minutes to …" fires
+  on the minute.
 
 ## Running in the background (daemon lifecycle)
 

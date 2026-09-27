@@ -3,7 +3,9 @@ use ts_rs::TS;
 
 use uuid::Uuid;
 
-use crate::{Connection, Conversation, Message, ModelPull, Provider, RuntimeStatus, Settings};
+use crate::{
+    Connection, Conversation, Delivery, Message, ModelPull, Provider, RuntimeStatus, Settings,
+};
 
 /// Pushed by the daemon to every client connected to `GET /v1/events` (WebSocket, one
 /// JSON event per text frame).
@@ -50,6 +52,12 @@ pub enum Event {
     },
     /// Something in the memory changed: refetch the Memory screen.
     MemoryChanged,
+    /// Reminders or routines were added, changed, removed, or ran.
+    ScheduleChanged,
+    /// A reminder went off, or a routine finished: show it now.
+    ScheduleDelivered {
+        delivery: Delivery,
+    },
     /// This client fell behind and missed events. Refetch any state you display.
     Resync,
 }

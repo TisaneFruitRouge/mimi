@@ -652,7 +652,7 @@ mod tool_use {
     use crate::tools::{Tool, ToolContext, ToolSource};
 
     /// What the scripted model answers to one request.
-    enum Reply {
+    pub(super) enum Reply {
         Text(&'static str),
         Call(&'static str, Value),
         /// Some text, then a tool call, in one response.
@@ -660,20 +660,20 @@ mod tool_use {
         Status(u16, &'static str),
     }
 
-    struct ScriptedLlm {
+    pub(super) struct ScriptedLlm {
         port: u16,
         requests: Arc<Mutex<Vec<Value>>>,
     }
 
     impl ScriptedLlm {
-        fn requests(&self) -> Vec<Value> {
+        pub(super) fn requests(&self) -> Vec<Value> {
             self.requests.lock().unwrap().clone()
         }
     }
 
     /// A fake OpenAI-compatible server whose reply to each request is decided by
     /// `script(request_body, how_many_requests_before)`. Records every request.
-    async fn scripted_llm(
+    pub(super) async fn scripted_llm(
         script: impl Fn(&Value, usize) -> Reply + Send + Sync + 'static,
     ) -> ScriptedLlm {
         use axum::routing::{get, post};
@@ -783,7 +783,7 @@ mod tool_use {
 
     /// Sets up a harness whose model is `llm`, with a read tool `lookup` and an
     /// approval tool `send_note`. Returns run counters for both.
-    async fn setup(llm: &ScriptedLlm) -> (Harness, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+    pub(super) async fn setup(llm: &ScriptedLlm) -> (Harness, Arc<AtomicUsize>, Arc<AtomicUsize>) {
         let h = Harness::new().await;
         h.use_mock(llm.port).await;
         let (reads, writes) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
@@ -1770,4 +1770,309 @@ async fn telegram_bot_pairs_with_its_owner_and_relays_replies() {
         .find(|i| i["id"] == "telegram")
         .unwrap();
     assert_eq!(telegram["status"], "connected");
+}
+
+// --- Reminders and routines ----------------------------------------------------------
+mod schedule_flow {
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    use serde_json::{Value, json};
+
+    use super::Harness;
+    use super::fake_telegram::FakeTelegram;
+    use super::tool_use::{Reply, scripted_llm, setup};
+    use crate::schedule;
+
+    const OWNER: i64 = 42;
+
+    /// Connects the fake bot and pairs it with its owner.
+    async fn pair(h: &Harness) -> FakeTelegram {
+        let (tg, url) = FakeTelegram::start().await;
+        *h.state.connections.telegram_api.lock().unwrap() = url;
+        let (_, conn) = h
+            .call(
+                reqwest::Method::POST,
+                "/connections",
+                json!({"integration": "telegram", "bot_token": "123:secret"}),
+            )
+            .await;
+        let code = conn["action_url"]
+            .as_str()
+            .unwrap()
+            .rsplit("start=")
+            .next()
+            .unwrap()
+            .to_owned();
+        tg.message(OWNER, "Vincent", &format!("/start {code}"));
+        wait_for(|| !tg.sent_to(OWNER).is_empty()).await;
+        tg
+    }
+
+    async fn wait_for(check: impl Fn() -> bool) {
+        for _ in 0..400 {
+            if check() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        panic!("timed out");
+    }
+
+    /// Makes an item due now, as if its time had come, and runs the scheduler once.
+    async fn make_due(h: &Harness, id: &str) {
+        let mut item = schedule::store::get(&h.state.db, id.parse().unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        item.next_at = Some(crate::now_ms() - 1_000);
+        schedule::store::upsert(&h.state.db, item).await.unwrap();
+        schedule::tick(&h.state, jiff::Timestamp::now()).await;
+    }
+
+    async fn add(h: &Harness, body: Value) -> Value {
+        let (status, item) = h.call(reqwest::Method::POST, "/schedule", body).await;
+        assert_eq!(status, 200, "{item}");
+        item
+    }
+
+    async fn latest_delivery(h: &Harness) -> Value {
+        let (_, list) = h
+            .call(reqwest::Method::GET, "/schedule/deliveries", Value::Null)
+            .await;
+        list[0].clone()
+    }
+
+    async fn wait_for_status(h: &Harness, status: &str) {
+        for _ in 0..200 {
+            if latest_delivery(h).await["status"] == status {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        panic!("no delivery became {status}: {}", latest_delivery(h).await);
+    }
+
+    fn button(tg: &FakeTelegram, prefix: &str) -> Option<String> {
+        tg.buttons_sent_to(OWNER)
+            .into_iter()
+            .rev()
+            .find(|b| b.starts_with(prefix))
+    }
+
+    #[tokio::test]
+    async fn reminders_reach_telegram_with_done_and_snooze() {
+        let llm = scripted_llm(|_, _| Reply::Text("ok")).await;
+        let (h, _, _) = setup(&llm).await;
+        let tg = pair(&h).await;
+
+        let item = add(
+            &h,
+            json!({"kind": "reminder", "title": "Take out the bins", "schedule": {"type": "weekly", "days": ["mon"], "time": "20:00"}}),
+        )
+        .await;
+        assert_eq!(item["description"], "Every Monday at 20:00");
+        assert!(item["next_at"].as_i64().unwrap() > crate::now_ms());
+
+        make_due(&h, item["id"].as_str().unwrap()).await;
+        wait_for(|| button(&tg, "snooze:").is_some()).await;
+        assert!(
+            tg.sent_to(OWNER)
+                .iter()
+                .any(|m| m.contains("Take out the bins"))
+        );
+        wait_for_status(&h, "delivered").await;
+        // The next occurrence is a week out, not replayed.
+        let (_, items) = h.call(reqwest::Method::GET, "/schedule", Value::Null).await;
+        assert!(items[0]["next_at"].as_i64().unwrap() > crate::now_ms() + 3_600_000);
+
+        // Someone else's tap does nothing; the owner's snoozes it for 10 minutes.
+        let snooze = button(&tg, "snooze:").unwrap();
+        tg.tap(99, &snooze);
+        tg.tap(OWNER, &snooze);
+        wait_for_status(&h, "snoozed").await;
+        let (_, items) = h.call(reqwest::Method::GET, "/schedule", Value::Null).await;
+        let back = items[0]["next_at"].as_i64().unwrap() - crate::now_ms();
+        assert!(
+            (9 * 60_000..=10 * 60_000 + 5_000).contains(&back),
+            "comes back in {back} ms"
+        );
+
+        // Done ends it (and cancels the snooze); after that it's already handled.
+        tg.tap(OWNER, &button(&tg, "done:").unwrap());
+        wait_for_status(&h, "done").await;
+        let (_, items) = h.call(reqwest::Method::GET, "/schedule", Value::Null).await;
+        assert!(items[0]["next_at"].as_i64().unwrap() > crate::now_ms() + 3_600_000);
+        let id = latest_delivery(&h).await["id"].as_str().unwrap().to_owned();
+        let (status, _) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/schedule/deliveries/{id}/done"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(status, 409);
+    }
+
+    #[tokio::test]
+    async fn routines_run_in_their_conversation_and_report_back() {
+        let llm = scripted_llm(|_, _| Reply::Text("Nothing planned today. **Enjoy!**")).await;
+        let (h, _, _) = setup(&llm).await;
+        let tg = pair(&h).await;
+
+        let item = add(
+            &h,
+            json!({"kind": "routine", "title": "Morning briefing", "instruction": "Send me my day", "schedule": {"type": "daily", "time": "07:00"}}),
+        )
+        .await;
+        make_due(&h, item["id"].as_str().unwrap()).await;
+        wait_for(|| {
+            tg.sent_to(OWNER)
+                .iter()
+                .any(|m| m.contains("Nothing planned"))
+        })
+        .await;
+        let sent = tg
+            .sent_to(OWNER)
+            .into_iter()
+            .find(|m| m.contains("Nothing planned"))
+            .unwrap();
+        assert!(sent.starts_with("<b>Morning briefing</b>"), "{sent}");
+        assert!(sent.contains("<b>Enjoy!</b>"));
+
+        wait_for_status(&h, "delivered").await;
+        let delivery = latest_delivery(&h).await;
+        let conversation = delivery["conversation_id"].as_str().unwrap().to_owned();
+        let (_, detail) = h
+            .call(
+                reqwest::Method::GET,
+                &format!("/conversations/{conversation}"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(detail["conversation"]["title"], "Morning briefing");
+        assert_eq!(detail["messages"][0]["content"], "Send me my day");
+        // The model knew it was a scheduled run; the user's chat doesn't show that.
+        let prompt = llm.requests()[0]["messages"].to_string();
+        assert!(prompt.contains("<routine>"), "{prompt}");
+    }
+
+    #[tokio::test]
+    async fn routine_approvals_go_to_telegram_without_blocking_reminders() {
+        let llm = scripted_llm(|body, _| {
+            if body["messages"].to_string().contains("\"role\":\"tool\"") {
+                Reply::Text("Sent the note.")
+            } else {
+                Reply::Call("send_note", json!({"to": "Sam"}))
+            }
+        })
+        .await;
+        let (h, _, writes) = setup(&llm).await;
+        let tg = pair(&h).await;
+
+        let routine = add(
+            &h,
+            json!({"kind": "routine", "title": "Friday note", "instruction": "Send Sam a note", "schedule": {"type": "weekly", "days": ["fri"], "time": "17:00"}}),
+        )
+        .await;
+        make_due(&h, routine["id"].as_str().unwrap()).await;
+        wait_for(|| button(&tg, "approve:").is_some()).await;
+        assert_eq!(writes.load(Ordering::SeqCst), 0);
+
+        // While the routine waits for its OK, reminders still go out.
+        let reminder = add(
+            &h,
+            json!({"kind": "reminder", "title": "Water the plants", "schedule": {"type": "daily", "time": "09:00"}}),
+        )
+        .await;
+        make_due(&h, reminder["id"].as_str().unwrap()).await;
+        wait_for(|| {
+            tg.sent_to(OWNER)
+                .iter()
+                .any(|m| m.contains("Water the plants"))
+        })
+        .await;
+
+        tg.tap(OWNER, &button(&tg, "approve:").unwrap());
+        wait_for(|| {
+            tg.sent_to(OWNER)
+                .iter()
+                .any(|m| m.contains("Sent the note."))
+        })
+        .await;
+        assert_eq!(writes.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn assistant_sets_reminders_and_undo_takes_them_back() {
+        let llm = scripted_llm(|_, n| match n {
+            0 => Reply::Call(
+                "reminder_add",
+                json!({"text": "Call Léa", "in_minutes": 30}),
+            ),
+            _ => Reply::Text("I'll remind you."),
+        })
+        .await;
+        let (mut h, _, _) = setup(&llm).await;
+        h.state
+            .tool_sources
+            .add(std::sync::Arc::new(schedule::tools::ScheduleTools));
+
+        let (_, conv) = h
+            .call(reqwest::Method::POST, "/conversations", json!({}))
+            .await;
+        let conv_id = conv["id"].as_str().unwrap().to_owned();
+        let (_, sent) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/conversations/{conv_id}/messages"),
+                json!({"content": "Remind me to call Léa in half an hour"}),
+            )
+            .await;
+        let assistant = sent["assistant_message"]["id"].as_str().unwrap().to_owned();
+        let (reply, _) = h.wait_for_reply(&assistant).await;
+        let action = &reply.actions[0];
+        assert_eq!(action.tool, "reminder_add");
+        assert!(!action.requires_approval);
+        let result = action.result.clone().unwrap();
+        assert!(result.contains("Call Léa"), "{result}");
+        let revision = action.output.as_ref().unwrap()["schedule_revision"]
+            .as_i64()
+            .unwrap();
+
+        let (_, items) = h.call(reqwest::Method::GET, "/schedule", Value::Null).await;
+        assert_eq!(items[0]["title"], "Call Léa");
+        let in_ms = items[0]["next_at"].as_i64().unwrap() - crate::now_ms();
+        assert!((29 * 60_000..=31 * 60_000).contains(&in_ms), "{in_ms}");
+
+        let (status, _) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/schedule/undo/{revision}"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(status, 200);
+        let (_, items) = h.call(reqwest::Method::GET, "/schedule", Value::Null).await;
+        assert_eq!(items.as_array().unwrap().len(), 0);
+        let (_, detail) = h
+            .call(
+                reqwest::Method::GET,
+                &format!("/conversations/{conv_id}"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(
+            detail["messages"][1]["actions"][0]["output"]["undone"],
+            true
+        );
+        let (status, _) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/schedule/undo/{revision}"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(status, 409);
+    }
 }

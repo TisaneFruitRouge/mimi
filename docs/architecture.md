@@ -155,6 +155,67 @@ small in the prompt however much accumulates. It works like a tiny file system:
   `PUT /v1/memory/profile`, `PUT /v1/memory/learning`, `POST /v1/memory/undo/{revision}`,
   `POST /v1/memory/forget-all`. Changes publish `memory_changed`.
 
+## Reminders and routines
+
+`crates/core/src/schedule/`. Reminders tell the user something at the right time;
+routines have the assistant do something on a schedule and report back ("every morning
+at 7, send me my day").
+
+- **Rules, not instants.** An item stores a `Schedule` rule in local wall-clock terms:
+  once at a date and time, daily, weekdays, weekly on chosen days, monthly (short months
+  use their last day), yearly (29 February falls back to the 28th), every N minutes
+  (anchored to when it was set up), or N minutes before a calendar event. `next_at` is a
+  cache computed by `rules::next_after` in the computer's current time zone, so times
+  stay right across DST (a skipped 02:30 moves to 03:30; a repeated hour uses the first)
+  and when the user travels (a zone change re-arms every future item).
+- **The loop.** One task sleeps until the earliest `next_at` or `snoozed_until` (SQL
+  `MIN` over active items), at most 60 s at a time because monotonic sleeps don't advance
+  while the computer is suspended. Creating, changing, pausing, snoozing or undoing
+  pokes it (`Notify`) to re-plan. No polling of the database otherwise.
+- **Catch-up.** When an item comes due, `rules::classify` compares the due time with now:
+  on time, late (more than 2 minutes: sent once, marked late), or missed (more than 12
+  hours: recorded in the history, not sent). The next occurrence is computed after
+  whichever is later, the due time or now, so downtime never produces a burst of
+  reminders. Routine runs left "running" by a daemon that stopped are marked failed at
+  startup.
+- **Following events.** A `before_event` item keeps the event's id (calendar + uid +
+  original start, as for @ mentions) and its last known start. Every 15 minutes, and
+  again right before firing, it looks the event up (the occurrence closest to the last
+  known start, ±60 days): moved → the reminder moves (if it moved later just before
+  firing, it waits); gone from a calendar that answered → the item ends with "The event
+  was cancelled or removed."; calendar unreachable → the last known time stands.
+- **Delivery of a reminder** (each channel in the background, failures logged, never
+  fatal):
+  - Telegram, to the paired owner, with Done / Snooze 10 min / 1 hour buttons. Only the
+    owner's taps count; a second tap on a settled one answers "Already handled".
+  - A desktop notification from the daemon (notify-rust over D-Bus on Linux, the
+    notification center on macOS), when `Settings.desktop_notifications` is on.
+  - The app: a `schedule_delivered` event (toast with Done / Snooze) and the history.
+  Snoozing sets `snoozed_until`; the snooze comes back through the same catch-up rules.
+- **Routines.** Each has its own conversation, created on first run and titled with the
+  routine's name. A run is a normal chat turn (`chat::send_with_context`) whose
+  instruction is the user message, plus a hidden `<routine>` note telling the model it's
+  a scheduled run. The answer goes to Telegram (Markdown converted to Telegram HTML, split
+  to fit) and to a desktop notification. Anything the model wants to send, change or
+  delete still needs approval: pending approvals are relayed to Telegram as Approve /
+  Don't buttons and announced on the desktop. The run waits for them in its own task (up
+  to 30 minutes), so reminders keep going meanwhile; a run that comes due while the
+  previous one is still going is skipped.
+- **Tools** for the model: `reminder_add` and `routine_add` (when: `at`, `in_minutes`,
+  `repeat` with `time`/`days`/`day_of_month`/`date`/`every_minutes`, or `event` with
+  `minutes_before`), `schedule_list`, `schedule_change` (partial changes keep the rest of
+  the rule) and `schedule_cancel`. Setting up the user's own schedule is local and
+  private, so no approval card: each write shows as one quiet line with Undo
+  (`schedule_revisions` keeps the previous state; `POST /v1/schedule/undo/{revision}`).
+- **Screen:** `#/reminders`, from the bell in the top bar or ⌘K: what's coming up in
+  plain words ("Tomorrow at 9:00 · Every weekday at 9:00"), pause, edit, delete, run a
+  routine now, add by hand, recent deliveries, and where they reach the user.
+- **API:** `GET|POST /v1/schedule`, `PATCH|DELETE /v1/schedule/{id}`,
+  `POST /v1/schedule/{id}/run`, `GET /v1/schedule/deliveries`,
+  `POST /v1/schedule/deliveries/{id}/done`, `POST /v1/schedule/deliveries/{id}/snooze`,
+  `POST /v1/schedule/undo/{revision}`. Changes publish `schedule_changed`; deliveries
+  publish `schedule_delivered`.
+
 ## People and @ mentions
 
 `crates/core/src/people/` keeps one directory of people, unified across sources.

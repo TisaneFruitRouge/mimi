@@ -19,6 +19,7 @@ pub mod memory;
 pub mod people;
 pub mod providers;
 pub mod runtime;
+pub mod schedule;
 pub mod settings;
 pub mod tools;
 pub mod web;
@@ -51,6 +52,8 @@ pub struct AppState {
     /// The built-in model runtime (llama.cpp) and its model downloads.
     pub runtime: runtime::Runtime,
     pub downloads: runtime::download::Downloads,
+    /// Reminders and routines: the wake-up signal and caches.
+    pub scheduler: schedule::Scheduler,
 }
 
 impl AppState {
@@ -83,6 +86,7 @@ impl AppState {
             people: Default::default(),
             runtime: runtime::Runtime::with_binary(None),
             downloads: Default::default(),
+            scheduler: Default::default(),
         }
     }
 }

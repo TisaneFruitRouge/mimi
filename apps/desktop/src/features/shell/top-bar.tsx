@@ -1,5 +1,5 @@
 import { motion } from "motion/react";
-import { Search, Settings, SquarePen } from "lucide-react";
+import { Bell, Search, Settings, SquarePen } from "lucide-react";
 import { cn } from "cn";
 
 import { LogoMark } from "@/components/brand";
@@ -8,10 +8,10 @@ import { macOverlayTitleBar, mod } from "@/lib/platform";
 import { useSettings } from "@/lib/queries";
 
 /**
- * Top-bar sections, plus pages reached from elsewhere: Memory (from Settings) and People
- * (from Connections, whose tab stays selected).
+ * Top-bar sections, plus pages reached from elsewhere: Memory (from Settings), People
+ * (from Connections, whose tab stays selected) and Reminders (the bell).
  */
-export type Section = "chat" | "connections" | "models" | "memory" | "people";
+export type Section = "chat" | "connections" | "models" | "memory" | "people" | "reminders";
 
 const sections: { id: Section; label: string; key: string }[] = [
   { id: "chat", label: "Chat", key: "1" },
@@ -35,6 +35,7 @@ export function TopBar({
   onNewChat,
   onPalette,
   onSettings,
+  onReminders,
 }: {
   section: Section;
   scrolled: boolean;
@@ -42,6 +43,7 @@ export function TopBar({
   onNewChat: () => void;
   onPalette: () => void;
   onSettings: () => void;
+  onReminders: () => void;
 }) {
   const name = useSettings().data?.assistant_name ?? "Mimi";
   return (
@@ -78,6 +80,9 @@ export function TopBar({
           </TooltipTrigger>
           <TooltipContent>Find a conversation · {paletteShortcut}</TooltipContent>
         </Tooltip>
+        <IconButton label="Reminders and routines" onClick={onReminders} active={section === "reminders"}>
+          <Bell />
+        </IconButton>
         <IconButton label="Settings" shortcut={`${mod},`} onClick={onSettings}>
           <Settings />
         </IconButton>
@@ -128,11 +133,13 @@ function IconButton({
   label,
   shortcut,
   onClick,
+  active,
   children,
 }: {
   label: string;
   shortcut?: string;
   onClick: () => void;
+  active?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -141,7 +148,11 @@ function IconButton({
         <button
           onClick={onClick}
           aria-label={label}
-          className="pressable flex size-8 items-center justify-center rounded-full text-muted-foreground hover:bg-fill hover:text-foreground [&_svg]:size-[17px]"
+          aria-current={active ? "page" : undefined}
+          className={cn(
+            "pressable flex size-8 items-center justify-center rounded-full text-muted-foreground hover:bg-fill hover:text-foreground [&_svg]:size-[17px]",
+            active && "bg-fill text-foreground",
+          )}
         >
           {children}
         </button>

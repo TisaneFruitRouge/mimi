@@ -21,6 +21,7 @@ mod hardware;
 mod memory;
 mod people;
 mod providers;
+mod schedule;
 mod settings;
 mod web;
 
@@ -103,6 +104,16 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/memory/learning", axum::routing::put(memory::put_learning))
         .route("/memory/undo/{revision}", post(memory::undo))
         .route("/memory/forget-all", post(memory::forget_all))
+        .route("/schedule", get(schedule::list).post(schedule::create))
+        .route(
+            "/schedule/{id}",
+            axum::routing::patch(schedule::update).delete(schedule::delete),
+        )
+        .route("/schedule/{id}/run", post(schedule::run))
+        .route("/schedule/deliveries", get(schedule::deliveries))
+        .route("/schedule/deliveries/{id}/done", post(schedule::done))
+        .route("/schedule/deliveries/{id}/snooze", post(schedule::snooze))
+        .route("/schedule/undo/{revision}", post(schedule::undo))
         .route("/web/login-link", post(web::login_link))
         .route("/web/logout", post(web::logout))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));

@@ -18,6 +18,7 @@ pub mod memory;
 pub mod paths;
 pub mod people;
 pub mod providers;
+pub mod schedule;
 pub mod settings;
 
 pub use chat::*;
@@ -29,6 +30,7 @@ pub use memory::*;
 pub use paths::Paths;
 pub use people::*;
 pub use providers::*;
+pub use schedule::*;
 pub use settings::*;
 
 /// Prefix for all versioned API routes.

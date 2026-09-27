@@ -30,4 +30,8 @@ onboarding_done: boolean,
 /**
  * Where the welcome was left, so closing the app midway resumes there.
  */
-onboarding_step: number, };
+onboarding_step: number, 
+/**
+ * Whether reminders and routine results also show as notifications on this computer.
+ */
+desktop_notifications: boolean, };

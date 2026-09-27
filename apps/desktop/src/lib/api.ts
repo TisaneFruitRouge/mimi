@@ -25,6 +25,10 @@ import type { ProviderUpdate } from "@/bindings/ProviderUpdate";
 import type { Recommendations } from "@/bindings/Recommendations";
 import type { SendMessage } from "@/bindings/SendMessage";
 import type { SendMessageResult } from "@/bindings/SendMessageResult";
+import type { Delivery } from "@/bindings/Delivery";
+import type { NewScheduleItem } from "@/bindings/NewScheduleItem";
+import type { ScheduleItem } from "@/bindings/ScheduleItem";
+import type { ScheduleUpdate } from "@/bindings/ScheduleUpdate";
 import type { Settings } from "@/bindings/Settings";
 import type { Status } from "@/bindings/Status";
 import { type TransportError, request } from "@/lib/transport";
@@ -131,6 +135,26 @@ export const api = {
   setMemoryLearning: (learning: boolean) => call<null>("PUT", "/memory/learning", { learning }),
   undoMemory: (revision: number) => call<null>("POST", `/memory/undo/${revision}`),
   forgetEverything: () => call<null>("POST", "/memory/forget-all"),
+
+  schedule: () => call<ScheduleItem[]>("GET", "/schedule"),
+  addSchedule: (item: NewScheduleItem) => call<ScheduleItem>("POST", "/schedule", item),
+  /** Only the fields given change. */
+  updateSchedule: (id: string, update: Partial<ScheduleUpdate>) =>
+    call<ScheduleItem>("PATCH", `/schedule/${id}`, {
+      title: null,
+      instruction: null,
+      schedule: null,
+      paused: null,
+      ...update,
+    } satisfies ScheduleUpdate),
+  deleteSchedule: (id: string) => call<null>("DELETE", `/schedule/${id}`),
+  runRoutine: (id: string) => call<null>("POST", `/schedule/${id}/run`),
+  deliveries: () => call<Delivery[]>("GET", "/schedule/deliveries?limit=30"),
+  reminderDone: (deliveryId: string) =>
+    call<null>("POST", `/schedule/deliveries/${deliveryId}/done`),
+  snoozeReminder: (deliveryId: string, minutes: number) =>
+    call<null>("POST", `/schedule/deliveries/${deliveryId}/snooze`, { minutes }),
+  undoSchedule: (revision: number) => call<null>("POST", `/schedule/undo/${revision}`),
 };
 
 /** Query keys, shared by queries and the event sync so they stay in step. */
@@ -157,4 +181,7 @@ export const keys = {
   conversation: (id: string) => ["conversation", id] as const,
   memory: ["memory"] as const,
   memoryNote: (path: string) => ["memory", "note", path] as const,
+  /** Reminders and routines, and their recent deliveries. */
+  schedule: ["schedule"] as const,
+  deliveries: ["schedule", "deliveries"] as const,
 };

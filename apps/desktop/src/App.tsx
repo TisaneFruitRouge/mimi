@@ -10,6 +10,7 @@ import { MemoryView } from "@/features/memory/memory-view";
 import { ModelsView } from "@/features/models/models-view";
 import { Onboarding } from "@/features/onboarding/onboarding";
 import { PeopleView } from "@/features/people/people-view";
+import { RemindersView } from "@/features/reminders/reminders-view";
 import { ConversationPalette } from "@/features/shell/conversation-palette";
 import { SettingsDialog } from "@/features/shell/settings-dialog";
 import { type Section, TopBar } from "@/features/shell/top-bar";
@@ -64,7 +65,13 @@ type Route = { section: Section; conversationId: string | null };
 
 function parseHash(): Route {
   const [first, second] = location.hash.replace(/^#\/?/, "").split("/");
-  if (first === "models" || first === "connections" || first === "memory" || first === "people")
+  if (
+    first === "models" ||
+    first === "connections" ||
+    first === "memory" ||
+    first === "people" ||
+    first === "reminders"
+  )
     return { section: first, conversationId: null };
   return { section: "chat", conversationId: first === "chat" && second ? second : null };
 }
@@ -156,6 +163,7 @@ function Shell() {
           onNewChat={() => setConversationId(null)}
           onPalette={() => setPaletteOpen(true)}
           onSettings={() => setSettingsOpen(true)}
+          onReminders={() => setSection("reminders")}
         />
         <AnimatePresence mode="wait" initial={false}>
           <motion.main
@@ -178,6 +186,7 @@ function Shell() {
             {section === "people" && <PeopleView onConnections={() => setSection("connections")} />}
             {section === "models" && <ModelsView onChat={() => setSection("chat")} />}
             {section === "memory" && <MemoryView />}
+            {section === "reminders" && <RemindersView onOpenConversation={setConversationId} />}
           </motion.main>
         </AnimatePresence>
 

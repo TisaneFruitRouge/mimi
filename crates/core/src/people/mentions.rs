@@ -96,7 +96,7 @@ pub fn event_id(e: &CalEvent) -> String {
     )
 }
 
-fn parse_event_id(id: &str) -> Option<(DateTime<Utc>, String, String)> {
+pub fn parse_event_id(id: &str) -> Option<(DateTime<Utc>, String, String)> {
     let rest = id.strip_prefix("ev:")?;
     let mut parts = rest.splitn(3, ':');
     let start = Utc
@@ -177,6 +177,8 @@ pub async fn resolve(state: &AppState, mentions: &[Mention]) -> Option<String> {
                             n.chars().take(200).collect::<String>()
                         ));
                     }
+                    // Lets tools refer to exactly this occurrence (e.g. a reminder before it).
+                    line.push_str(&format!(" (event id: {})", m.id));
                     line
                 }
                 None => format!(

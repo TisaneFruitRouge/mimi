@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { BookmarkCheck, Check, CircleAlert, ExternalLink, Hand, Loader2, X } from "lucide-react";
+import { Bell, BookmarkCheck, Check, CircleAlert, ExternalLink, Hand, Loader2, X } from "lucide-react";
 import { cn } from "cn";
 import { toast } from "sonner";
 
@@ -14,18 +14,27 @@ import { openExternal } from "@/lib/transport";
 const MEMORY_READS = new Set(["memory_search", "memory_read", "memory_list"]);
 /** Changes to memory show as one quiet line each, with Undo. */
 const MEMORY_WRITES = new Set(["memory_write", "memory_update", "memory_forget"]);
+/** Reminders and routines set, changed or cancelled: also one quiet line with Undo. */
+const SCHEDULE_WRITES = new Set(["reminder_add", "routine_add", "schedule_change", "schedule_cancel"]);
 
 /** What the assistant did (reads) and asked to do (approval cards) in one reply. */
 export function Actions({ actions }: { actions: Action[] }) {
-  const reads = actions.filter(
-    (a) => !a.requires_approval && !MEMORY_READS.has(a.tool) && !MEMORY_WRITES.has(a.tool),
-  );
   // Only memory changes that happened; refused or empty ones aren't news.
   const remembered = actions.filter(
     (a) => MEMORY_WRITES.has(a.tool) && a.status === "done" && memoryRevision(a) !== null,
   );
+  const scheduled = actions.filter(
+    (a) => SCHEDULE_WRITES.has(a.tool) && a.status === "done" && scheduleRevision(a) !== null,
+  );
+  const reads = actions.filter(
+    (a) =>
+      !a.requires_approval &&
+      !MEMORY_READS.has(a.tool) &&
+      !MEMORY_WRITES.has(a.tool) &&
+      !scheduled.includes(a),
+  );
   const asks = actions.filter((a) => a.requires_approval);
-  if (reads.length + remembered.length + asks.length === 0) return null;
+  if (reads.length + remembered.length + scheduled.length + asks.length === 0) return null;
   return (
     <div className="flex flex-col gap-3">
       {reads.length > 0 && (
@@ -36,7 +45,10 @@ export function Actions({ actions }: { actions: Action[] }) {
         </div>
       )}
       {remembered.map((a) => (
-        <MemoryLine key={a.id} action={a} />
+        <UndoLine key={a.id} action={a} icon={<BookmarkCheck />} undo={() => api.undoMemory(memoryRevision(a) ?? 0)} />
+      ))}
+      {scheduled.map((a) => (
+        <UndoLine key={a.id} action={a} icon={<Bell />} undo={() => api.undoSchedule(scheduleRevision(a) ?? 0)} />
       ))}
       {asks.map((a) => (
         <ApprovalCard key={a.id} action={a} />
@@ -50,16 +62,27 @@ function memoryRevision(a: Action): number | null {
   return typeof r === "number" ? r : null;
 }
 
-/** "Remembered that Sam is your brother · Undo". */
-function MemoryLine({ action: a }: { action: Action }) {
+function scheduleRevision(a: Action): number | null {
+  const r = (a.output as { schedule_revision?: unknown } | null)?.schedule_revision;
+  return typeof r === "number" ? r : null;
+}
+
+/** "Remembered that Sam is your brother · Undo", "Reminder set tomorrow at 9:00: … · Undo". */
+function UndoLine({
+  action: a,
+  icon,
+  undo: revert,
+}: {
+  action: Action;
+  icon: React.ReactNode;
+  undo: () => Promise<unknown>;
+}) {
   const [busy, setBusy] = useState(false);
-  const revision = memoryRevision(a);
   const undone = (a.output as { undone?: unknown } | null)?.undone === true;
   const undo = async () => {
-    if (revision === null) return;
     setBusy(true);
     try {
-      await api.undoMemory(revision);
+      await revert();
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -67,8 +90,8 @@ function MemoryLine({ action: a }: { action: Action }) {
     }
   };
   return (
-    <div className="flex items-center gap-1.5 type-subhead text-faint">
-      <BookmarkCheck className="size-3.5 shrink-0" />
+    <div className="flex items-center gap-1.5 type-subhead text-faint [&>svg]:size-3.5 [&>svg]:shrink-0">
+      {icon}
       <span className={cn(undone && "line-through")}>{upperFirst(a.result ?? a.summary)}</span>
       {undone ? (
         <span>· Undone</span>

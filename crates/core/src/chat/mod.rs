@@ -78,6 +78,20 @@ pub async fn send(
     model: Option<ModelRef>,
     mentions: Vec<Mention>,
 ) -> Result<SendMessageResult, AppError> {
+    send_with_context(state, conversation_id, content, model, mentions, None).await
+}
+
+/// Like [`send`], with extra context for the model that the user doesn't see in the
+/// conversation (e.g. that a message was sent by a scheduled routine). It's kept with the
+/// message, like mention context, so later turns see it too.
+pub async fn send_with_context(
+    state: Arc<AppState>,
+    conversation_id: Uuid,
+    content: String,
+    model: Option<ModelRef>,
+    mentions: Vec<Mention>,
+    hidden_context: Option<String>,
+) -> Result<SendMessageResult, AppError> {
     let content = content.trim().to_owned();
     if content.is_empty() {
         return Err(AppError::bad_request("The message is empty."));
@@ -128,7 +142,13 @@ pub async fn send(
     } else {
         providers::connect(&state.http, &provider).map_err(AppError::bad_request)?;
     }
-    let mention_context = crate::people::mentions::resolve(&state, &mentions).await;
+    let mention_context = match (
+        crate::people::mentions::resolve(&state, &mentions).await,
+        hidden_context,
+    ) {
+        (Some(a), Some(b)) => Some(format!("{b}\n\n{a}")),
+        (a, b) => a.or(b),
+    };
 
     let cancel = state.generations.start(conversation_id).ok_or_else(|| {
         AppError::new(

@@ -7,6 +7,7 @@ import type { Event } from "@/bindings/Event";
 import type { Message } from "@/bindings/Message";
 import type { ModelPull } from "@/bindings/ModelPull";
 import { keys } from "@/lib/api";
+import { announceDelivery } from "@/features/reminders/announce";
 import { subscribe } from "@/lib/transport";
 
 // Connection state, fed by the transport (Tauri relay or browser WebSocket).
@@ -119,6 +120,13 @@ function apply(qc: QueryClient, event: Event) {
       break;
     case "memory_changed":
       qc.invalidateQueries({ queryKey: keys.memory });
+      break;
+    case "schedule_changed":
+      qc.invalidateQueries({ queryKey: keys.schedule });
+      break;
+    case "schedule_delivered":
+      qc.invalidateQueries({ queryKey: keys.schedule });
+      announceDelivery(event.delivery);
       break;
     case "resync":
       qc.invalidateQueries();
