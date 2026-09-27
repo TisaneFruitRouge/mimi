@@ -1,16 +1,16 @@
 {
-  "name": "hearth",
+  "name": "mimi",
   "private": true,
   "license": "AGPL-3.0-or-later",
   "packageManager": "pnpm@10.28.2",
   "scripts": {
-    "dev": "HEARTH_HOME=\"${HEARTH_HOME:-$PWD/.dev}\" concurrently --kill-others --names daemon,app --prefix-colors yellow,cyan \"pnpm dev:daemon\" \"pnpm dev:app\"",
-    "dev:daemon": "HEARTH_HOME=\"${HEARTH_HOME:-$PWD/.dev}\" cargo run -p hearth-core --bin hearthd",
-    "dev:app": "HEARTH_HOME=\"${HEARTH_HOME:-$PWD/.dev}\" pnpm --filter @hearth/desktop tauri dev",
-    "web": "pnpm build && HEARTH_HOME=\"${HEARTH_HOME:-$PWD/.dev}\" cargo run -q -p hearth-cli -- open",
-    "hearth": "HEARTH_HOME=\"${HEARTH_HOME:-$PWD/.dev}\" cargo run -q -p hearth-cli --",
-    "build": "pnpm --filter @hearth/desktop build",
-    "typecheck": "pnpm --filter @hearth/desktop typecheck",
+    "dev": "MIMI_HOME=\"${MIMI_HOME:-$PWD/.dev}\" concurrently --kill-others --names daemon,app --prefix-colors yellow,cyan \"pnpm dev:daemon\" \"pnpm dev:app\"",
+    "dev:daemon": "MIMI_HOME=\"${MIMI_HOME:-$PWD/.dev}\" cargo run -p mimi-core --bin mimid",
+    "dev:app": "MIMI_HOME=\"${MIMI_HOME:-$PWD/.dev}\" pnpm --filter @mimi/desktop tauri dev",
+    "web": "pnpm build && MIMI_HOME=\"${MIMI_HOME:-$PWD/.dev}\" cargo run -q -p mimi-cli -- open",
+    "mimi": "MIMI_HOME=\"${MIMI_HOME:-$PWD/.dev}\" cargo run -q -p mimi-cli --",
+    "build": "pnpm --filter @mimi/desktop build",
+    "typecheck": "pnpm --filter @mimi/desktop typecheck",
     "check": "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace && pnpm typecheck"
   },
   "devDependencies": {

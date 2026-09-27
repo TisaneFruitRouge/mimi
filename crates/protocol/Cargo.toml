@@ -1,5 +1,5 @@
 [package]
-name = "hearth-protocol"
+name = "mimi-protocol"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

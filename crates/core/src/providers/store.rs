@@ -1,4 +1,4 @@
-use hearth_protocol::Provider;
+use mimi_protocol::Provider;
 use rusqlite::{OptionalExtension, Row};
 use uuid::Uuid;
 

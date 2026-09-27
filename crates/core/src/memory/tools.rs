@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use futures::FutureExt;
 use futures::future::BoxFuture;
-use hearth_protocol::{Event, MemorySource};
+use mimi_protocol::{Event, MemorySource};
 use serde_json::{Value, json};
 
 use super::recall::fts_query;

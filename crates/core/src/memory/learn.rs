@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
-use hearth_protocol::{Event, MemorySource, MessageRole, MessageStatus};
+use mimi_protocol::{Event, MemorySource, MessageRole, MessageStatus};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -24,7 +24,7 @@ use crate::AppState;
 use crate::providers::{self, ChatChunk, ChatMessage, Role};
 
 /// How long a conversation must be quiet before it's learned from.
-pub const QUIET_ENV: &str = "HEARTH_MEMORY_QUIET_SECS";
+pub const QUIET_ENV: &str = "MIMI_MEMORY_QUIET_SECS";
 const DEFAULT_QUIET: Duration = Duration::from_secs(120);
 
 /// Most characters of conversation given to one learning pass.
@@ -239,7 +239,7 @@ Reply with JSON only, exactly this shape:\n\
 
 /// The conversation as the learning pass sees it, or `None` if nothing is left once
 /// messages the user asked not to be remembered are dropped.
-fn excerpt(messages: &[&hearth_protocol::Message]) -> Option<String> {
+fn excerpt(messages: &[&mimi_protocol::Message]) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
     let mut skip_reply = false;
     for m in messages {

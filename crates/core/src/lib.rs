@@ -1,9 +1,9 @@
-//! The hearth daemon: owns the agent loop, memory, models and tools, and serves them to
+//! The mimi daemon: owns the agent loop, memory, models and tools, and serves them to
 //! clients over an authenticated local API.
 
 use std::time::Instant;
 
-use hearth_protocol::{KeyStorage, Paths};
+use mimi_protocol::{KeyStorage, Paths};
 
 pub mod api;
 pub mod chat;
@@ -93,7 +93,7 @@ pub fn http_client() -> reqwest::Client {
         .connect_timeout(std::time::Duration::from_secs(5))
         // Local models can take minutes to load before the first token.
         .read_timeout(std::time::Duration::from_secs(300))
-        .user_agent(concat!("hearth/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("mimi/", env!("CARGO_PKG_VERSION")))
         .build()
         .expect("building the HTTP client")
 }

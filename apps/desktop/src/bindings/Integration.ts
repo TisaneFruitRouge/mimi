@@ -3,10 +3,10 @@ import type { IntegrationCategory } from "./IntegrationCategory";
 import type { IntegrationStatus } from "./IntegrationStatus";
 
 /**
- * Something Hearth can connect to on the user's behalf.
+ * Something Mimi can connect to on the user's behalf.
  */
 export type Integration = { id: string, name: string, category: IntegrationCategory, description: string, 
 /**
- * What connecting it lets Hearth do, in plain language.
+ * What connecting it lets Mimi do, in plain language.
  */
 abilities: Array<string>, status: IntegrationStatus, };

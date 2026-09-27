@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use hearth_protocol::{Channel, Handle, Person, PersonSource, PersonSummary};
+use mimi_protocol::{Channel, Handle, Person, PersonSource, PersonSummary};
 use rusqlite::{Connection, OptionalExtension, params};
 use uuid::Uuid;
 

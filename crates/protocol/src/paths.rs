@@ -2,18 +2,18 @@ use std::path::PathBuf;
 
 use directories::ProjectDirs;
 
-/// Overrides every hearth directory. Used for development and tests so several
+/// Overrides every mimi directory. Used for development and tests so several
 /// instances can run side by side.
-pub const HOME_ENV: &str = "HEARTH_HOME";
+pub const HOME_ENV: &str = "MIMI_HOME";
 
 #[derive(Debug, thiserror::Error)]
-#[error("could not determine a home directory for hearth data")]
+#[error("could not determine a home directory for mimi data")]
 pub struct NoHomeDir;
 
-/// Where hearth keeps its files on this machine.
+/// Where mimi keeps its files on this machine.
 ///
-/// Linux: `~/.local/share/hearth` and `~/.config/hearth`.
-/// macOS: `~/Library/Application Support/dev.hearth.hearth` for both.
+/// Linux: `~/.local/share/mimi` and `~/.config/mimi`.
+/// macOS: `~/Library/Application Support/dev.mimi.mimi` for both.
 #[derive(Debug, Clone)]
 pub struct Paths {
     pub data_dir: PathBuf,
@@ -29,7 +29,7 @@ impl Paths {
                 config_dir: home,
             });
         }
-        let dirs = ProjectDirs::from("dev", "hearth", "hearth").ok_or(NoHomeDir)?;
+        let dirs = ProjectDirs::from("dev", "mimi", "mimi").ok_or(NoHomeDir)?;
         Ok(Self {
             data_dir: dirs.data_dir().to_path_buf(),
             config_dir: dirs.config_dir().to_path_buf(),

@@ -4,7 +4,7 @@ use std::time::Duration;
 use axum::Json;
 use axum::extract::State;
 use futures::future::join_all;
-use hearth_protocol::{DetectedServer, HardwareInfo, Locality, ModelRef, Recommendations};
+use mimi_protocol::{DetectedServer, HardwareInfo, Locality, ModelRef, Recommendations};
 
 use super::error::{ApiResult, AppError};
 use crate::hardware::recommend::{self, AvailableModel};
@@ -115,13 +115,13 @@ pub async fn recommendations(State(state): State<Arc<AppState>>) -> ApiResult<Re
 }
 
 /// Every model in the catalog, so clients can show friendly names and descriptions.
-pub async fn catalog() -> Json<Vec<hearth_protocol::CatalogModel>> {
+pub async fn catalog() -> Json<Vec<mimi_protocol::CatalogModel>> {
     Json(recommend::catalog_models())
 }
 
 pub async fn integrations(
     State(state): State<Arc<AppState>>,
-) -> ApiResult<Vec<hearth_protocol::Integration>> {
+) -> ApiResult<Vec<mimi_protocol::Integration>> {
     let connected: Vec<String> = crate::connections::store::list(&state.db)
         .await?
         .into_iter()

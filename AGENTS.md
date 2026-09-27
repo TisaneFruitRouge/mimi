@@ -1,16 +1,16 @@
-# Hearth
+# Mimi
 
 A self-hosted, private personal AI assistant for everyday people, not only developers.
-"Hearth" is a working name. Keep the name confined to identifiers and strings so a
+"Mimi" is a working name. Keep the name confined to identifiers and strings so a
 rename is a find-and-replace.
 
 ## Principles (apply to every change)
 
-0. **There is no Hearth server. Ever.** Everything runs on the user's own machines. No
+0. **There is no Mimi server. Ever.** Everything runs on the user's own machines. No
    central relay, account system, telemetry, update-check or proxy operated by the
    project. Third parties are contacted only directly from the user's machine, and only
    when a feature needs them (Google for their calendar, Telegram for their messages, a
-   cloud model they chose). Registered app identities (e.g. Hearth's Google OAuth
+   cloud model they chose). Registered app identities (e.g. Mimi's Google OAuth
    client ID, a Telegram api_id) are just identifiers shown on consent screens; they
    never route data through the project.
 1. **Self-hosting, privacy and security by default.** Prefer local processing. Data
@@ -46,12 +46,12 @@ Out: acting on the computer itself (shell, file management, browser automation).
 
 ## Architecture
 
-See `docs/architecture.md`. In short: `hearthd` (crates/core) owns everything, and the
-desktop app, CLI and future TUI are all clients that go through `hearth-client`. New
+See `docs/architecture.md`. In short: `mimid` (crates/core) owns everything, and the
+desktop app, CLI and future TUI are all clients that go through `mimi-client`. New
 features go in the daemon plus the protocol types. Frontends only render them.
 
-- API types go in `hearth-protocol` and derive `ts_rs::TS` with `#[ts(export)]`.
-  `cargo test -p hearth-protocol` regenerates `apps/desktop/src/bindings/`, which is
+- API types go in `mimi-protocol` and derive `ts_rs::TS` with `#[ts(export)]`.
+  `cargo test -p mimi-protocol` regenerates `apps/desktop/src/bindings/`, which is
   committed; CI fails if it's stale. Annotate `u64`/`i64` fields `#[ts(type = "number")]`.
 - Schema changes are new files in `crates/core/src/db/migrations/`, registered in
   `MIGRATIONS`. Never edit a migration that has been committed.
@@ -63,7 +63,7 @@ features go in the daemon plus the protocol types. Frontends only render them.
   `src/lib/transport.ts` knows which it is: Tauri IPC in the app, same-origin
   `fetch`/WebSocket in a browser. Never call Tauri APIs from screens directly; use
   `openExternal` for links.
-- Web auth: native clients use the bearer token; browsers use a `hearth_session`
+- Web auth: native clients use the bearer token; browsers use a `mimi_session`
   cookie (HttpOnly, SameSite=Strict) obtained from a single-use, 2-minute login link
   that only bearer clients can mint (`POST /v1/web/login-link`). Only a SHA-256 of each
   session token is stored. Cookie-authenticated requests must carry an allowed Host
@@ -206,7 +206,7 @@ than inventing their own.
 - Tool output is given back to the model verbatim (cut at 16k characters) and stored
   with the message, so keep it compact and free of secrets.
 - Debug builds have two fake tools (`dev_lookup`, `dev_send_note`) enabled with
-  `HEARTH_DEV_TOOLS=1`, for exercising approval cards against a scripted model.
+  `MIMI_DEV_TOOLS=1`, for exercising approval cards against a scripted model.
 
 ## Memory (what the assistant knows about the user)
 
@@ -224,7 +224,7 @@ than inventing their own.
 - Schema: `memory_notes` + `memory_fts` (triggers keep them in step), `memory_revisions`
   (undo), `memory_learned` (learning progress per conversation). `subject` on notes is
   the seam for linking a note to a contact id.
-- Try it for real with `HEARTH_MEMORY_QUIET_SECS=15` so the background learning pass
+- Try it for real with `MIMI_MEMORY_QUIET_SECS=15` so the background learning pass
   runs soon after a chat; it logs `learning pass done … notes_changed=N`.
 
 ## Commands
@@ -233,17 +233,17 @@ than inventing their own.
 pnpm dev                 # daemon + desktop app together, data in .dev/
 pnpm web                 # build the frontend and open it in a browser (daemon running)
 pnpm dev:daemon          # daemon only (pnpm dev:app for the app only)
-pnpm hearth <args>       # CLI against the .dev/ instance
+pnpm mimi <args>       # CLI against the .dev/ instance
 pnpm check               # fmt, clippy, tests, typecheck (what CI runs)
-HEARTH_HOME=/tmp/h1 ...  # any other isolated instance
+MIMI_HOME=/tmp/h1 ...  # any other isolated instance
 ```
 
 When testing `pnpm dev` from an agent session, stop it by exact PID or by the
 `setsid` process group. Never `pkill -f` with a pattern that could match other
 projects' processes or the current shell's own command line.
 
-To check UI changes visually, run a throwaway daemon (scratch `HEARTH_HOME`,
-`HEARTH_KEY_STORE=file`, its own `HEARTH_PORT`), `pnpm build`, and drive the web UI with
+To check UI changes visually, run a throwaway daemon (scratch `MIMI_HOME`,
+`MIMI_KEY_STORE=file`, its own `MIMI_PORT`), `pnpm build`, and drive the web UI with
 `node scripts/ui-check.mjs` (headless Chromium: screenshots, clicks, keys, computed
 styles). Chromium's one-shot `--screenshot` flag can capture transitions mid-way; use the
 script instead.

@@ -16,7 +16,7 @@ pub enum Channel {
     Other,
 }
 
-/// One way to reach a person, and where Hearth learned it.
+/// One way to reach a person, and where Mimi learned it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct Handle {

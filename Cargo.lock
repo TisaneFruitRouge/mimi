@@ -1868,96 +1868,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hearth-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "futures",
- "hearth-client",
- "hearth-protocol",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "hearth-client"
-version = "0.1.0"
-dependencies = [
- "futures",
- "hearth-protocol",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "tokio",
- "tokio-tungstenite 0.30.0",
- "uuid",
-]
-
-[[package]]
-name = "hearth-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "bytes",
- "chrono",
- "chrono-tz",
- "futures",
- "getrandom 0.4.3",
- "hearth-protocol",
- "http-body-util",
- "icalendar",
- "jiff",
- "keyring",
- "quick-xml",
- "reqwest",
- "rusqlite",
- "rust-embed",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "sysinfo",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "tokio-tungstenite 0.30.0",
- "tokio-util",
- "tower",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "hearth-desktop"
-version = "0.1.0"
-dependencies = [
- "futures",
- "hearth-client",
- "hearth-protocol",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-opener",
- "tokio",
-]
-
-[[package]]
-name = "hearth-protocol"
-version = "0.1.0"
-dependencies = [
- "directories",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "ts-rs",
- "uuid",
-]
-
-[[package]]
 name = "heck"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2762,6 +2672,96 @@ checksum = "f7c44f8e672c00fe5308fa235f821cb4198414e1c77935c1ab6948d3fd78550e"
 dependencies = [
  "mime",
  "unicase",
+]
+
+[[package]]
+name = "mimi-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "futures",
+ "mimi-client",
+ "mimi-protocol",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "mimi-client"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "mimi-protocol",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+ "uuid",
+]
+
+[[package]]
+name = "mimi-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "bytes",
+ "chrono",
+ "chrono-tz",
+ "futures",
+ "getrandom 0.4.3",
+ "http-body-util",
+ "icalendar",
+ "jiff",
+ "keyring",
+ "mimi-protocol",
+ "quick-xml",
+ "reqwest",
+ "rusqlite",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "sysinfo",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+ "tokio-util",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "mimi-desktop"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "mimi-client",
+ "mimi-protocol",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-opener",
+ "tokio",
+]
+
+[[package]]
+name = "mimi-protocol"
+version = "0.1.0"
+dependencies = [
+ "directories",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "ts-rs",
+ "uuid",
 ]
 
 [[package]]

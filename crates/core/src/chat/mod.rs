@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use futures::StreamExt;
-use hearth_protocol::{
+use mimi_protocol::{
     Action, ActionStatus, Conversation, Event, Mention, Message, MessageRole, MessageStatus,
     ModelRef, SendMessageResult,
 };

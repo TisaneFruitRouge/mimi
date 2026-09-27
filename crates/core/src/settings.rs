@@ -1,4 +1,4 @@
-use hearth_protocol::Settings;
+use mimi_protocol::Settings;
 use rusqlite::OptionalExtension;
 
 use crate::db::{Db, DbError};

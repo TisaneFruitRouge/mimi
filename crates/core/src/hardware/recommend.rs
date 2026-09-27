@@ -1,6 +1,6 @@
 use std::sync::LazyLock;
 
-use hearth_protocol::{
+use mimi_protocol::{
     CatalogModel, DetectedServer, GpuKind, GpuVendor, HardwareInfo, HardwareTier, InstalledModel,
     Locality, ModelRef, Recommendations,
 };
@@ -208,7 +208,7 @@ fn summary(hw: &HardwareInfo, tier: HardwareTier) -> String {
 
 #[cfg(test)]
 mod tests {
-    use hearth_protocol::GpuInfo;
+    use mimi_protocol::GpuInfo;
 
     use super::*;
 

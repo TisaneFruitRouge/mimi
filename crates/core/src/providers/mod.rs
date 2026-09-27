@@ -2,7 +2,7 @@
 
 use std::net::IpAddr;
 
-use hearth_protocol::{Locality, ProviderPreset};
+use mimi_protocol::{Locality, ProviderPreset};
 use reqwest::Url;
 
 pub mod openai;

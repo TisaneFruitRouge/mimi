@@ -1,6 +1,6 @@
 //! Memory notes in the encrypted database, with a full-text index and undo history.
 
-use hearth_protocol::{MemoryNote, MemoryNoteSummary, MemorySource};
+use mimi_protocol::{MemoryNote, MemoryNoteSummary, MemorySource};
 use rusqlite::{OptionalExtension, Row, params};
 use uuid::Uuid;
 

@@ -220,7 +220,7 @@ function Setup() {
           )}
         >
           <LogoMark />
-          <span className="text-[15px] font-semibold tracking-[-0.016em]">Hearth</span>
+          <span className="text-[15px] font-semibold tracking-[-0.016em]">Mimi</span>
         </header>
         <ModelsView setup />
       </div>
@@ -258,9 +258,9 @@ function SignedOut() {
   return (
     <Centered>
       <LogoMark className="mb-2 size-14 rounded-[16px]" />
-      <h1 className="type-title">Open Hearth from your computer</h1>
+      <h1 className="type-title">Open Mimi from your computer</h1>
       <p className="max-w-[380px] type-body text-muted-foreground">
-        For your privacy, this browser needs a sign-in link. In the Hearth app, open Settings
+        For your privacy, this browser needs a sign-in link. In the Mimi app, open Settings
         and choose “Open in your browser”.
       </p>
     </Centered>
@@ -275,7 +275,7 @@ function Offline() {
       </div>
       <h1 className="type-title">Your assistant isn't running</h1>
       <p className="max-w-[360px] type-body text-muted-foreground">
-        Hearth reconnects on its own as soon as it's back.
+        Mimi reconnects on its own as soon as it's back.
       </p>
       <Loader2 className="mt-2 size-4 animate-spin text-faint" />
     </Centered>

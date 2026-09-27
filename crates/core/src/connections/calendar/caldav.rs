@@ -63,7 +63,7 @@ impl CalDav {
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
-            .user_agent(concat!("hearth/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("mimi/", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("building the CalDAV client");
         Self {

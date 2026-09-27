@@ -3,14 +3,14 @@
 ```
  ┌──────────────┐  ┌──────────┐  ┌──────────┐   ┌─────────────┐
  │ Desktop app  │  │   CLI    │  │ TUI (tbd)│   │  Browser    │  clients
- │ Tauri + React│  │ `hearth` │  │          │   │ same React  │
+ │ Tauri + React│  │ `mimi` │  │          │   │ same React  │
  └──────┬───────┘  └────┬─────┘  └────┬─────┘   └──────┬──────┘
-        │   hearth-client (typed Rust client)          │ fetch + WebSocket,
+        │   mimi-client (typed Rust client)          │ fetch + WebSocket,
         └───────────────┼─────────────┘                │ session cookie
                         │ HTTP on 127.0.0.1:7437,      │
                         │ bearer token                 │
                 ┌───────┴──────────────────────────────┴┐
-                │    hearthd     │      hearth-core
+                │    mimid     │      mimi-core
                 │ agent · memory │
                 │ models · tools │
                 │ scheduler      │
@@ -21,12 +21,12 @@
 
 | Path | Crate | Role |
 |---|---|---|
-| `crates/protocol` | `hearth-protocol` | API types and on-disk paths shared by the daemon and every client. |
-| `crates/core` | `hearth-core` | The daemon (`hearthd` binary) and all assistant logic. |
-| `crates/client` | `hearth-client` | Typed client for the daemon API. Every frontend uses it. |
-| `crates/cli` | `hearth-cli` | The `hearth` command. The TUI will live here too. |
-| `apps/desktop/src-tauri` | `hearth-desktop` | Tauri shell. Exposes Tauri commands that call `hearth-client`. |
-| `apps/desktop/src` | `@hearth/desktop` | React + Tailwind + shadcn/ui frontend. |
+| `crates/protocol` | `mimi-protocol` | API types and on-disk paths shared by the daemon and every client. |
+| `crates/core` | `mimi-core` | The daemon (`mimid` binary) and all assistant logic. |
+| `crates/client` | `mimi-client` | Typed client for the daemon API. Every frontend uses it. |
+| `crates/cli` | `mimi-cli` | The `mimi` command. The TUI will live here too. |
+| `apps/desktop/src-tauri` | `mimi-desktop` | Tauri shell. Exposes Tauri commands that call `mimi-client`. |
+| `apps/desktop/src` | `@mimi/desktop` | React + Tailwind + shadcn/ui frontend. |
 
 ## Web interface
 
@@ -39,9 +39,9 @@ WebSocket in a browser.
 Browsers can't read the discovery file, so they sign in with a link:
 
 1. A native client (bearer token) calls `POST /v1/web/login-link` and opens the URL
-   (`hearth open`, or the desktop app's `open_in_browser` command).
+   (`mimi open`, or the desktop app's `open_in_browser` command).
 2. `GET /login?code=…` redeems the single-use code (valid two minutes, kept in memory),
-   creates a session, sets `hearth_session` (HttpOnly, SameSite=Strict, 30 days) and
+   creates a session, sets `mimi_session` (HttpOnly, SameSite=Strict, 30 days) and
    redirects to `/`. The database stores only the SHA-256 of the session token.
 3. Cookie-authenticated requests must have Host `127.0.0.1:<port>` or
    `localhost:<port>` (DNS-rebinding defense). Non-GET requests and the `/v1/events`
@@ -55,11 +55,11 @@ TLS.
 
 ## Daemon discovery and auth
 
-On start, `hearthd`:
+On start, `mimid`:
 
 1. Creates the data dir with mode `0700`.
 2. Refuses to start if another instance's discovery file points at a live port.
-3. Binds `127.0.0.1:7437` (`HEARTH_PORT` overrides; a random port if it's taken) and
+3. Binds `127.0.0.1:7437` (`MIMI_PORT` overrides; a random port if it's taken) and
    generates a 256-bit token.
 4. Writes `daemon.json` (`pid`, `port`, `token`) to the data dir with mode `0600`, atomically.
 5. Deletes `daemon.json` on SIGINT/SIGTERM.
@@ -72,7 +72,7 @@ above).
 The desktop webview never sees the token: the frontend calls Tauri commands, and the
 Rust side makes the request.
 
-`HEARTH_HOME` overrides all paths, which lets you run isolated instances in development.
+`MIMI_HOME` overrides all paths, which lets you run isolated instances in development.
 
 ## Tools and approvals
 
@@ -126,7 +126,7 @@ small in the prompt however much accumulates. It works like a tiny file system:
   local and private. Writes show in the chat as one quiet line ("Remembered that Sam is
   your brother") with Undo (`POST /v1/memory/undo/{revision}`). Reads aren't shown.
 - **Learning in the background:** after a reply, a conversation is scheduled to be
-  learned from once it's been quiet for 2 minutes (`HEARTH_MEMORY_QUIET_SECS`).
+  learned from once it's been quiet for 2 minutes (`MIMI_MEMORY_QUIET_SECS`).
   - **The pass:** the active model gets the current profile, the list of notes, the
     notes related to the conversation, and the new messages since the last pass
     (`memory_learned`). It replies with a JSON plan of facts to add or remove per note,
@@ -191,7 +191,7 @@ small in the prompt however much accumulates. It works like a tiny file system:
 
 ## Planned
 
-- **Background service**: install `hearthd` as a systemd user unit (Linux) or a launchd
+- **Background service**: install `mimid` as a systemd user unit (Linux) or a launchd
   agent (macOS) from the GUI, so messaging channels and scheduled tasks work with the
   window closed.
 - **Models**: bundle and manage `llama-server` (Metal on macOS, Vulkan on Linux); also

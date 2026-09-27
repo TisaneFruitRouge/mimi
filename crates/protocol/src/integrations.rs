@@ -21,7 +21,7 @@ pub enum IntegrationStatus {
     ComingSoon,
 }
 
-/// Something Hearth can connect to on the user's behalf.
+/// Something Mimi can connect to on the user's behalf.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct Integration {
@@ -29,7 +29,7 @@ pub struct Integration {
     pub name: String,
     pub category: IntegrationCategory,
     pub description: String,
-    /// What connecting it lets Hearth do, in plain language.
+    /// What connecting it lets Mimi do, in plain language.
     pub abilities: Vec<String>,
     pub status: IntegrationStatus,
 }

@@ -77,7 +77,7 @@ export function ModelsView({ setup = false, onChat }: { setup?: boolean; onChat?
   return (
     <Page>
       <PageHeader
-        title={setup ? "Welcome to Hearth" : "Models"}
+        title={setup ? "Welcome to Mimi" : "Models"}
         subtitle={
           setup
             ? "First, choose how your assistant thinks. Models on this computer keep everything private."
@@ -463,7 +463,7 @@ function GetOllama({ size }: { size: number }) {
       <PopoverContent className="w-[290px] p-4">
         <p className="type-callout font-medium">Install Ollama first</p>
         <p className="mt-1 type-subhead text-muted-foreground">
-          Ollama runs models on this computer. Once it's installed, Hearth finds it and downloads
+          Ollama runs models on this computer. Once it's installed, Mimi finds it and downloads
           models for you.
         </p>
         <Button size="sm" className="mt-3" onClick={() => openExternal("https://ollama.com/download")}>

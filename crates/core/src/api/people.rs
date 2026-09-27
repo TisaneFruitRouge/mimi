@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use hearth_protocol::{
+use mimi_protocol::{
     DismissDuplicate, DuplicateSuggestion, Event, MentionCandidate, MergePeople, NewHandle,
     NewPerson, Person, PersonSummary, PersonUpdate, SplitPerson,
 };
@@ -53,14 +53,14 @@ fn valid_handle(h: &NewHandle) -> Result<CardHandle, AppError> {
     }
     if matches!(
         h.channel,
-        hearth_protocol::Channel::Email
-            | hearth_protocol::Channel::Phone
-            | hearth_protocol::Channel::Telegram
+        mimi_protocol::Channel::Email
+            | mimi_protocol::Channel::Phone
+            | mimi_protocol::Channel::Telegram
     ) && normalize::match_key(h.channel, &value).is_none()
     {
         return Err(AppError::bad_request(match h.channel {
-            hearth_protocol::Channel::Email => "That doesn't look like an email address.",
-            hearth_protocol::Channel::Telegram => "That doesn't look like a Telegram username.",
+            mimi_protocol::Channel::Email => "That doesn't look like an email address.",
+            mimi_protocol::Channel::Telegram => "That doesn't look like a Telegram username.",
             _ => "That doesn't look like a phone number.",
         }));
     }
@@ -169,7 +169,7 @@ pub async fn remove_handle(
         .await?
     {
         return Err(AppError::bad_request(
-            "This comes from an address book. Change it there, and Hearth follows.",
+            "This comes from an address book. Change it there, and Mimi follows.",
         ));
     }
     changed(&state);

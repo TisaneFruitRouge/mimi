@@ -1,6 +1,6 @@
-//! The integrations Hearth offers, and which of them can be connected today.
+//! The integrations Mimi offers, and which of them can be connected today.
 
-use hearth_protocol::{Integration, IntegrationCategory, IntegrationStatus};
+use mimi_protocol::{Integration, IntegrationCategory, IntegrationStatus};
 
 /// Integrations whose connection flow exists.
 const AVAILABLE: &[&str] = &["google_calendar", "caldav", "carddav", "telegram"];
@@ -59,7 +59,7 @@ pub fn catalog() -> Vec<Integration> {
             "google_contacts",
             "Google Contacts",
             Contacts,
-            "So Hearth knows who people are and how to reach them.",
+            "So Mimi knows who people are and how to reach them.",
             &["Look up names, numbers and addresses"],
         ),
         item(
@@ -86,21 +86,21 @@ pub fn catalog() -> Vec<Integration> {
             "signal",
             "Signal",
             Messaging,
-            "End-to-end encrypted chat with Hearth.",
+            "End-to-end encrypted chat with Mimi.",
             &["Receive your messages", "Reply to you"],
         ),
         item(
             "matrix",
             "Matrix",
             Messaging,
-            "Chat with Hearth on your own Matrix server.",
+            "Chat with Mimi on your own Matrix server.",
             &["Receive your messages", "Reply to you"],
         ),
         item(
             "whatsapp",
             "WhatsApp",
             Messaging,
-            "Chat with Hearth on WhatsApp.",
+            "Chat with Mimi on WhatsApp.",
             &["Receive your messages", "Reply to you"],
         ),
         item(

@@ -10,7 +10,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use futures::future::BoxFuture;
-use hearth_protocol::{Channel, Event, Person, PersonSummary};
+use mimi_protocol::{Channel, Event, Person, PersonSummary};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 

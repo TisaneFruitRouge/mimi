@@ -47,6 +47,6 @@ jobs:
         run: |
           if [ -n "$(git status --porcelain apps/desktop/src/bindings)" ]; then
             git status --porcelain apps/desktop/src/bindings
-            echo "::error::Run 'cargo test -p hearth-protocol' and commit the regenerated bindings."
+            echo "::error::Run 'cargo test -p mimi-protocol' and commit the regenerated bindings."
             exit 1
           fi

@@ -1,4 +1,4 @@
-use hearth_protocol::{Action, ActionStatus, Conversation, Message, MessageStatus, ModelRef};
+use mimi_protocol::{Action, ActionStatus, Conversation, Message, MessageStatus, ModelRef};
 use rusqlite::{OptionalExtension, Row};
 use uuid::Uuid;
 
@@ -170,7 +170,7 @@ pub async fn mark_interrupted(db: &Db) -> Result<usize, DbError> {
                     ActionStatus::PendingApproval | ActionStatus::Approved | ActionStatus::Running
                 ) {
                     a.status = ActionStatus::Failed;
-                    a.error = Some("Hearth stopped before this finished.".to_owned());
+                    a.error = Some("Mimi stopped before this finished.".to_owned());
                 }
             }
             tx.execute(

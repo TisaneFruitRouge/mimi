@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use futures::StreamExt;
-use hearth_client::{Client, Method};
+use mimi_client::{Client, Method};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
@@ -16,11 +16,11 @@ enum CommandError {
     Other { message: String },
 }
 
-impl From<hearth_client::Error> for CommandError {
-    fn from(err: hearth_client::Error) -> Self {
+impl From<mimi_client::Error> for CommandError {
+    fn from(err: mimi_client::Error) -> Self {
         match err {
-            hearth_client::Error::NotRunning => Self::NotRunning,
-            hearth_client::Error::Api { code, message, .. } => Self::Api { code, message },
+            mimi_client::Error::NotRunning => Self::NotRunning,
+            mimi_client::Error::Api { code, message, .. } => Self::Api { code, message },
             other => Self::Other {
                 message: other.to_string(),
             },

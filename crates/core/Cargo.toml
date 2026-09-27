@@ -1,5 +1,5 @@
 [package]
-name = "hearth-core"
+name = "mimi-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,7 +14,7 @@ chrono = { version = "0.4.45", features = ["serde"] }
 chrono-tz = "0.10.4"
 futures = "0.3.34"
 getrandom = "0.4.3"
-hearth-protocol = { version = "0.1.0", path = "../protocol" }
+mimi-protocol = { version = "0.1.0", path = "../protocol" }
 icalendar = { version = "0.17.13", features = ["recurrence", "chrono-tz"] }
 jiff = "0.2.37"
 keyring = "4.2.0"
@@ -44,5 +44,5 @@ tokio-tungstenite = "0.30.0"
 tower = { version = "0.5.3", features = ["util"] }
 
 [[bin]]
-name = "hearthd"
+name = "mimid"
 path = "src/main.rs"

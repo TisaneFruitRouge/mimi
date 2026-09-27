@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::State;
-use hearth_protocol::{Event, Settings};
+use mimi_protocol::{Event, Settings};
 
 use super::error::{ApiResult, AppError};
 use crate::{AppState, settings};

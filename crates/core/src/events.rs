@@ -1,4 +1,4 @@
-use hearth_protocol::Event;
+use mimi_protocol::Event;
 use tokio::sync::broadcast;
 
 /// Fan-out of daemon events to every connected client. Slow clients that fall more than

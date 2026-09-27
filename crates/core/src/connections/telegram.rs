@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use hearth_protocol::{ConnectionStatus, Event, MessageStatus};
+use mimi_protocol::{ConnectionStatus, Event, MessageStatus};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -18,7 +18,7 @@ use crate::AppState;
 pub const TELEGRAM: &str = "telegram";
 
 /// Overrides the Bot API address, for tests.
-pub const API_ENV: &str = "HEARTH_TELEGRAM_API";
+pub const API_ENV: &str = "MIMI_TELEGRAM_API";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TelegramConfig {
@@ -196,7 +196,7 @@ impl Bot {
     async fn ask_approval(
         &self,
         chat_id: i64,
-        action: &hearth_protocol::Action,
+        action: &mimi_protocol::Action,
     ) -> Result<(), TgError> {
         let id = action.id;
         self.call::<serde_json::Value>(
@@ -405,7 +405,7 @@ async fn handle(
                 let name = crate::settings::load(&state.db)
                     .await
                     .map(|s| s.assistant_name)
-                    .unwrap_or_else(|_| "Hearth".to_owned());
+                    .unwrap_or_else(|_| "Mimi".to_owned());
                 let _ = bot
                     .send(
                         chat.id,
@@ -526,7 +526,7 @@ async fn reply(state: &Arc<AppState>, bot: &Bot, chat_id: i64, conversation: Uui
             event = events.recv() => match event {
                 Ok(Event::MessageUpdated { message }) if message.id == assistant => {
                     for action in &message.actions {
-                        if action.status == hearth_protocol::ActionStatus::PendingApproval && announced.insert(action.id) {
+                        if action.status == mimi_protocol::ActionStatus::PendingApproval && announced.insert(action.id) {
                             let _ = bot.ask_approval(chat_id, action).await;
                         }
                     }
@@ -722,7 +722,7 @@ mod tests {
         assert_eq!(code.len(), 6);
         let config = TelegramConfig {
             bot_token: "t".into(),
-            bot_username: "my_hearth_bot".into(),
+            bot_username: "my_mimi_bot".into(),
             pairing_code: Some("123456".into()),
             owner_chat_id: None,
             owner_name: None,
@@ -731,7 +731,7 @@ mod tests {
         };
         assert_eq!(
             start_link(&config).as_deref(),
-            Some("https://t.me/my_hearth_bot?start=123456")
+            Some("https://t.me/my_mimi_bot?start=123456")
         );
         assert_eq!(describe(&config).0, ConnectionStatus::NeedsAction);
     }

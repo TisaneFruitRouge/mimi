@@ -1,4 +1,4 @@
-# Hearth
+# Mimi
 
 > Working name.
 
@@ -15,7 +15,7 @@ requires it, such as sending a Telegram message or creating a calendar event.
   *on this device*, *on your network* or *cloud*.
 - First-run setup that looks at your hardware, finds local model servers, and
   recommends models that fit.
-- A desktop app and a `hearth` CLI with the same capabilities.
+- A desktop app and a `mimi` CLI with the same capabilities.
 
 ## Goals
 
@@ -35,7 +35,7 @@ Requirements: Rust (stable), Node 22+, pnpm. On Linux, also the
 ```sh
 pnpm install
 pnpm dev              # daemon + desktop app; closing the app or Ctrl+C stops both
-pnpm hearth status    # CLI, talking to the dev daemon
+pnpm mimi status    # CLI, talking to the dev daemon
 pnpm check            # fmt, clippy, tests, typecheck (same as CI)
 ```
 
@@ -44,17 +44,17 @@ pnpm check            # fmt, clippy, tests, typecheck (same as CI)
 ### Web interface
 
 The daemon also serves the app to your browser at `http://127.0.0.1:7437` (loopback
-only; `HEARTH_PORT` changes the port). With the daemon running:
+only; `MIMI_PORT` changes the port). With the daemon running:
 
 ```sh
 pnpm web              # build the frontend, then open it in your browser, signed in
-pnpm hearth open      # just open it (after a build)
+pnpm mimi open      # just open it (after a build)
 ```
 
-Browsers sign in with a single-use link from the desktop app or `hearth open`, which
+Browsers sign in with a single-use link from the desktop app or `mimi open`, which
 sets a session cookie.
 To run the pieces on their own: `pnpm dev:daemon`, `pnpm dev:app`. Set
-`HEARTH_HOME=/some/dir` for any other isolated instance.
+`MIMI_HOME=/some/dir` for any other isolated instance.
 
 See [docs/architecture.md](docs/architecture.md) for how the pieces fit together.
 

@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    hearth_desktop_lib::run()
+    mimi_desktop_lib::run()
 }

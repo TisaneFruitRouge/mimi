@@ -19,7 +19,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            assistant_name: "Hearth".to_owned(),
+            assistant_name: "Mimi".to_owned(),
             default_model: None,
             memory_learning: true,
         }

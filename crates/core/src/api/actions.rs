@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use hearth_protocol::ApproveAction;
+use mimi_protocol::ApproveAction;
 use uuid::Uuid;
 
 use super::error::{ApiResult, AppError};

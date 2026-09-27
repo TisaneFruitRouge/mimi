@@ -1,15 +1,15 @@
 use anyhow::{Context, bail};
 use clap::{Parser, Subcommand};
 use futures::StreamExt;
-use hearth_client::Client;
+use mimi_client::Client;
 use std::io::{BufRead, Write};
 
-use hearth_protocol::{
+use mimi_protocol::{
     ActionStatus, ConnectionSetup, Event, Locality, MessageStatus, ModelRef, NewConversation,
     NewProvider, ProbeRequest, Provider, SendMessage,
 };
 
-/// Command-line interface to your hearth assistant.
+/// Command-line interface to your mimi assistant.
 #[derive(Parser)]
 #[command(version)]
 struct Cli {
@@ -60,7 +60,7 @@ enum ConnectCommand {
     /// A Google calendar, by its "Secret address in iCal format".
     Google { ics_url: String },
     /// A CalDAV account (iCloud, Fastmail, Nextcloud…). The password is read from
-    /// HEARTH_CALDAV_PASSWORD.
+    /// MIMI_CALDAV_PASSWORD.
     Caldav {
         server_url: String,
         username: String,
@@ -93,7 +93,7 @@ async fn main() -> anyhow::Result<()> {
     match Cli::parse().command {
         Command::Status => {
             let status = client.status().await?;
-            println!("hearth {} running", status.version);
+            println!("mimi {} running", status.version);
             println!("  pid          {}", status.pid);
             println!("  uptime       {}s", status.uptime_secs);
             println!("  data dir     {}", status.data_dir.display());
@@ -180,8 +180,8 @@ async fn main() -> anyhow::Result<()> {
                 } => ConnectionSetup::Caldav {
                     server_url,
                     username,
-                    password: std::env::var("HEARTH_CALDAV_PASSWORD")
-                        .context("set HEARTH_CALDAV_PASSWORD to the account's app password")?,
+                    password: std::env::var("MIMI_CALDAV_PASSWORD")
+                        .context("set MIMI_CALDAV_PASSWORD to the account's app password")?,
                 },
                 ConnectCommand::Telegram { bot_token } => ConnectionSetup::Telegram { bot_token },
             };
@@ -251,7 +251,7 @@ async fn main() -> anyhow::Result<()> {
             }
             for s in r.detected_servers.iter().filter(|s| !s.already_added) {
                 println!(
-                    "Found {} running at {}; add it with `hearth providers add {}`.",
+                    "Found {} running at {}; add it with `mimi providers add {}`.",
                     s.name, s.base_url, s.preset_id
                 );
             }
@@ -431,7 +431,7 @@ async fn providers(client: &Client, cmd: ProvidersCommand) -> anyhow::Result<()>
             let provider = client
                 .add_provider(&NewProvider {
                     name,
-                    kind: hearth_protocol::ProviderKind::OpenaiCompatible,
+                    kind: mimi_protocol::ProviderKind::OpenaiCompatible,
                     base_url: probe.base_url,
                     api_key,
                     locality: None,

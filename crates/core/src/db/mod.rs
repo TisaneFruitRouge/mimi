@@ -16,6 +16,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/0006_connections.sql"),
     include_str!("migrations/0007_memory.sql"),
     include_str!("migrations/0008_people.sql"),
+    include_str!("migrations/0009_rename_to_mimi.sql"),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -126,7 +127,7 @@ mod tests {
     #[test]
     fn wrong_key_is_rejected_and_data_is_encrypted() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("hearth.db");
+        let path = dir.path().join("mimi.db");
         let key = "ab".repeat(32);
         {
             let db = Db::open(&path, &key).unwrap();

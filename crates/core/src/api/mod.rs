@@ -8,7 +8,7 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use hearth_protocol::{API_PREFIX, Health, Status};
+use mimi_protocol::{API_PREFIX, Health, Status};
 
 use crate::{AppState, VERSION};
 

@@ -2,7 +2,7 @@
 import type { Channel } from "./Channel";
 
 /**
- * One way to reach a person, and where Hearth learned it.
+ * One way to reach a person, and where Mimi learned it.
  */
 export type Handle = { id: string, channel: Channel, 
 /**

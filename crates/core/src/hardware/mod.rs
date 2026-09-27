@@ -1,6 +1,6 @@
 //! What this machine is, and which models suit it.
 
-use hearth_protocol::{GpuInfo, GpuKind, GpuVendor, HardwareInfo};
+use mimi_protocol::{GpuInfo, GpuKind, GpuVendor, HardwareInfo};
 use sysinfo::{CpuRefreshKind, System};
 
 pub mod recommend;

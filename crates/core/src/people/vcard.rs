@@ -1,7 +1,7 @@
 //! A forgiving vCard (2.1 / 3.0 / 4.0) reader: names, emails, phones and messaging
 //! handles. Address books are full of odd cards; anything unreadable is skipped.
 
-use hearth_protocol::Channel;
+use mimi_protocol::Channel;
 
 use super::{CardHandle, ContactCard};
 

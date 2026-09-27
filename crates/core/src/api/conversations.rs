@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, State};
-use hearth_protocol::{
+use mimi_protocol::{
     Conversation, ConversationDetail, ConversationUpdate, Event, NewConversation, SendMessage,
     SendMessageResult,
 };

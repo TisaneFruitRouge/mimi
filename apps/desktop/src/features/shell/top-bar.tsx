@@ -43,7 +43,7 @@ export function TopBar({
   onPalette: () => void;
   onSettings: () => void;
 }) {
-  const name = useSettings().data?.assistant_name ?? "Hearth";
+  const name = useSettings().data?.assistant_name ?? "Mimi";
   return (
     <header
       data-tauri-drag-region

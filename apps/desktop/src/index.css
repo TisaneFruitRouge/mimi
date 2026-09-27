@@ -4,7 +4,7 @@
 @plugin "@tailwindcss/typography";
 
 /*
- * Hearth's look ("Midnight", light edition), refined toward the calm precision of
+ * Mimi's look ("Midnight", light edition), refined toward the calm precision of
  * macOS/iOS system apps: neutral surfaces, translucent materials, hairline separators,
  * layered soft shadows, Geist type on a strict scale, and a lime signature accent used
  * sparingly. Fixed meanings for where data goes: teal = private, blue = your network,
@@ -45,7 +45,7 @@
     --color-input: var(--input);
     --color-ring: var(--ring);
 
-    /* Hearth-specific */
+    /* Mimi-specific */
     --color-canvas: var(--canvas);
     --color-subtle: var(--subtle);
     --color-fill: var(--fill);

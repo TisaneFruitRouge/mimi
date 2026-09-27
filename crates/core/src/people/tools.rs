@@ -149,7 +149,7 @@ impl Tool for Details {
     }
 }
 
-fn person_json(p: &hearth_protocol::Person) -> Value {
+fn person_json(p: &mimi_protocol::Person) -> Value {
     json!({
         "id": p.id,
         "name": p.name,

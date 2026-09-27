@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
-use hearth_protocol::{Event, ModelPull, PullState};
+use mimi_protocol::{Event, ModelPull, PullState};
 use serde::Deserialize;
 use uuid::Uuid;
 

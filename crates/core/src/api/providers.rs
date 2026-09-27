@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, State};
-use hearth_protocol::{
+use mimi_protocol::{
     Event, ModelInfo, ModelPull, NewProvider, ProbeRequest, ProbeResult, Provider, ProviderPreset,
     ProviderUpdate, PullRequest,
 };

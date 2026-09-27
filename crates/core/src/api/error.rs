@@ -1,7 +1,7 @@
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use hearth_protocol::ApiError;
+use mimi_protocol::ApiError;
 
 use crate::db::DbError;
 

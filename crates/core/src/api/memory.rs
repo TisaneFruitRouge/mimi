@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use hearth_protocol::{
+use mimi_protocol::{
     Event, MemoryLearning, MemoryNote, MemoryNoteEdit, MemoryOverview, MemoryProfileEdit,
     MemorySource,
 };

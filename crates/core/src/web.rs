@@ -15,7 +15,7 @@ use crate::db::{Db, DbError};
 use crate::fsutil::random_hex;
 use crate::now_ms;
 
-pub const SESSION_COOKIE: &str = "hearth_session";
+pub const SESSION_COOKIE: &str = "mimi_session";
 pub const SESSION_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 const LOGIN_CODE_TTL: Duration = Duration::from_secs(120);
 
@@ -137,7 +137,7 @@ mod tests {
     #[test]
     fn parses_cookies_and_hosts() {
         assert_eq!(
-            cookie("a=1; hearth_session=xyz; b=2", SESSION_COOKIE),
+            cookie("a=1; mimi_session=xyz; b=2", SESSION_COOKIE),
             Some("xyz")
         );
         assert_eq!(cookie("a=1", SESSION_COOKIE), None);

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, State};
-use hearth_protocol::{Connection, ConnectionSetup};
+use mimi_protocol::{Connection, ConnectionSetup};
 use uuid::Uuid;
 
 use super::error::{ApiResult, AppError};

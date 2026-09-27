@@ -1,5 +1,5 @@
 //! Development-only tools for exercising the tool engine and approval UI end to end.
-//! Compiled into debug builds only, and registered only when `HEARTH_DEV_TOOLS=1`.
+//! Compiled into debug builds only, and registered only when `MIMI_DEV_TOOLS=1`.
 
 use std::sync::Arc;
 
@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use super::{Tool, ToolContext, ToolSource};
 use crate::AppState;
 
-pub const ENV: &str = "HEARTH_DEV_TOOLS";
+pub const ENV: &str = "MIMI_DEV_TOOLS";
 
 pub struct DevTools;
 

@@ -7,7 +7,7 @@ use axum::Json;
 use axum::extract::{Extension, Query, Request, State};
 use axum::http::{HeaderValue, Method, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Redirect, Response};
-use hearth_protocol::WebLoginLink;
+use mimi_protocol::WebLoginLink;
 use rust_embed::RustEmbed;
 
 use super::Auth;
@@ -59,8 +59,8 @@ pub async fn login(
             [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
             page(
                 "This link has expired",
-                "Login links work once and only for two minutes. Open Hearth in your browser \
-                 again from the desktop app, or run <code>hearth open</code>.",
+                "Login links work once and only for two minutes. Open Mimi in your browser \
+                 again from the desktop app, or run <code>mimi open</code>.",
             ),
         )
             .into_response();
@@ -148,7 +148,7 @@ fn page(title: &str, body: &str) -> String {
     format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-         <title>Hearth</title><style>body{{font-family:system-ui,sans-serif;max-width:32rem;\
+         <title>Mimi</title><style>body{{font-family:system-ui,sans-serif;max-width:32rem;\
          margin:20vh auto;padding:0 1.5rem;line-height:1.5;color:#222}}\
          @media(prefers-color-scheme:dark){{body{{background:#111;color:#ddd}}}}\
          code{{background:#8882;padding:.1em .3em;border-radius:4px}}</style></head>\

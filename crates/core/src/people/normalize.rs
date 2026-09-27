@@ -1,7 +1,7 @@
 //! Turning handles into comparable identities. Two cards are the same person when
 //! they share a match key; names never count, since many people share one.
 
-use hearth_protocol::Channel;
+use mimi_protocol::Channel;
 
 /// Cleans a value for display and storage, e.g. strips `mailto:` or `tel:`.
 pub fn clean(channel: Channel, value: &str) -> String {

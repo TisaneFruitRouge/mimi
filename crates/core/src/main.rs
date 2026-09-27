@@ -1,4 +1,4 @@
-use hearth_protocol::Paths;
+use mimi_protocol::Paths;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -8,5 +8,5 @@ async fn main() -> anyhow::Result<()> {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
-    hearth_core::daemon::run(Paths::resolve()?).await
+    mimi_core::daemon::run(Paths::resolve()?).await
 }

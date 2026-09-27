@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use hearth_protocol::{Connection, ConnectionSetup, ConnectionStatus, Event};
+use mimi_protocol::{Connection, ConnectionSetup, ConnectionStatus, Event};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -178,7 +178,7 @@ pub async fn create(state: &Arc<AppState>, setup: ConnectionSetup) -> Result<Con
             let url =
                 crate::providers::parse_base_url(&server_url).map_err(AppError::bad_request)?;
             if url.scheme() != "https"
-                && crate::providers::locality_of(&url) == hearth_protocol::Locality::Cloud
+                && crate::providers::locality_of(&url) == mimi_protocol::Locality::Cloud
             {
                 return Err(AppError::bad_request(
                     "Use an https:// address, so your password isn't sent unencrypted.",

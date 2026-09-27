@@ -1,4 +1,4 @@
-use hearth_protocol::Channel;
+use mimi_protocol::Channel;
 
 use super::store::{self, SourceNames};
 use super::{CardHandle, ContactCard};
@@ -257,7 +257,7 @@ async fn removed_connections_take_their_contacts_along() {
 
 #[test]
 fn search_ranks_names_nicknames_and_numbers() {
-    use hearth_protocol::PersonSummary;
+    use mimi_protocol::PersonSummary;
     let p = |name: &str, nick: Option<&str>, values: &[&str]| store::Indexed {
         summary: PersonSummary {
             id: uuid::Uuid::now_v7(),

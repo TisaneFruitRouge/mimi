@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::Response;
-use hearth_protocol::Event;
+use mimi_protocol::Event;
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::AppState;

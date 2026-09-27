@@ -77,8 +77,8 @@ async fn settings_round_trip_and_validate() {
     let app = app();
     let (status, body) = call(&app, Method::GET, "/v1/settings", None).await;
     assert_eq!(status, StatusCode::OK);
-    let mut settings: hearth_protocol::Settings = parse(body);
-    assert_eq!(settings.assistant_name, "Hearth");
+    let mut settings: mimi_protocol::Settings = parse(body);
+    assert_eq!(settings.assistant_name, "Mimi");
 
     settings.assistant_name = "  Ember ".into();
     let (status, _) = call(
@@ -91,7 +91,7 @@ async fn settings_round_trip_and_validate() {
     assert_eq!(status, StatusCode::OK);
     let (_, body) = call(&app, Method::GET, "/v1/settings", None).await;
     assert_eq!(
-        parse::<hearth_protocol::Settings>(body).assistant_name,
+        parse::<mimi_protocol::Settings>(body).assistant_name,
         "Ember"
     );
 
@@ -138,7 +138,7 @@ async fn events_require_token_and_deliver_changes() {
     );
     let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
 
-    let settings = hearth_protocol::Settings {
+    let settings = mimi_protocol::Settings {
         assistant_name: "Ember".into(),
         ..Default::default()
     };
@@ -156,8 +156,8 @@ async fn events_require_token_and_deliver_changes() {
         .unwrap()
         .unwrap()
         .unwrap();
-    let event: hearth_protocol::Event = serde_json::from_str(frame.to_text().unwrap()).unwrap();
-    assert_eq!(event, hearth_protocol::Event::SettingsChanged { settings });
+    let event: mimi_protocol::Event = serde_json::from_str(frame.to_text().unwrap()).unwrap();
+    assert_eq!(event, mimi_protocol::Event::SettingsChanged { settings });
 }
 
 /// A fake OpenAI-compatible server that streams `chunks` as content deltas, waiting
@@ -262,7 +262,7 @@ impl Harness {
                 reqwest::Method::PUT,
                 "/settings",
                 serde_json::json!({
-                    "assistant_name": "Hearth",
+                    "assistant_name": "Mimi",
                     "default_model": {"provider_id": provider["id"], "model": "mock-model"}
                 }),
             )
@@ -271,7 +271,7 @@ impl Harness {
     }
 
     /// Waits for the assistant message to leave `streaming`, collecting the deltas seen.
-    async fn wait_for_reply(&mut self, message_id: &str) -> (hearth_protocol::Message, String) {
+    async fn wait_for_reply(&mut self, message_id: &str) -> (mimi_protocol::Message, String) {
         let mut deltas = String::new();
         loop {
             let frame = tokio::time::timeout(std::time::Duration::from_secs(10), self.ws.next())
@@ -279,17 +279,17 @@ impl Harness {
                 .expect("timed out waiting for the reply")
                 .unwrap()
                 .unwrap();
-            let event: hearth_protocol::Event =
+            let event: mimi_protocol::Event =
                 serde_json::from_str(frame.to_text().unwrap()).unwrap();
             match event {
-                hearth_protocol::Event::MessageDelta {
+                mimi_protocol::Event::MessageDelta {
                     message_id: id,
                     content,
                     ..
                 } if id.to_string() == message_id => deltas += &content,
-                hearth_protocol::Event::MessageUpdated { message }
+                mimi_protocol::Event::MessageUpdated { message }
                     if message.id.to_string() == message_id
-                        && message.status != hearth_protocol::MessageStatus::Streaming =>
+                        && message.status != mimi_protocol::MessageStatus::Streaming =>
                 {
                     return (message, deltas);
                 }
@@ -330,7 +330,7 @@ async fn chat_streams_reply_and_saves_it() {
 
     let assistant_id = sent["assistant_message"]["id"].as_str().unwrap().to_owned();
     let (reply, deltas) = h.wait_for_reply(&assistant_id).await;
-    assert_eq!(reply.status, hearth_protocol::MessageStatus::Complete);
+    assert_eq!(reply.status, mimi_protocol::MessageStatus::Complete);
     assert_eq!(reply.content, "Hello there!");
     assert_eq!(reply.reasoning, "User greets me.");
     assert_eq!(deltas, "Hello there!");
@@ -342,7 +342,7 @@ async fn chat_streams_reply_and_saves_it() {
             serde_json::Value::Null,
         )
         .await;
-    let detail: hearth_protocol::ConversationDetail = parse(detail);
+    let detail: mimi_protocol::ConversationDetail = parse(detail);
     assert_eq!(detail.conversation.title, "Hi, who are you?");
     let contents: Vec<_> = detail.messages.iter().map(|m| m.content.as_str()).collect();
     assert_eq!(contents, ["Hi, who are you?", "Hello there!"]);
@@ -388,7 +388,7 @@ async fn chat_reply_can_be_cancelled() {
     .await;
     let assistant_id = sent["assistant_message"]["id"].as_str().unwrap().to_owned();
     let (reply, _) = h.wait_for_reply(&assistant_id).await;
-    assert_eq!(reply.status, hearth_protocol::MessageStatus::Cancelled);
+    assert_eq!(reply.status, mimi_protocol::MessageStatus::Cancelled);
     assert!(reply.content.starts_with("word"));
     assert!(reply.content.len() < 200 * 5);
 }
@@ -645,7 +645,7 @@ mod tool_use {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use futures::future::BoxFuture;
-    use hearth_protocol::{ActionStatus, Event, MessageStatus};
+    use mimi_protocol::{ActionStatus, Event, MessageStatus};
     use serde_json::{Value, json};
 
     use super::*;
@@ -1084,7 +1084,7 @@ mod tool_use {
         crate::chat::store::upsert_conversation(&db, conv.clone())
             .await
             .unwrap();
-        let pending = hearth_protocol::Action {
+        let pending = mimi_protocol::Action {
             id: uuid::Uuid::now_v7(),
             tool: "send_note".into(),
             summary: "Send".into(),
@@ -1098,10 +1098,10 @@ mod tool_use {
             round: 0,
             content_offset: 0,
         };
-        let message = hearth_protocol::Message {
+        let message = mimi_protocol::Message {
             id: uuid::Uuid::now_v7(),
             conversation_id: conv.id,
-            role: hearth_protocol::MessageRole::Assistant,
+            role: mimi_protocol::MessageRole::Assistant,
             content: String::new(),
             reasoning: String::new(),
             status: MessageStatus::Streaming,
@@ -1198,7 +1198,7 @@ mod tool_use {
     #[tokio::test]
     async fn memories_are_recalled_into_the_prompt_and_writes_can_be_undone() {
         use crate::memory::{PROFILE_PATH, store};
-        use hearth_protocol::MemorySource;
+        use mimi_protocol::MemorySource;
 
         let llm = scripted_llm(|_, n| match n {
             0 => Reply::Call(
@@ -1384,7 +1384,7 @@ mod tool_use {
         assert!(!profile.body.contains("4111"), "secrets must be dropped");
         let lea = store::get(db, "people/léa.md").await.unwrap().unwrap();
         assert!(lea.body.contains("nurse"));
-        assert_eq!(lea.source, hearth_protocol::MemorySource::Learned);
+        assert_eq!(lea.source, mimi_protocol::MemorySource::Learned);
 
         // Nothing new since: the next pass has nothing to read.
         let before = llm.requests().len();
@@ -1644,7 +1644,7 @@ mod fake_telegram {
             return Json(json!({ "ok": false, "error_code": 401, "description": "Unauthorized" }));
         }
         let result = match method.as_str() {
-            "getMe" => json!({ "username": "test_hearth_bot", "first_name": "Test" }),
+            "getMe" => json!({ "username": "test_mimi_bot", "first_name": "Test" }),
             "getUpdates" => {
                 let offset = body["offset"].as_i64().unwrap_or(0);
                 let pending: Vec<Value> = fake
@@ -1705,7 +1705,7 @@ async fn telegram_bot_pairs_with_its_owner_and_relays_replies() {
     assert_eq!(conn["status"], "needs_action");
     let link = conn["action_url"].as_str().unwrap().to_owned();
     let code = link.rsplit("start=").next().unwrap().to_owned();
-    assert!(link.starts_with("https://t.me/test_hearth_bot?start="));
+    assert!(link.starts_with("https://t.me/test_mimi_bot?start="));
 
     // A stranger can't claim the bot, even knowing it exists.
     tg.message(99, "Mallory", "/start 000000");

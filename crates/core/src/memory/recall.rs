@@ -139,7 +139,7 @@ const STOPWORDS: &[&str] = &[
 
 #[cfg(test)]
 mod tests {
-    use hearth_protocol::MemorySource;
+    use mimi_protocol::MemorySource;
 
     use super::*;
 

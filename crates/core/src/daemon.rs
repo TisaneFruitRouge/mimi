@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
-use hearth_protocol::{Discovery, Paths};
+use mimi_protocol::{Discovery, Paths};
 use tokio::net::TcpListener;
 
 use crate::fsutil::{random_hex, write_private};
@@ -23,7 +23,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
 
     if let Some(existing) = running_instance(&paths) {
         bail!(
-            "hearth is already running (pid {}, port {})",
+            "mimi is already running (pid {}, port {})",
             existing.pid,
             existing.port
         );
@@ -32,7 +32,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
     let (db, key_storage) = {
         let paths = paths.clone();
         tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
-            let db_path = paths.data_dir.join("hearth.db");
+            let db_path = paths.data_dir.join("mimi.db");
+            rename_legacy_database(&paths.data_dir, &db_path)?;
             let key = keys::load_or_create(&paths, db_path.exists())?;
             let db = db::Db::open(&db_path, &key.hex)
                 .with_context(|| format!("opening {}", db_path.display()))?;
@@ -87,7 +88,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
             .tool_sources
             .add(Arc::new(crate::tools::dev::DevTools));
     }
-    tracing::info!(port, "hearth daemon listening on 127.0.0.1");
+    tracing::info!(port, "mimi daemon listening on 127.0.0.1");
 
     state
         .tool_sources
@@ -110,7 +111,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
 /// Default port, so the web interface has a stable address.
 pub const DEFAULT_PORT: u16 = 7437;
 /// Overrides the port.
-pub const PORT_ENV: &str = "HEARTH_PORT";
+pub const PORT_ENV: &str = "MIMI_PORT";
 
 /// Binds loopback only; remote access will be a separate, explicitly enabled listener.
 /// Falls back to a random port if the preferred one is taken.
@@ -131,6 +132,28 @@ async fn bind() -> anyhow::Result<TcpListener> {
             Ok(TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?)
         }
     }
+}
+
+/// Databases created before the rename from Hearth are called `hearth.db`; move them
+/// (with their WAL and shared-memory files) to the current name. The old daemon must be
+/// stopped, which the single-instance check above guarantees.
+fn rename_legacy_database(
+    data_dir: &std::path::Path,
+    db_path: &std::path::Path,
+) -> anyhow::Result<()> {
+    let legacy = data_dir.join("hearth.db");
+    if db_path.exists() || !legacy.exists() {
+        return Ok(());
+    }
+    for suffix in ["-wal", "-shm"] {
+        let from = data_dir.join(format!("hearth.db{suffix}"));
+        if from.exists() {
+            fs::rename(&from, data_dir.join(format!("mimi.db{suffix}")))?;
+        }
+    }
+    fs::rename(&legacy, db_path)?;
+    tracing::info!("renamed the database from hearth.db to mimi.db");
+    Ok(())
 }
 
 /// A previous daemon's discovery file, if that daemon still accepts connections.

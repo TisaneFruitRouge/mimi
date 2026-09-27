@@ -1,8 +1,8 @@
-//! Types shared between the hearth daemon and every client (desktop app, CLI, TUI).
+//! Types shared between the mimi daemon and every client (desktop app, CLI, TUI).
 //!
 //! Anything that crosses the daemon's API boundary lives here, so clients can't drift
 //! from what the daemon actually serves. Types deriving `TS` are exported to
-//! `apps/desktop/src/bindings` by `cargo test -p hearth-protocol`.
+//! `apps/desktop/src/bindings` by `cargo test -p mimi-protocol`.
 
 use std::path::PathBuf;
 

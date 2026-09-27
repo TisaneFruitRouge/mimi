@@ -221,7 +221,7 @@ pub async fn create(target: &Target, event: &NewEvent) -> Result<Created, String
             url: google_template_link(event),
         }),
         Target::CalDav { config, calendar } => {
-            let uid = format!("{}@hearth", uuid::Uuid::now_v7());
+            let uid = format!("{}@mimi", uuid::Uuid::now_v7());
             let url = Url::parse(&calendar.url).map_err(|e| e.to_string())?;
             CalDav::new(&config.username, &config.password)
                 .create(&url, &uid, to_ics(&uid, event))
@@ -329,7 +329,7 @@ mod tests {
             location: None,
             notes: Some("Bring the insurance card".into()),
         };
-        let data = to_ics("x@hearth", &event);
+        let data = to_ics("x@mimi", &event);
         let back = ics::events_between(
             &data,
             "Cal",

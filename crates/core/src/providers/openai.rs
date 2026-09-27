@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use futures::stream::BoxStream;
 use futures::{StreamExt, TryStreamExt};
-use hearth_protocol::ModelInfo;
+use mimi_protocol::ModelInfo;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 

@@ -2,7 +2,7 @@
 //! model can rely on.
 
 use chrono::{DateTime, Duration, Local, TimeZone, Utc};
-use hearth_protocol::{Mention, MentionCandidate, MentionKind};
+use mimi_protocol::{Mention, MentionCandidate, MentionKind};
 
 use crate::AppState;
 use crate::connections::calendar::ics::CalEvent;

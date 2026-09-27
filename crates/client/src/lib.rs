@@ -1,9 +1,9 @@
-//! Typed client for the hearth daemon's local API. Every frontend (desktop, CLI, TUI)
+//! Typed client for the mimi daemon's local API. Every frontend (desktop, CLI, TUI)
 //! goes through this crate, which keeps them at feature parity by construction.
 
 use futures::StreamExt;
 use futures::stream::BoxStream;
-use hearth_protocol::{
+use mimi_protocol::{
     API_PREFIX, ApiError, Connection, ConnectionSetup, Conversation, ConversationDetail, Discovery,
     Event, HardwareInfo, Health, ModelInfo, NewConversation, NewProvider, Paths, ProbeRequest,
     ProbeResult, Provider, ProviderPreset, Recommendations, SendMessage, SendMessageResult,
@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("the hearth daemon is not running")]
+    #[error("the mimi daemon is not running")]
     NotRunning,
     #[error("the daemon rejected our credentials")]
     Unauthorized,
@@ -29,7 +29,7 @@ pub enum Error {
         message: String,
     },
     #[error(transparent)]
-    Paths(#[from] hearth_protocol::paths::NoHomeDir),
+    Paths(#[from] mimi_protocol::paths::NoHomeDir),
     #[error("request to the daemon failed: {0}")]
     Http(#[from] reqwest::Error),
     #[error("event stream failed: {0}")]
@@ -176,7 +176,7 @@ impl Client {
         self.send(
             Method::POST,
             &format!("/actions/{id}/approve"),
-            Some(hearth_protocol::ApproveAction { arguments }),
+            Some(mimi_protocol::ApproveAction { arguments }),
         )
         .await
     }

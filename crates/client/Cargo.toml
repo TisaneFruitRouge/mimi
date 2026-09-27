@@ -1,5 +1,5 @@
 [package]
-name = "hearth-client"
+name = "mimi-client"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,7 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 futures = "0.3.34"
-hearth-protocol = { version = "0.1.0", path = "../protocol" }
+mimi-protocol = { version = "0.1.0", path = "../protocol" }
 reqwest = { version = "0.13.5", default-features = false, features = ["json"] }
 serde = "1.0.229"
 serde_json = "1.0.151"
