@@ -143,15 +143,31 @@ impl DaemonProcess {
                     *lock(&self.owner) = Owner::Service;
                     return;
                 }
-                self.spawn_child(&spec);
+                self.spawn_child();
                 *lock(&self.owner) = Owner::App;
             }
-            Err(e) => eprintln!("mimi: can't start the assistant: {e}"),
+            Err(e) => {
+                eprintln!("mimi: no background service here ({e}); running the assistant myself");
+                self.spawn_child();
+                *lock(&self.owner) = Owner::App;
+            }
         }
     }
 
     /// Runs the daemon as a child, logging to `daemon.log` in its data directory.
-    fn spawn_child(&self, spec: &Spec) {
+    ///
+    /// Always the bundled `mimid` itself, never the service's launch command: from an
+    /// AppImage that command is the AppImage (for a service that outlives the app),
+    /// and a child only lives as long as the app anyway. It inherits the app's
+    /// environment (`MIMI_HOME`, `MIMI_PORT`…).
+    fn spawn_child(&self) {
+        let Some(binary) = mimi_service::daemon_binary() else {
+            eprintln!(
+                "mimi: can't start the assistant: {}",
+                mimi_service::Error::NoBinary
+            );
+            return;
+        };
         let log = Paths::resolve().ok().and_then(|p| {
             let _ = std::fs::create_dir_all(&p.data_dir);
             OpenOptions::new()
@@ -164,14 +180,14 @@ impl DaemonProcess {
             Some((f, g)) => (Stdio::from(f), Stdio::from(g)),
             None => (Stdio::null(), Stdio::null()),
         };
-        match Command::new(&spec.binary)
+        match Command::new(&binary)
             .stdin(Stdio::null())
             .stdout(out)
             .stderr(err)
             .spawn()
         {
             Ok(child) => *lock(&self.child) = Some(child),
-            Err(e) => eprintln!("mimi: couldn't start {}: {e}", spec.binary.display()),
+            Err(e) => eprintln!("mimi: couldn't start {}: {e}", binary.display()),
         }
     }
 
@@ -195,9 +211,7 @@ impl DaemonProcess {
                 continue;
             }
             recent.push(Instant::now());
-            if let Ok(spec) = spec() {
-                self.spawn_child(&spec);
-            }
+            self.spawn_child();
         }
     }
 
@@ -281,7 +295,7 @@ impl DaemonProcess {
             .map_err(|e| e.to_string())?;
             if let Err(e) = installed {
                 // Don't leave the user without an assistant.
-                self.spawn_child(&spec);
+                self.spawn_child();
                 *lock(&self.owner) = Owner::App;
                 return Err(e.to_string());
             }
@@ -296,7 +310,7 @@ impl DaemonProcess {
             .map_err(|e| e.to_string())?
             .map_err(|e| e.to_string())?;
             wait_until(false, Duration::from_secs(10)).await;
-            self.spawn_child(&spec);
+            self.spawn_child();
             *lock(&self.owner) = Owner::App;
             wait_until(true, Duration::from_secs(15)).await;
         }
