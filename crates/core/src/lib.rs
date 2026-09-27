@@ -15,6 +15,7 @@ mod fsutil;
 pub mod hardware;
 pub mod integrations;
 pub mod keys;
+pub mod mail;
 pub mod memory;
 pub mod people;
 pub mod providers;
@@ -56,6 +57,8 @@ pub struct AppState {
     pub downloads: runtime::download::Downloads,
     /// Reminders and routines: the wake-up signal and caches.
     pub scheduler: schedule::Scheduler,
+    /// Email: sync wake-ups and the sorting queue.
+    pub mail: mail::Mail,
 }
 
 impl AppState {
@@ -90,6 +93,7 @@ impl AppState {
             runtime: runtime::Runtime::with_binary(None),
             downloads: Default::default(),
             scheduler: Default::default(),
+            mail: Default::default(),
         }
     }
 }

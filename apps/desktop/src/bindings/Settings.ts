@@ -39,4 +39,9 @@ desktop_notifications: boolean,
  * Whether memories are also found by meaning, not only by their words ("my sibling"
  * finds the note about a sister). Needs a small language file on this computer.
  */
-memory_semantic: boolean, };
+memory_semantic: boolean, 
+/**
+ * Whether new mail is sorted (needs a reply / important / everything else) and
+ * summarised in the background by the active model.
+ */
+mail_sorting: boolean, };

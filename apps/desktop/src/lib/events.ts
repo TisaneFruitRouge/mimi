@@ -97,6 +97,12 @@ function apply(qc: QueryClient, event: Event) {
       qc.setQueryData(keys.connections, event.connections);
       qc.invalidateQueries({ queryKey: keys.integrations });
       qc.invalidateQueries({ queryKey: keys.calendar });
+      qc.invalidateQueries({ queryKey: keys.mail });
+      break;
+    case "mail_changed":
+      qc.invalidateQueries({ queryKey: keys.mail });
+      // "Recent emails" on people's pages.
+      qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "people" && q.queryKey[3] === "mail" });
       break;
     case "people_changed":
       qc.invalidateQueries({ queryKey: keys.people });

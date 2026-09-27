@@ -11,6 +11,7 @@ import {
   Eye,
   Loader2,
   Lock,
+  Mail,
   Radar,
   Send,
   Sparkles,
@@ -501,6 +502,13 @@ function Connect({ onNext, onBack }: { onNext: () => void; onBack: () => void })
       tone: "bg-event-soft text-event",
       title: "Your calendar",
       detail: "So I know your plans and can add events when you ask. Google, iCloud and others.",
+    },
+    {
+      kinds: ["email"],
+      icon: Mail,
+      tone: "bg-[#efe9fb] text-[#6146ad]",
+      title: "Your email",
+      detail: "So I can sort what needs a reply and draft answers. Nothing is sent without your OK.",
     },
     {
       kinds: ["telegram"],

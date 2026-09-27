@@ -33,11 +33,19 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 uuid = { version = "1.26.1", features = ["v7", "serde"] }
 notify-rust = "4.17.0"
+async-imap = { version = "0.11.3", default-features = false, features = ["runtime-tokio"] }
+mail-parser = "0.11.9"
+html2text = "0.17.1"
+lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "tokio1", "tokio1-rustls", "builder", "rustls-platform-verifier", "aws-lc-rs"] }
+tokio-rustls = "0.26"
+rustls = "0.23"
+rustls-platform-verifier = "0.7"
 
 [lints]
 workspace = true
 
 [dev-dependencies]
+base64 = "0.22.1"
 http-body-util = "0.1.5"
 reqwest = { version = "0.13.5", default-features = false, features = ["json"] }
 tempfile = "3.27.0"

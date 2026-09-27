@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import QRCode from "qrcode";
 import { CircleCheck, ExternalLink, Loader2, Lock, TriangleAlert } from "lucide-react";
 import { cn } from "cn";
 
 import type { Connection } from "@/bindings/Connection";
 import type { ConnectionSetup } from "@/bindings/ConnectionSetup";
+import type { MailSecurity } from "@/bindings/MailSecurity";
+import type { MailServers } from "@/bindings/MailServers";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -16,11 +19,12 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { api } from "@/lib/api";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { api, keys } from "@/lib/api";
 import { useConnections } from "@/lib/queries";
 import { openExternal } from "@/lib/transport";
 
-export type ConnectKind = "google_calendar" | "caldav" | "telegram";
+export type ConnectKind = "google_calendar" | "caldav" | "telegram" | "email";
 
 export function ConnectDialog({ kind, onClose }: { kind: ConnectKind | null; onClose: () => void }) {
   return (
@@ -29,6 +33,7 @@ export function ConnectDialog({ kind, onClose }: { kind: ConnectKind | null; onC
         {kind === "google_calendar" && <GoogleCalendar onDone={onClose} />}
         {kind === "caldav" && <CalDav onDone={onClose} />}
         {kind === "telegram" && <Telegram onDone={onClose} />}
+        {kind === "email" && <EmailAccount onDone={onClose} />}
       </DialogContent>
     </Dialog>
   );
@@ -400,6 +405,226 @@ function TelegramPairing({ connection }: { connection: Connection }) {
             <Loader2 className="size-3.5 animate-spin" /> Waiting for you to press Start…
           </span>
         </div>
+      </div>
+    </>
+  );
+}
+
+/** The services offered by the connect form, in this order; Outlook only shows when typed. */
+const mailServiceOrder = ["icloud", "gmail", "fastmail", "proton", "other"];
+
+/** The service an address belongs to, as the daemon guesses it. */
+function guessMailService(email: string): string | null {
+  const domain = email.split("@")[1]?.trim().toLowerCase() ?? "";
+  if (!domain) return null;
+  if (["gmail.com", "googlemail.com"].includes(domain)) return "gmail";
+  if (["icloud.com", "me.com", "mac.com"].includes(domain)) return "icloud";
+  if (domain.startsWith("fastmail.") || domain === "sent.com") return "fastmail";
+  if (["proton.me", "protonmail.com", "protonmail.ch", "pm.me"].includes(domain)) return "proton";
+  if (/^(outlook|hotmail|live)\./.test(domain) || domain === "msn.com") return "outlook";
+  return null;
+}
+
+const securityLabels: Record<MailSecurity, string> = {
+  tls: "SSL/TLS",
+  start_tls: "STARTTLS",
+  plain: "None (this computer only)",
+};
+
+function EmailAccount({ onDone }: { onDone: () => void }) {
+  const presets =
+    useQuery({ queryKey: keys.mailPresets, queryFn: api.mailPresets, staleTime: Infinity }).data ?? [];
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [picked, setPicked] = useState<string | null>(null);
+  const [servers, setServers] = useState<MailServers>({
+    imap_host: "",
+    imap_port: 993,
+    imap_security: "tls",
+    smtp_host: "",
+    smtp_port: 465,
+    smtp_security: "tls",
+    username: null,
+  });
+  const { busy, error, created, connect } = useConnect();
+
+  if (created) return <Done connection={created} onDone={onDone} />;
+
+  const guessed = guessMailService(email);
+  const serviceId = picked ?? guessed ?? "icloud";
+  const service = presets.find((p) => p.id === serviceId);
+  const unsupported = !!service && !service.supported;
+  const custom = serviceId === "other";
+  const ready =
+    email.includes("@") &&
+    password.length > 0 &&
+    !unsupported &&
+    (!custom || (servers.imap_host.trim() !== "" && servers.smtp_host.trim() !== ""));
+  const set = (patch: Partial<MailServers>) => setServers((s) => ({ ...s, ...patch }));
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>Connect your email</DialogTitle>
+        <DialogDescription>
+          Your assistant reads, sorts and drafts replies. Nothing is sent without your OK.
+        </DialogDescription>
+      </DialogHeader>
+      <form
+        className="flex flex-col gap-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!ready) return;
+          connect({ integration: "email", email, password, preset: serviceId, servers: custom ? servers : null });
+        }}
+      >
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="mail-address">Email address</Label>
+          <Input
+            id="mail-address"
+            type="email"
+            value={email}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              setPicked(null);
+            }}
+            placeholder="you@example.com"
+            autoComplete="off"
+            autoFocus
+          />
+        </div>
+        {serviceId !== "outlook" && (
+          <div className="grid grid-cols-5 rounded-[10px] bg-fill p-[3px]" role="radiogroup" aria-label="Mail service">
+            {mailServiceOrder.map((id) => {
+              const p = presets.find((x) => x.id === id);
+              if (!p) return null;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  role="radio"
+                  aria-checked={id === serviceId}
+                  onClick={() => setPicked(id)}
+                  className={cn(
+                    "h-7 truncate rounded-[7px] px-1 text-[13px] font-medium transition-all duration-200",
+                    id === serviceId
+                      ? "bg-background text-foreground shadow-[0_0_0_0.5px_rgb(0_0_0/0.06),0_1px_3px_rgb(0_0_0/0.12)]"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {p.name.replace(" Mail", "")}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {unsupported ? (
+          <Note icon="warn">{service.help}</Note>
+        ) : (
+          <>
+            {custom && <CustomServers servers={servers} set={set} />}
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="mail-password">App password</Label>
+              <Input
+                id="mail-password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="off"
+              />
+              {service && (
+                <p className="type-subhead text-muted-foreground">
+                  {service.help}{" "}
+                  {service.help_url && (
+                    <button
+                      type="button"
+                      className="font-medium text-foreground underline underline-offset-2"
+                      onClick={() => openExternal(service.help_url!)}
+                    >
+                      Open
+                    </button>
+                  )}
+                </p>
+              )}
+            </div>
+          </>
+        )}
+        {error && <p className="type-subhead text-destructive">{error}</p>}
+        <DialogFooter>
+          <Button type="submit" disabled={busy || !ready}>
+            {busy && <Loader2 className="animate-spin" />} {busy ? "Checking…" : "Connect"}
+          </Button>
+        </DialogFooter>
+      </form>
+      <Note>
+        Your password is stored encrypted on this computer and only sent to your mail service. The
+        last 90 days of mail are copied here, so your assistant can search and sort it without
+        sending it anywhere else.
+      </Note>
+    </>
+  );
+}
+
+function CustomServers({ servers, set }: { servers: MailServers; set: (patch: Partial<MailServers>) => void }) {
+  const server = (kind: "imap" | "smtp", label: string) => {
+    const host = kind === "imap" ? servers.imap_host : servers.smtp_host;
+    const port = kind === "imap" ? servers.imap_port : servers.smtp_port;
+    const security = kind === "imap" ? servers.imap_security : servers.smtp_security;
+    return (
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor={`mail-${kind}`}>{label}</Label>
+        <div className="flex gap-2">
+          <Input
+            id={`mail-${kind}`}
+            value={host}
+            onChange={(e) => set(kind === "imap" ? { imap_host: e.target.value } : { smtp_host: e.target.value })}
+            placeholder={kind === "imap" ? "imap.example.com" : "smtp.example.com"}
+            className="min-w-0 flex-1 text-[14px]"
+          />
+          <Input
+            value={port}
+            inputMode="numeric"
+            aria-label={`${label} port`}
+            onChange={(e) => {
+              const n = Number(e.target.value.replace(/\D/g, "")) || 0;
+              set(kind === "imap" ? { imap_port: n } : { smtp_port: n });
+            }}
+            className="w-[72px] text-[14px] tabular-nums"
+          />
+          <Select
+            value={security}
+            onValueChange={(v) =>
+              set(kind === "imap" ? { imap_security: v as MailSecurity } : { smtp_security: v as MailSecurity })
+            }
+          >
+            <SelectTrigger className="w-[132px]" aria-label={`${label} encryption`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(Object.keys(securityLabels) as MailSecurity[]).map((s) => (
+                <SelectItem key={s} value={s}>
+                  {securityLabels[s]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+    );
+  };
+  return (
+    <>
+      {server("imap", "Incoming mail server (IMAP)")}
+      {server("smtp", "Outgoing mail server (SMTP)")}
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="mail-username">Login name</Label>
+        <Input
+          id="mail-username"
+          value={servers.username ?? ""}
+          onChange={(e) => set({ username: e.target.value || null })}
+          placeholder="Only if it isn't your email address"
+          autoComplete="off"
+        />
       </div>
     </>
   );

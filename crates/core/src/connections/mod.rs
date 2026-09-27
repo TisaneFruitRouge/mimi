@@ -1,4 +1,4 @@
-//! Links to the user's own accounts: calendars and messaging. Every connection is
+//! Links to the user's own accounts: calendars, messaging and email. Every connection is
 //! checked against the real service before it's saved, and its secrets stay in the
 //! encrypted database.
 
@@ -136,6 +136,7 @@ fn describe(row: &ConnectionRow) -> LiveStatus {
                 "Unreadable settings".to_owned(),
                 None,
             )),
+        crate::mail::EMAIL => (ConnectionStatus::Ok, crate::mail::DETAIL.to_owned(), None),
         _ => (
             ConnectionStatus::Error,
             "Unknown integration".to_owned(),
@@ -231,6 +232,26 @@ pub async fn create(state: &Arc<AppState>, setup: ConnectionSetup) -> Result<Con
                 serde_json::to_value(config),
             )
         }
+        ConnectionSetup::Email {
+            email,
+            password,
+            preset,
+            servers,
+        } => {
+            let (name, config) = crate::mail::connect(email, password, preset, servers)
+                .await
+                .map_err(AppError::bad_request)?;
+            let taken = store::list(&state.db)
+                .await?
+                .into_iter()
+                .any(|r| r.integration == crate::mail::EMAIL && r.name.eq_ignore_ascii_case(&name));
+            if taken {
+                return Err(AppError::bad_request(
+                    "That email account is already connected.",
+                ));
+            }
+            (crate::mail::EMAIL, name, serde_json::to_value(config))
+        }
     };
     let row = ConnectionRow {
         id: Uuid::now_v7(),
@@ -256,12 +277,16 @@ pub async fn create(state: &Arc<AppState>, setup: ConnectionSetup) -> Result<Con
 
 pub async fn delete(state: &AppState, id: Uuid) -> Result<bool, DbError> {
     state.connections.stop(id);
-    if let Ok(Some(row)) = store::get(&state.db, id).await
-        && let Ok(config) = serde_json::from_value::<GoogleConfig>(row.config)
+    let row = store::get(&state.db, id).await.ok().flatten();
+    if let Some(row) = &row
+        && let Ok(config) = serde_json::from_value::<GoogleConfig>(row.config.clone())
     {
         state.connections.feeds.forget(&config.ics_url);
     }
     let removed = store::delete(&state.db, id).await?;
+    if row.is_some_and(|r| r.integration == crate::mail::EMAIL) {
+        crate::mail::forget(state, id).await;
+    }
     publish(state).await;
     Ok(removed)
 }
@@ -275,7 +300,7 @@ pub async fn start_all(state: &Arc<AppState>) {
 }
 
 fn start(state: &Arc<AppState>, row: &ConnectionRow) {
-    if row.integration != telegram::TELEGRAM {
+    if row.integration != telegram::TELEGRAM && row.integration != crate::mail::EMAIL {
         return;
     }
     let token = CancellationToken::new();
@@ -285,7 +310,11 @@ fn start(state: &Arc<AppState>, row: &ConnectionRow) {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .insert(row.id, token.clone());
-    tokio::spawn(telegram::run(state.clone(), row.id, token));
+    if row.integration == telegram::TELEGRAM {
+        tokio::spawn(telegram::run(state.clone(), row.id, token));
+    } else {
+        tokio::spawn(crate::mail::sync::run(state.clone(), row.id, token));
+    }
 }
 
 /// Every connected calendar account.

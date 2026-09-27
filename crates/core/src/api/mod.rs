@@ -19,6 +19,7 @@ mod conversations;
 pub mod error;
 mod events;
 mod hardware;
+mod mail;
 mod memory;
 mod people;
 mod providers;
@@ -127,6 +128,16 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/schedule/deliveries/{id}/done", post(schedule::done))
         .route("/schedule/deliveries/{id}/snooze", post(schedule::snooze))
         .route("/schedule/undo/{revision}", post(schedule::undo))
+        .route("/mail", get(mail::overview))
+        .route("/mail/presets", get(mail::presets))
+        .route("/mail/threads", get(mail::threads))
+        .route("/mail/threads/{id}", get(mail::thread))
+        .route("/mail/threads/{id}/read", post(mail::read))
+        .route("/mail/threads/{id}/archive", post(mail::archive))
+        .route("/mail/threads/{id}/summarize", post(mail::summarize))
+        .route("/mail/threads/{id}/draft", post(mail::draft))
+        .route("/mail/send", post(mail::send))
+        .route("/mail/refresh", post(mail::refresh))
         .route("/web/login-link", post(web::login_link))
         .route("/web/logout", post(web::logout))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));

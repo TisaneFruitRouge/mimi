@@ -33,22 +33,19 @@ import type { ScheduleUpdate } from "@/bindings/ScheduleUpdate";
 import type { Settings } from "@/bindings/Settings";
 import type { Status } from "@/bindings/Status";
 import type { CalendarEvent } from "@/bindings/CalendarEvent";
+import type { MailBox } from "@/bindings/MailBox";
+import type { MailDraft } from "@/bindings/MailDraft";
+import type { MailOverview } from "@/bindings/MailOverview";
+import type { MailPreset } from "@/bindings/MailPreset";
+import type { MailSummary } from "@/bindings/MailSummary";
+import type { MailThread } from "@/bindings/MailThread";
+import type { MailThreadDetail } from "@/bindings/MailThreadDetail";
 import type { CalendarEvents } from "@/bindings/CalendarEvents";
 import type { CalendarInfo } from "@/bindings/CalendarInfo";
 import type { CreatedEvent } from "@/bindings/CreatedEvent";
 import type { NewCalendarEvent } from "@/bindings/NewCalendarEvent";
 import type { PersonConversation } from "@/bindings/PersonConversation";
 import { type TransportError, request } from "@/lib/transport";
-
-/** The parts of an email conversation a person's page shows. */
-export interface PersonMailThread {
-  id: number;
-  subject: string;
-  last_at: number;
-  snippet: string;
-  unread: boolean;
-  summary?: string | null;
-}
 
 export class DaemonError extends Error {
   readonly kind: TransportError["kind"];
@@ -126,9 +123,28 @@ export const api = {
     call<PersonConversation[]>("GET", `/people/${id}/conversations`),
   /** What memory holds about someone. Answered by newer daemons only: callers handle 404. */
   personMemory: (id: string) => call<MemoryNote[]>("GET", `/people/${id}/memory`),
-  /** Recent email conversations with someone. Needs a connected mailbox: callers handle errors. */
+  /** Recent email conversations with someone (none without a connected mailbox). */
   personMail: (id: string) =>
-    call<PersonMailThread[]>("GET", `/mail/threads?person=${encodeURIComponent(id)}&limit=5`),
+    call<MailThread[]>("GET", `/mail/threads?person=${encodeURIComponent(id)}&limit=5`),
+
+  mailPresets: () => call<MailPreset[]>("GET", "/mail/presets"),
+  mailOverview: () => call<MailOverview>("GET", "/mail"),
+  mailThreads: (view: MailBox | null, q: string) => {
+    const params = new URLSearchParams({ limit: "80" });
+    if (view) params.set("view", view);
+    if (q.trim()) params.set("q", q.trim());
+    return call<MailThread[]>("GET", `/mail/threads?${params}`);
+  },
+  mailThread: (id: number) => call<MailThreadDetail>("GET", `/mail/threads/${id}`),
+  markMailRead: (id: number, read: boolean) =>
+    call<null>("POST", `/mail/threads/${id}/read`, { read }),
+  archiveMail: (id: number) => call<null>("POST", `/mail/threads/${id}/archive`),
+  summarizeMail: (id: number) => call<MailSummary>("POST", `/mail/threads/${id}/summarize`),
+  draftMailReply: (id: number, instructions: string | null) =>
+    call<MailDraft>("POST", `/mail/threads/${id}/draft`, { instructions }),
+  /** Sends a message the user wrote or checked: their click is the approval. */
+  sendMail: (draft: MailDraft) => call<null>("POST", "/mail/send", draft),
+  refreshMail: () => call<null>("POST", "/mail/refresh"),
 
   calendars: () => call<CalendarInfo[]>("GET", "/calendars"),
   events: (from: number, to: number) =>
@@ -221,6 +237,12 @@ export const keys = {
   /** Reminders and routines, and their recent deliveries. */
   schedule: ["schedule"] as const,
   deliveries: ["schedule", "deliveries"] as const,
+  /** Everything read from mail. */
+  mail: ["mail"] as const,
+  mailPresets: ["mail", "presets"] as const,
+  mailOverview: ["mail", "overview"] as const,
+  mailThreads: (view: MailBox | null, q: string) => ["mail", "threads", view, q] as const,
+  mailThread: (id: number) => ["mail", "thread", id] as const,
   /** Every calendar and event read. */
   calendar: ["calendar"] as const,
   calendars: ["calendar", "list"] as const,

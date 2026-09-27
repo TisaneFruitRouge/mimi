@@ -26,6 +26,9 @@ pub struct Settings {
     /// Whether memories are also found by meaning, not only by their words ("my sibling"
     /// finds the note about a sister). Needs a small language file on this computer.
     pub memory_semantic: bool,
+    /// Whether new mail is sorted (needs a reply / important / everything else) and
+    /// summarised in the background by the active model.
+    pub mail_sorting: bool,
 }
 
 impl Default for Settings {
@@ -39,6 +42,7 @@ impl Default for Settings {
             onboarding_step: 0,
             desktop_notifications: true,
             memory_semantic: false,
+            mail_sorting: true,
         }
     }
 }

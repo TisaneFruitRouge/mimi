@@ -84,6 +84,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         runtime: Default::default(),
         downloads: Default::default(),
         scheduler: Default::default(),
+        mail: Default::default(),
     });
     #[cfg(debug_assertions)]
     if std::env::var(crate::tools::dev::ENV).is_ok_and(|v| v == "1") {
@@ -105,6 +106,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
     tokio::spawn(crate::memory::semantic::run(state.clone()));
     crate::people::install(&state);
     crate::schedule::install(&state);
+    crate::mail::install(&state);
 
     match crate::runtime::find_binary() {
         Some(path) => tracing::info!(path = %path.display(), "built-in model runtime found"),

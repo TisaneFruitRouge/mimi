@@ -9,6 +9,7 @@ import {
   Loader2,
   Lock,
   LogOut,
+  Mail,
   Power,
   RotateCcw,
   Send,
@@ -244,6 +245,7 @@ function PrivacySettings({ onSection }: { onSection: (s: Place) => void }) {
   const providers = useProviders().data ?? [];
   const connections = useConnections().data ?? [];
   const telegram = connections.some((c) => c.integration === "telegram");
+  const email = connections.some((c) => c.integration === "email");
   return (
     <Page>
       <PageHeader
@@ -303,6 +305,8 @@ function PrivacySettings({ onSection }: { onSection: (s: Place) => void }) {
         </Section>
       )}
 
+      {email && <MailSortingGroup />}
+
       {telegram && (
         <Section title="Telegram">
           <Grouped>
@@ -320,6 +324,44 @@ function PrivacySettings({ onSection }: { onSection: (s: Place) => void }) {
         </Section>
       )}
     </Page>
+  );
+}
+
+/** Whether the model reads new mail in the background to sort and summarise it. */
+function MailSortingGroup() {
+  const settings = useSettings().data;
+  const providers = useProviders().data ?? [];
+  const model = providers.find((p) => p.id === settings?.default_model?.provider_id);
+  const toggle = (on: boolean) => {
+    if (!settings) return;
+    api.putSettings({ ...settings, mail_sorting: on }).catch((e) => toast.error((e as Error).message));
+  };
+  return (
+    <Section title="Email">
+      <Grouped>
+        <Row
+          icon={
+            <IconTile size="sm" className="bg-[#efe9fb] text-[#6146ad]">
+              <Mail />
+            </IconTile>
+          }
+          title="Sort new mail in the background"
+          detail="Your model reads each new email to tell what needs a reply and to write a one-line summary. Newsletters are recognised without it."
+          className="[&_.truncate]:whitespace-normal"
+          trailing={
+            <>
+              {model && <LocalityBadge locality={model.locality} />}
+              <Switch
+                checked={!!settings?.mail_sorting}
+                disabled={!settings}
+                onCheckedChange={toggle}
+                aria-label="Sort new mail in the background"
+              />
+            </>
+          }
+        />
+      </Grouped>
+    </Section>
   );
 }
 

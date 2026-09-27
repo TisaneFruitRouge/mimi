@@ -39,6 +39,8 @@ pub enum Event {
     },
     /// The people directory changed (sync, edit, merge). Refetch what you show.
     PeopleChanged,
+    /// Mail changed (new mail, sorting, read state). Refetch what you show.
+    MailChanged,
     ConnectionsChanged {
         connections: Vec<Connection>,
     },

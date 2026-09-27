@@ -15,6 +15,15 @@ export const formatters: Record<string, Formatter> = {
     if (a.notes) rows.push({ label: "Notes", value: String(a.notes) });
     return rows;
   },
+  // The whole message, exactly as it will be sent.
+  mail_send: (a) => {
+    const list = (v: unknown) => (Array.isArray(v) ? v.map(String).join(", ") : String(v ?? ""));
+    const rows: ArgRow[] = [{ label: "To", value: list(a.to) }];
+    if (Array.isArray(a.cc) && a.cc.length > 0) rows.push({ label: "Cc", value: list(a.cc) });
+    rows.push({ label: "Subject", value: String(a.subject ?? "") || "(no subject)" });
+    rows.push({ label: "Message", value: String(a.body ?? "") });
+    return rows;
+  },
 };
 
 /** "Friday 2 October, 10:00–10:45" from the tool's local-time strings. */

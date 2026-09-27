@@ -31,6 +31,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { addDays, startOfDay, timeRange } from "@/features/calendar/dates";
 import { EventSheet } from "@/features/calendar/event-sheet";
+import { showMailThread } from "@/features/mail/mail-view";
 import { HandleForm, HandleRow, sourcesLine } from "@/features/people/person-dialogs";
 import { ScheduleDialog } from "@/features/reminders/schedule-dialog";
 import { when } from "@/features/reminders/time";
@@ -426,7 +427,10 @@ function RecentMail({ person: p, onOpenMail }: { person: Person; onOpenMail: () 
           {list.slice(0, 5).map((t) => (
             <Row
               key={t.id}
-              onClick={onOpenMail}
+              onClick={() => {
+                showMailThread(t.id);
+                onOpenMail();
+              }}
               icon={
                 <IconTile size="sm" className="bg-[#efe9fb] text-[#6146ad]">
                   <Mail />

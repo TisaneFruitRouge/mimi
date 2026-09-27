@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import type { Action } from "@/bindings/Action";
 import { Button } from "@/components/ui/button";
 import { describeArgs } from "@/features/chat/action-formatters";
+import { DRAFT_TOOLS, DraftCard, draftOf } from "@/features/mail/draft-card";
 import { api } from "@/lib/api";
 import { openExternal } from "@/lib/transport";
 
@@ -26,15 +27,18 @@ export function Actions({ actions }: { actions: Action[] }) {
   const scheduled = actions.filter(
     (a) => SCHEDULE_WRITES.has(a.tool) && a.status === "done" && scheduleRevision(a) !== null,
   );
+  // Email drafts show as the draft itself, to check and send.
+  const drafts = actions.filter((a) => DRAFT_TOOLS.has(a.tool) && a.status === "done" && draftOf(a) !== null);
   const reads = actions.filter(
     (a) =>
       !a.requires_approval &&
       !MEMORY_READS.has(a.tool) &&
       !MEMORY_WRITES.has(a.tool) &&
-      !scheduled.includes(a),
+      !scheduled.includes(a) &&
+      !drafts.includes(a),
   );
   const asks = actions.filter((a) => a.requires_approval);
-  if (reads.length + remembered.length + scheduled.length + asks.length === 0) return null;
+  if (reads.length + remembered.length + scheduled.length + asks.length + drafts.length === 0) return null;
   return (
     <div className="flex flex-col gap-3">
       {reads.length > 0 && (
@@ -49,6 +53,9 @@ export function Actions({ actions }: { actions: Action[] }) {
       ))}
       {scheduled.map((a) => (
         <UndoLine key={a.id} action={a} icon={<Bell />} undo={() => api.undoSchedule(scheduleRevision(a) ?? 0)} />
+      ))}
+      {drafts.map((a) => (
+        <DraftCard key={a.id} action={a} />
       ))}
       {asks.map((a) => (
         <ApprovalCard key={a.id} action={a} />

@@ -3,7 +3,7 @@
 use mimi_protocol::{Integration, IntegrationCategory, IntegrationStatus};
 
 /// Integrations whose connection flow exists.
-const AVAILABLE: &[&str] = &["google_calendar", "caldav", "carddav", "telegram"];
+const AVAILABLE: &[&str] = &["google_calendar", "caldav", "carddav", "telegram", "email"];
 
 /// Address books come with the same account connection as calendars (CalDAV and
 /// CardDAV share the app password), so connecting one connects both.
@@ -107,8 +107,9 @@ pub fn catalog() -> Vec<Integration> {
             "email",
             "Email",
             Email,
-            "Gmail or any IMAP inbox.",
+            "Gmail, iCloud, Fastmail and most other mail, with an app password.",
             &[
+                "Sort new mail: needs a reply, important, everything else",
                 "Summarize what matters",
                 "Draft replies you approve before sending",
             ],

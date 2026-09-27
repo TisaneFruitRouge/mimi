@@ -47,10 +47,11 @@ import { useConnections, useIntegrations } from "@/lib/queries";
 import { openExternal } from "@/lib/transport";
 
 const connectable = (id: string): id is ConnectKind =>
-  id === "google_calendar" || id === "caldav" || id === "telegram";
+  id === "google_calendar" || id === "caldav" || id === "telegram" || id === "email";
 
 /** Integrations that make sense to connect more than once. */
-const repeatable = (id: string) => id === "google_calendar" || id === "caldav" || id === "carddav";
+const repeatable = (id: string) =>
+  id === "google_calendar" || id === "caldav" || id === "carddav" || id === "email";
 
 const look: Record<string, { icon: typeof Plug; tone: string }> = {
   google_calendar: { icon: CalendarDays, tone: "bg-event-soft text-event" },
@@ -111,7 +112,7 @@ export function ConnectionsView({ onPeople }: { onPeople: () => void }) {
             <div>
               <p className="type-body font-medium">Nothing connected yet</p>
               <p className="type-subhead text-muted-foreground">
-                Connect a calendar or Telegram below to get started.
+                Connect a calendar, your email or Telegram below to get started.
               </p>
             </div>
           </div>

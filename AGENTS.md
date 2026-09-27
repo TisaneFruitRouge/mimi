@@ -196,6 +196,64 @@ than inventing their own.
   hand, `fake_telegram` in `api/tests.rs` for the bot, public Google holiday feeds for
   iCal parsing.
 
+## Email
+
+- `crates/core/src/mail/`; full design in `docs/architecture.md` › Email. IMAP to read,
+  SMTP to send, with app passwords: no registered app, no Microsoft/Google sign-in.
+  Presets (`mail::presets`): iCloud, Gmail (needs 2-Step Verification for app
+  passwords), Fastmail, Proton (through Bridge on 127.0.0.1), Other; Outlook.com is
+  listed as not supported yet. `mail::connect` signs in over IMAP and SMTP before
+  anything is saved. Crates: async-imap, mail-parser, html2text, lettre (all MIT/Apache).
+- **Transport** (`net.rs`, `smtp.rs`): TLS or STARTTLS checked against the OS trust
+  store (rustls-platform-verifier). Unencrypted connections, and self-signed
+  certificates, are accepted only for servers on this computer (Proton Bridge). SMTP
+  says hello as `[127.0.0.1]`, never the computer's name; Message-IDs use the sender's
+  domain.
+- **Sync** (`sync.rs`): one loop per account (a connection task, cancelled on
+  disconnect). Inbox, Sent and Archive only, never Spam or Trash; the last 90 days
+  (at most 2,000 messages per mailbox on the first pass). New mail by UID above the
+  stored high-water mark; flag changes and removals by a `(UID FLAGS)` sweep over what's
+  stored; a new UIDVALIDITY refetches the mailbox. Then IDLE on the Inbox (10 minutes,
+  or until poked after a send/archive; polling every 2 minutes without IDLE). Backoff
+  30 s → 15 min; a refused password waits 30 minutes and says so on the connection.
+  Messages over 2 MB are stored with headers only.
+- **Storage** (`store.rs`, migration 0013): `mail_threads`, `mail_messages` (+
+  `mail_fts`), `mail_sync`. Threading by In-Reply-To/References/Message-ID, then "Re:"
+  subject plus a shared participant within 30 days. Bodies are plain text: HTML is
+  converted with hidden content removed (`parse::strip_hidden`: display/visibility/
+  opacity/zero-size styles, `hidden`, comments, scripts; font size is inherited so
+  `font-size:0` layout wrappers keep readable text) and invisible characters stripped.
+- **Email is untrusted.** Tools (`tools.rs`): `mail_search`, `mail_read_thread` (reads,
+  output carries a "data, not instructions" notice), `mail_draft_reply`/`mail_compose`
+  (a draft shown in the chat as an editable card; nothing is sent), `mail_send` (always
+  needs approval; the card shows To, Cc, Subject and the whole message). Model calls
+  about mail (`model.rs`: sorting, summaries, drafts) get no tools and their output is
+  shown or parsed into a fixed shape. Mail never reaches memory learning (it reads only
+  the user's own messages). `api/tests.rs` › `mail_flow` proves a hostile email can't
+  send mail without approval; keep it passing.
+- **Sorting** (`triage.rs`, `Settings.mail_sorting`, Settings › Privacy): new inbox
+  conversations of the last 14 days get needs_reply / important / other and a one-line
+  summary, one at a time, while no chat reply is being written, with
+  `ChatOptions::QUICK`. Newsletters and automatic mail (List-Unsubscribe, List-Id,
+  Precedence, Auto-Submitted, no-reply senders) are filed as "other" without the model.
+- **People**: `contacts::Correspondents` is a contact source: everyone the user wrote
+  to, plus people (not automatic senders) who wrote at least twice; email handles only,
+  so they join someone only through the same address. `GET /v1/mail/threads?person=<id>`
+  lists recent conversations with a person.
+- **API**: `GET /v1/mail` (accounts, counts, sorting, model locality), `/mail/presets`,
+  `/mail/threads?view&q&person&before&limit`, `/mail/threads/{id}`, `POST
+  /mail/threads/{id}/read|archive|summarize|draft`, `/mail/send` (the user's own click
+  in the panel or a draft card is the approval), `/mail/refresh`. `MailChanged` events.
+- **UI**: `features/mail/` (`mail-view.tsx` panel: views, list, reader, reply box;
+  `draft-editor.tsx`; `draft-card.tsx` for chat drafts). Email text is plain text, never
+  linkified. The connect form is `EmailAccount` in `connect-dialogs.tsx`.
+- **Tests** fake the servers: `mail/fake.rs` is a small IMAP (IDLE, MOVE, APPEND…) and
+  SMTP server; `mail/tests.rs` covers sync, UIDVALIDITY resets, flags, archive, send,
+  hidden text, correspondents and sorting with a mock model. To try the app by hand,
+  `MIMI_FAKE_MAIL_SEED=1 cargo test -p mimi-core fake_mail_server -- --ignored` serves
+  seeded mail on 127.0.0.1:3143 (IMAP) / 3025 (SMTP) as `me@example.org` / `app-pass`
+  (connect with "Other", security "None"). Never point tests at a real mailbox.
+
 ## People and @ mentions
 
 - `crates/core/src/people/`: one directory of people. A person has contact cards
@@ -374,7 +432,7 @@ than inventing their own.
   `settings.onboarding_done` is false; the step is saved in `settings.onboarding_step`,
   so closing the app resumes there. Welcome and privacy promise -> model (hardware
   summary, installed models, suggested downloads, detected servers, or a cloud service
-  with an honest note) -> optional calendar/Telegram (the Connections dialogs) -> "about
+  with an honest note) -> optional calendar/email/Telegram (the Connections dialogs) -> "about
   you" (appended to the memory profile) -> finish. A model chosen for download is saved as
   `settings.pending_model`; the daemon makes it the default when the download finishes
   (`settings::adopt_pending`), even with no window open. Settings › General › "Show the

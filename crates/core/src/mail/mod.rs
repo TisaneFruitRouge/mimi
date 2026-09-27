@@ -1,0 +1,534 @@
+//! Email: the user's own accounts over IMAP (read) and SMTP (send), with app passwords
+//! and no registered app. Recent mail is copied into the encrypted database so it can be
+//! searched, sorted and summarised locally; sending always goes through the user (an
+//! approval card, or their own click in the Mail panel).
+//!
+//! Email is written by other people: everything read from it is data, never
+//! instructions (see `tools.rs` and `triage.rs`).
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use mimi_protocol::{
+    Event, MailAccount, MailBox, MailDraft, MailOverview, MailPreset, MailSecurity, MailServers,
+    MailThread, MailThreadDetail,
+};
+use serde::{Deserialize, Serialize};
+use tokio::sync::Notify;
+use uuid::Uuid;
+
+use crate::AppState;
+use crate::connections::store as connection_store;
+
+pub mod contacts;
+pub mod model;
+pub mod net;
+pub mod parse;
+pub mod smtp;
+pub mod store;
+pub mod sync;
+pub mod tools;
+pub mod triage;
+
+#[cfg(test)]
+pub mod fake;
+#[cfg(test)]
+mod tests;
+
+/// The integration id of email connections.
+pub const EMAIL: &str = "email";
+
+/// A healthy account's one-line description.
+pub const DETAIL: &str = "Reads your mail. Sends only what you approve.";
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum MailError {
+    #[error(
+        "The mail server didn't accept that address and password. Use an app password, not your usual one."
+    )]
+    Login,
+    #[error("Couldn't reach {0}. Check the server name and your internet connection.")]
+    Unreachable(String),
+    #[error("Couldn't set up a secure connection to the mail server ({0}).")]
+    Tls(String),
+    #[error("The mail server answered something unexpected ({0}).")]
+    Protocol(String),
+    #[error("{0}")]
+    Refused(String),
+}
+
+/// A connected account, as stored (encrypted) in its connection's config.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmailConfig {
+    pub email: String,
+    pub password: String,
+    pub preset: String,
+    pub servers: MailServers,
+}
+
+impl EmailConfig {
+    pub fn username(&self) -> &str {
+        self.servers.username.as_deref().unwrap_or(&self.email)
+    }
+}
+
+/// A connected account.
+#[derive(Debug, Clone)]
+pub struct Account {
+    pub id: Uuid,
+    pub name: String,
+    pub config: EmailConfig,
+}
+
+/// Live mail state: wake-ups for the sync loops and the sorting queue.
+#[derive(Default)]
+pub struct Mail {
+    pokes: Mutex<HashMap<Uuid, Arc<Notify>>>,
+    /// Wakes the sorting queue when new mail arrives.
+    pub triage_wake: Notify,
+}
+
+impl Mail {
+    /// The wake-up signal of one account's sync loop.
+    pub fn poke_handle(&self, id: Uuid) -> Arc<Notify> {
+        self.pokes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(id)
+            .or_default()
+            .clone()
+    }
+
+    /// Asks an account's sync loop to check the server now.
+    pub fn poke(&self, id: Uuid) {
+        self.poke_handle(id).notify_one();
+    }
+}
+
+// --- Services -------------------------------------------------------------------------
+
+fn servers(
+    imap_host: &str,
+    imap_port: u16,
+    imap_security: MailSecurity,
+    smtp_host: &str,
+    smtp_port: u16,
+    smtp_security: MailSecurity,
+) -> MailServers {
+    MailServers {
+        imap_host: imap_host.to_owned(),
+        imap_port,
+        imap_security,
+        smtp_host: smtp_host.to_owned(),
+        smtp_port,
+        smtp_security,
+        username: None,
+    }
+}
+
+/// The services the connect dialog offers.
+pub fn presets() -> Vec<MailPreset> {
+    use MailSecurity::*;
+    let preset =
+        |id: &str, name: &str, help: &str, url: Option<&str>, servers, supported| MailPreset {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            help: help.to_owned(),
+            help_url: url.map(str::to_owned),
+            servers,
+            supported,
+        };
+    vec![
+        preset(
+            "icloud",
+            "iCloud Mail",
+            "Use an app-specific password: sign in at account.apple.com, open Sign-In and Security, then App-Specific Passwords.",
+            Some("https://support.apple.com/en-us/102654"),
+            Some(servers(
+                "imap.mail.me.com",
+                993,
+                Tls,
+                "smtp.mail.me.com",
+                587,
+                StartTls,
+            )),
+            true,
+        ),
+        preset(
+            "gmail",
+            "Gmail",
+            "Use an app password. Google only offers them once 2-Step Verification is on: turn it on, then create one on the App passwords page.",
+            Some("https://myaccount.google.com/apppasswords"),
+            Some(servers(
+                "imap.gmail.com",
+                993,
+                Tls,
+                "smtp.gmail.com",
+                465,
+                Tls,
+            )),
+            true,
+        ),
+        preset(
+            "fastmail",
+            "Fastmail",
+            "Create an app password in Settings, Privacy & Security, Manage app passwords. Give it access to mail (IMAP and SMTP).",
+            Some("https://www.fastmail.help/hc/en-us/articles/360058752854"),
+            Some(servers(
+                "imap.fastmail.com",
+                993,
+                Tls,
+                "smtp.fastmail.com",
+                465,
+                Tls,
+            )),
+            true,
+        ),
+        preset(
+            "proton",
+            "Proton Mail",
+            "Needs Proton Mail Bridge running on this computer (paid Proton plans). Use the password Bridge shows you, not your Proton password.",
+            Some("https://proton.me/mail/bridge"),
+            Some(servers(
+                "127.0.0.1",
+                1143,
+                StartTls,
+                "127.0.0.1",
+                1025,
+                StartTls,
+            )),
+            true,
+        ),
+        preset(
+            "outlook",
+            "Outlook.com or Hotmail",
+            "Microsoft only lets apps in through a Microsoft sign-in, which Mimi doesn't support yet.",
+            None,
+            None,
+            false,
+        ),
+        preset(
+            "other",
+            "Other",
+            "Your mail provider's help pages list these settings. Use an app password if they offer one.",
+            None,
+            None,
+            true,
+        ),
+    ]
+}
+
+/// The preset that fits an address, if one does.
+pub fn guess_preset(email: &str) -> Option<&'static str> {
+    let domain = email.rsplit('@').next()?.trim().to_ascii_lowercase();
+    let is = |names: &[&str]| names.iter().any(|n| domain == *n);
+    if is(&["gmail.com", "googlemail.com"]) {
+        Some("gmail")
+    } else if is(&["icloud.com", "me.com", "mac.com"]) {
+        Some("icloud")
+    } else if domain.starts_with("fastmail.") || is(&["sent.com", "fastmail.fm"]) {
+        Some("fastmail")
+    } else if is(&["proton.me", "protonmail.com", "protonmail.ch", "pm.me"]) {
+        Some("proton")
+    } else if domain.starts_with("outlook.")
+        || domain.starts_with("hotmail.")
+        || domain.starts_with("live.")
+        || is(&["msn.com"])
+    {
+        Some("outlook")
+    } else {
+        None
+    }
+}
+
+/// Works out an account's settings from what the user entered, then checks them against
+/// the real servers: signs in over IMAP and SMTP. Returns the connection's name and config.
+pub async fn connect(
+    email: String,
+    password: String,
+    preset: Option<String>,
+    custom: Option<MailServers>,
+) -> Result<(String, EmailConfig), String> {
+    let email = email.trim().to_lowercase();
+    let password: String = password.trim().to_owned();
+    if !email.contains('@') || email.starts_with('@') || email.ends_with('@') {
+        return Err("Enter your full email address.".to_owned());
+    }
+    if password.is_empty() {
+        return Err("Enter the app password.".to_owned());
+    }
+    let preset_id = preset
+        .filter(|p| !p.is_empty())
+        .or_else(|| guess_preset(&email).map(str::to_owned))
+        .unwrap_or_else(|| "other".to_owned());
+    let chosen = presets()
+        .into_iter()
+        .find(|p| p.id == preset_id)
+        .ok_or("Unknown mail service.")?;
+    if !chosen.supported {
+        return Err(chosen.help);
+    }
+    let servers = match (chosen.servers, custom) {
+        (Some(s), _) => s,
+        (None, Some(mut s)) => {
+            s.imap_host = s.imap_host.trim().to_owned();
+            s.smtp_host = s.smtp_host.trim().to_owned();
+            s.username = s
+                .username
+                .map(|u| u.trim().to_owned())
+                .filter(|u| !u.is_empty());
+            if s.imap_host.is_empty() || s.smtp_host.is_empty() {
+                return Err("Enter both server names.".to_owned());
+            }
+            s
+        }
+        (None, None) => return Err("Enter your mail server details.".to_owned()),
+    };
+    let mut config = EmailConfig {
+        email: email.clone(),
+        // Google shows app passwords in groups ("abcd efgh ijkl mnop"); the spaces
+        // aren't part of them.
+        password: if preset_id == "gmail" {
+            password.replace(' ', "")
+        } else {
+            password
+        },
+        preset: preset_id.clone(),
+        servers,
+    };
+    // iCloud's IMAP login is sometimes only the part before the @.
+    let mut usernames = vec![None];
+    if preset_id == "icloud" {
+        usernames.push(email.split('@').next().map(str::to_owned));
+    }
+    let mut last = MailError::Login;
+    let mut signed_in = false;
+    for username in usernames {
+        config.servers.username = username;
+        match sync::check_login(&config).await {
+            Ok(()) => {
+                signed_in = true;
+                break;
+            }
+            Err(e @ MailError::Login) => last = e,
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    if !signed_in {
+        return Err(last.to_string());
+    }
+    // SMTP always signs in with the full address on the services above.
+    let smtp_user = if preset_id == "icloud" {
+        None
+    } else {
+        config.servers.username.clone()
+    };
+    smtp::check(&config, smtp_user.as_deref())
+        .await
+        .map_err(|e| format!("Reading mail works, but sending doesn't: {e}"))?;
+    Ok((email, config))
+}
+
+// --- Accounts -------------------------------------------------------------------------
+
+pub async fn accounts(state: &AppState) -> Vec<Account> {
+    let Ok(rows) = connection_store::list(&state.db).await else {
+        return Vec::new();
+    };
+    rows.into_iter()
+        .filter(|r| r.integration == EMAIL)
+        .filter_map(|r| {
+            serde_json::from_value(r.config).ok().map(|config| Account {
+                id: r.id,
+                name: r.name,
+                config,
+            })
+        })
+        .collect()
+}
+
+pub async fn account(state: &AppState, id: Uuid) -> Option<Account> {
+    accounts(state).await.into_iter().find(|a| a.id == id)
+}
+
+/// The user's own addresses, to tell their messages apart.
+pub async fn my_addresses(state: &AppState) -> Vec<String> {
+    accounts(state)
+        .await
+        .into_iter()
+        .map(|a| a.config.email)
+        .collect()
+}
+
+/// Tells clients that mail changed.
+pub fn changed(state: &AppState) {
+    state.events.publish(Event::MailChanged);
+}
+
+/// Removes a disconnected account's mail.
+pub async fn forget(state: &AppState, id: Uuid) {
+    if let Err(e) = state
+        .db
+        .call(move |c| store::forget_connection(c, id))
+        .await
+    {
+        tracing::error!("couldn't remove a disconnected account's mail: {e}");
+    }
+    changed(state);
+}
+
+/// Registers the mail tools, the correspondents contact source and the sorting queue.
+pub fn install(state: &Arc<AppState>) {
+    state.tool_sources.add(Arc::new(tools::MailTools));
+    state.people.sources.add(Arc::new(contacts::Correspondents));
+    tokio::spawn(triage::run(state.clone()));
+}
+
+// --- What the panel and the tools use -------------------------------------------------
+
+pub async fn overview(state: &AppState) -> Result<MailOverview, String> {
+    let accounts = accounts(state).await;
+    let settings = crate::settings::load(&state.db)
+        .await
+        .map_err(|e| e.to_string())?;
+    let (needs_reply, important, unread) = state
+        .db
+        .call(|c| store::counts(c))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(MailOverview {
+        accounts: accounts
+            .into_iter()
+            .map(|a| MailAccount {
+                connection_id: a.id,
+                email: a.config.email,
+                name: a.name,
+            })
+            .collect(),
+        needs_reply,
+        important,
+        unread,
+        sorting: settings.mail_sorting,
+        model_locality: model::locality(state).await,
+    })
+}
+
+pub async fn threads(state: &AppState, query: store::Query) -> Result<Vec<MailThread>, String> {
+    let me = my_addresses(state).await;
+    state
+        .db
+        .call(move |c| store::threads(c, &query, &me))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+pub async fn thread(state: &AppState, id: i64) -> Result<Option<MailThreadDetail>, String> {
+    let me = my_addresses(state).await;
+    state
+        .db
+        .call(move |c| store::detail(c, id, &me))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// The email addresses of a person in the directory.
+pub async fn person_addresses(state: &AppState, person: Uuid) -> Result<Vec<String>, String> {
+    let p = crate::people::get(state, person)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("That person isn't in your contacts any more.")?;
+    Ok(p.handles
+        .into_iter()
+        .filter(|h| h.channel == mimi_protocol::Channel::Email)
+        .map(|h| h.value.to_lowercase())
+        .collect())
+}
+
+/// Recent conversations with a person, for the People panel.
+pub async fn threads_with(
+    state: &AppState,
+    person: Uuid,
+    limit: u32,
+) -> Result<Vec<MailThread>, String> {
+    let with = person_addresses(state, person).await?;
+    if with.is_empty() {
+        return Ok(Vec::new());
+    }
+    threads(
+        state,
+        store::Query {
+            with,
+            limit,
+            ..Default::default()
+        },
+    )
+    .await
+}
+
+/// Marks a conversation read or unread, here and on the server.
+pub async fn mark_read(state: &Arc<AppState>, id: i64, read: bool) -> Result<(), String> {
+    let locations = state
+        .db
+        .call(move |c| {
+            store::set_thread_seen(c, id, read)?;
+            store::locations(c, id)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    changed(state);
+    sync::spawn_flag_change(state.clone(), locations, read);
+    Ok(())
+}
+
+/// Moves a conversation out of the inbox, here and on the server.
+pub async fn archive(state: &Arc<AppState>, id: i64) -> Result<(), String> {
+    let locations = state
+        .db
+        .call(move |c| store::locations(c, id))
+        .await
+        .map_err(|e| e.to_string())?;
+    let inbox: Vec<_> = locations
+        .into_iter()
+        .filter(|(_, _, folder, _)| folder == "inbox")
+        .collect();
+    if inbox.is_empty() {
+        return Ok(());
+    }
+    sync::archive_on_server(state, &inbox).await?;
+    state
+        .db
+        .call(move |c| store::archive_locally(c, id))
+        .await
+        .map_err(|e| e.to_string())?;
+    for (conn, ..) in &inbox {
+        state.mail.poke(*conn);
+    }
+    changed(state);
+    Ok(())
+}
+
+/// Sends a message the user wrote or approved, and files it in Sent.
+pub async fn send(state: &Arc<AppState>, draft: MailDraft) -> Result<(), String> {
+    let accounts = accounts(state).await;
+    let reply = match draft.reply_to {
+        Some(thread) => smtp::reply_headers(state, thread).await?,
+        None => None,
+    };
+    let account = draft
+        .connection_id
+        .or(reply.as_ref().map(|r| r.connection_id))
+        .and_then(|id| accounts.iter().find(|a| a.id == id))
+        .or(accounts.first())
+        .ok_or("No email account is connected.")?;
+    let raw = smtp::build(&account.config, &draft, reply.as_ref())?;
+    smtp::send(&account.config, &raw).await?;
+    tracing::info!(connection = %account.id, "sent an email");
+    sync::file_sent(account, raw.formatted).await;
+    state.mail.poke(account.id);
+    Ok(())
+}
+
+/// Parses a view name from a query string.
+pub fn parse_view(raw: &str) -> Option<MailBox> {
+    serde_json::from_value(serde_json::Value::String(raw.to_owned())).ok()
+}

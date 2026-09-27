@@ -252,6 +252,94 @@ at 7, send me my day").
   `POST /v1/schedule/undo/{revision}`. Changes publish `schedule_changed`; deliveries
   publish `schedule_delivered`.
 
+## Email
+
+Mail is read over IMAP and sent over SMTP with the account's app password
+(`crates/core/src/mail/`). There is no registered app and nothing between the user's
+computer and their mail service. Outlook.com needs a Microsoft sign-in and isn't
+supported yet; the connect form says so rather than failing.
+
+**Connecting.** `ConnectionSetup::Email { email, password, preset, servers }`. The preset
+(iCloud, Gmail, Fastmail, Proton via Bridge, Other) is guessed from the address when
+not given. `mail::connect` signs in to IMAP (selecting INBOX) and to SMTP before the
+connection is saved; iCloud's IMAP login falls back to the part before the @. The
+config (address, password, servers) lives in the connection row, in the encrypted
+database. TLS is verified against the OS trust store; plain connections and
+self-signed certificates are only accepted for loopback servers (Proton Bridge).
+
+**Sync.** Each email connection runs `sync::run` as its connection task:
+
+1. Sign in, then a *pass* over Inbox, Sent and Archive (found by special-use
+   attributes, else by name; Spam and Trash are never read). Per mailbox:
+   - `SELECT`; a UIDVALIDITY different from the stored one drops the mailbox's local
+     copy and starts over.
+   - New messages: first pass `UID SEARCH SINCE <90 days ago>` (newest 2,000), later
+     `UID SEARCH UID <last+1>:*`. Sizes first, then bodies in chunks of 25 (`BODY.PEEK[]`,
+     so reading doesn't mark mail read); over 2 MB only the headers.
+   - Flags and removals: `UID FETCH <min>:<max> (UID FLAGS)` over what's stored.
+   - Mail older than 97 days is forgotten; the high-water mark becomes
+     `max(highest UID seen, UIDNEXT-1)`.
+2. `IDLE` on the Inbox for up to 10 minutes, until the server reports news or the app
+   pokes the loop (after sending, archiving or "Check for new mail"). Before idling, a
+   `UIDNEXT` beyond the stored mark (mail that arrived during the pass) triggers another
+   pass instead. Servers without IDLE are polled every 2 minutes.
+3. Errors drop the connection and retry with backoff (30 s doubling to 15 min). A
+   refused login marks the connection as needing attention and waits 30 minutes, so a
+   revoked password can't lock the account.
+
+Actions (mark read, archive, filing a sent copy) open a short second session. Archive
+uses `MOVE` (or COPY + `\Deleted` + EXPUNGE) to the Archive mailbox, or Gmail's All
+Mail. Sent mail is appended to Sent except on Gmail and Proton, which file it
+themselves.
+
+**Storage and threading.** `mail_threads` (subject, last activity, category, summary,
+`sorted_at`), `mail_messages` (per mailbox and UID: headers, plain-text body, snippet,
+flags, attachment names) with `mail_fts` for search, and `mail_sync` (UIDVALIDITY and
+high-water mark per mailbox). A message joins the thread of its In-Reply-To or
+References, or of a message that already refers to it, else (for "Re:"-style subjects)
+a thread from the last 30 days with the same subject and a shared participant. The
+same Message-ID in two mailboxes (a reply in Sent and Inbox) shows once.
+
+**Untrusted content.** Bodies are plain text: HTML goes through `parse::strip_hidden`
+(elements hidden by `display:none`, `visibility:hidden`, zero opacity or size,
+`mso-hide`, the `hidden` attribute; comments, scripts, styles; text whose inherited font
+size is under 2px) and html2text, and zero-width characters are removed. Tools label
+mail as data; the only tool that acts, `mail_send`, always needs approval and its card
+shows the whole message. Model calls about mail (sorting, summaries, reply drafts) get
+no tools; their answers are shown to the user or parsed into a fixed shape (a category
+from three and one clipped line). Memory learning only reads the user's own messages,
+so nothing from an email becomes a memory. `api/tests.rs` › `mail_flow` has a hostile
+email and a model that obeys it: the send waits on the approval card and nothing is sent
+when it's declined.
+
+**Sorting.** `triage::run` wakes after a pass that changed something (and every 5
+minutes). While `Settings.mail_sorting` is on and a model is set up, it takes the newest
+unsorted Inbox thread from the last 14 days, one at a time, waiting while a chat reply
+is being written. Automatic mail (List-Unsubscribe, List-Id, Precedence bulk/list,
+Auto-Submitted, no-reply-style senders) is filed as "other" without the model; anything
+else is sent to the model with `ChatOptions::QUICK` (no thinking) and gets needs_reply,
+important or other plus a one-line summary. A thread with a newer message is sorted
+again. If the model fails, the queue stops until the next wake-up.
+
+**People.** `mail::contacts::Correspondents` offers, per account, everyone the user
+wrote to and every human sender with at least two messages, as cards with one email
+handle (record id = the address). The directory merges them only on that address.
+
+**API.** `GET /v1/mail` (accounts, counts, whether sorting is on, the model's locality),
+`GET /v1/mail/presets`, `GET /v1/mail/threads?view=&q=&person=&before=&limit=`,
+`GET /v1/mail/threads/{id}`, `POST /v1/mail/threads/{id}/read` (`{read}`),
+`/archive`, `/summarize`, `/draft` (`{instructions}`), `POST /v1/mail/send` (a
+`MailDraft`; the panel's Send button, which is the user's own action), `POST
+/v1/mail/refresh`. Changes publish `mail_changed`.
+
+**UI.** The Mail panel (`features/mail/mail-view.tsx`) has three columns: views ("Sorted
+for you": Needs a reply, Important, Everything else; mailboxes: Inbox, Sent, Archive,
+with the sorting model's locality), the conversation list with one-line summaries and
+search across all mail, and the reader (Reply, Summarize, Archive, Mark as unread, Ask
+the assistant; a reply box that can draft the answer with the model; Send only by the
+user). Drafts the assistant writes in chat appear as editable cards with their own Send
+button (`draft-card.tsx`); `mail_send` approval cards show every field.
+
 ## People and @ mentions
 
 `crates/core/src/people/` keeps one directory of people, unified across sources.

@@ -46,4 +46,15 @@ pub enum ConnectionSetup {
     },
     /// A Telegram bot created by the user with @BotFather.
     Telegram { bot_token: String },
+    /// An email account, read over IMAP and sent through SMTP with an app password.
+    Email {
+        email: String,
+        password: String,
+        /// A preset id (`icloud`, `gmail`…); `None` picks one from the address.
+        #[serde(default)]
+        preset: Option<String>,
+        /// Server details for "Other"; ignored when a preset applies.
+        #[serde(default)]
+        servers: Option<crate::MailServers>,
+    },
 }
