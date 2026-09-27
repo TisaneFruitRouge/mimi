@@ -111,8 +111,10 @@ case "$KIND" in
     DEST="$HOME/Applications"
     mkdir -p "$DEST" "$HOME/.local/share/applications" "$HOME/.local/share/icons/hicolor/128x128/apps"
     install -m 755 "$FILE" "$DEST/Mimi.AppImage"
+    ( cd "$TMP" && "$DEST/Mimi.AppImage" --appimage-extract 'usr/share/icons/*' >/dev/null 2>&1 ) || true
     ( cd "$TMP" && "$DEST/Mimi.AppImage" --appimage-extract '*.png' >/dev/null 2>&1 ) || true
     ICON=$(find "$TMP/squashfs-root" -path '*128x128/apps/*.png' 2>/dev/null | head -n 1)
+    [ -n "$ICON" ] || ICON=$(find "$TMP/squashfs-root" -maxdepth 1 -name '*.png' 2>/dev/null | head -n 1)
     [ -n "$ICON" ] && cp "$ICON" "$HOME/.local/share/icons/hicolor/128x128/apps/mimi.png"
     cat > "$HOME/.local/share/applications/mimi.desktop" <<EOF
 [Desktop Entry]

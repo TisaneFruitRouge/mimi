@@ -165,7 +165,11 @@ than inventing their own.
   button on the right. Model switching lives in Models, not in the composer.
 - **Desktop window**: on macOS the title bar is an overlay (hidden title); the top bar
   leaves room for the traffic lights (`macOverlayTitleBar` in `lib/platform.ts`) and is a
-  `data-tauri-drag-region`. Linux keeps native decorations.
+  `data-tauri-drag-region`. On Linux the window has no system title bar at all
+  (`set_decorations(false)` at startup: GTK's would only say "Mimi" above our bar);
+  the top bar draws minimize/maximize/close (`WindowControls`, from the `window_chrome`
+  command), except under tiling window managers (Hyprland, Sway, i3, niri…), which
+  manage windows themselves.
 
 ## Connections (the user's own accounts)
 
@@ -244,6 +248,22 @@ than inventing their own.
   `/mail/threads?view&q&person&before&limit`, `/mail/threads/{id}`, `POST
   /mail/threads/{id}/read|archive|summarize|draft`, `/mail/send` (the user's own click
   in the panel or a draft card is the approval), `/mail/refresh`. `MailChanged` events.
+- **Suspicious mail** (`suspicious.rs`, migration 0015): instructions addressed to an
+  AI assistant (English and French phrasings, in visible or hidden HTML text) flag a
+  message. Flagged conversations are never sorted or summarised by the model (filed as
+  "other"), show a warning in the panel, and carry a `suspicious` note in tool output
+  and # mentions. Keep the phrases specific: mail *about* AI must not be flagged
+  (`mail_about_assistants_is_not`).
+- **Sending from aliases**: `MailDraft.from` picks one of the account's addresses (its
+  own, or one mail arrived at); replies default to the conversation's `received_on`.
+  Anything else is refused. SMTP signs in as `smtp::user` (the account's username).
+- **Attachments** are not stored, only their names. `GET
+  /mail/messages/{id}/attachments/{index}` fetches the message from the server and
+  returns the file, always as an `application/octet-stream` download with `CSP:
+  sandbox` (never rendered in the web UI's origin). The desktop app's
+  `open_attachment` writes it to the app cache (emptied at launch) and opens it with
+  the system's app; programs and scripts (`attachments::is_program`) are only saved to
+  Downloads and revealed, never opened.
 - **UI**: `features/mail/` (`mail-view.tsx` panel: views, list, reader, reply box;
   `draft-editor.tsx`; `draft-card.tsx` for chat drafts). Email text is plain text, never
   linkified. The connect form is `EmailAccount` in `connect-dialogs.tsx`.
@@ -481,7 +501,7 @@ than inventing their own.
 ## Commands
 
 ```sh
-pnpm dev                 # daemon + desktop app together, data in .dev/
+pnpm dev                 # daemon (port 7438) + "Mimi Dev" app together, data in .dev/
 pnpm web                 # build the frontend and open it in a browser (daemon running)
 pnpm dev:daemon          # daemon only (pnpm dev:app for the app only)
 pnpm mimi <args>       # CLI against the .dev/ instance
@@ -489,6 +509,11 @@ mimi service status      # background service (install | uninstall | status | st
 pnpm check               # fmt, clippy, tests, typecheck (what CI runs)
 MIMI_HOME=/tmp/h1 ...  # any other isolated instance
 ```
+
+`pnpm dev` runs next to an installed Mimi: its own data (`.dev/`), port (7438) and app
+identity (`src-tauri/tauri.dev.conf.json`, "Mimi Dev"). To install the current code as
+the real app: `pnpm bundle` (on Arch, `NO_STRIP=true` for the AppImage step), then
+`scripts/install.sh --file target/release/bundle/appimage/Mimi_*.AppImage`.
 
 When testing `pnpm dev` from an agent session, stop it by exact PID or by the
 `setsid` process group. Never `pkill -f` with a pattern that could match other
