@@ -13,7 +13,11 @@ received_on: string | null,
 /**
  * A message in it contains instructions aimed at an AI assistant.
  */
-suspicious: boolean, subject: string, 
+suspicious: boolean, 
+/**
+ * The smart folders it's in.
+ */
+folders: number[], subject: string, 
 /**
  * Everyone in the conversation except the user, most recent first.
  */

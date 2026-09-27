@@ -6,6 +6,7 @@ use mimi_protocol::{
     DraftRequest, MailDraft, MailOverview, MailPreset, MailSummary, MailThread, MailThreadDetail,
     MarkRead,
 };
+use rusqlite::OptionalExtension;
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -62,6 +63,8 @@ pub struct ListQuery {
     /// See `ScopeQuery`. (Not flattened: that breaks numbers in query strings.)
     account: Option<Uuid>,
     address: Option<String>,
+    /// A smart folder's conversations (instead of a view).
+    folder: Option<i64>,
     /// needs_reply | important | other | inbox | sent | archive
     view: Option<String>,
     /// Words to search for.
@@ -94,6 +97,7 @@ pub async fn threads(
         view,
         search: q.q.filter(|s| !s.trim().is_empty()),
         before: q.before,
+        folder: q.folder,
         limit,
         scope: ScopeQuery {
             account: q.account,
@@ -132,6 +136,14 @@ pub async fn read(
 
 pub async fn archive(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> ApiResult<()> {
     mail::archive(&state, id)
+        .await
+        .map_err(AppError::bad_request)?;
+    Ok(Json(()))
+}
+
+/// Moves a conversation to the Trash. The user's own click in the Mail panel.
+pub async fn delete(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> ApiResult<()> {
+    mail::delete(&state, id)
         .await
         .map_err(AppError::bad_request)?;
     Ok(Json(()))
@@ -239,6 +251,131 @@ pub async fn jev_disconnect(State(state): State<Arc<AppState>>) -> ApiResult<()>
         state
             .events
             .publish(mimi_protocol::Event::SettingsChanged { settings });
+    }
+    mail::changed(&state);
+    Ok(Json(()))
+}
+
+/// A folder name and description, trimmed and checked.
+fn folder_fields(
+    input: &mimi_protocol::MailFolderInput,
+    required: bool,
+) -> Result<(Option<String>, Option<String>), AppError> {
+    use mail::folders::{MAX_DESCRIPTION, MAX_NAME};
+    let name = input.name.as_deref().map(str::trim).map(str::to_owned);
+    let description = input
+        .description
+        .as_deref()
+        .map(str::trim)
+        .map(str::to_owned);
+    match &name {
+        Some(n) if n.is_empty() || n.chars().count() > MAX_NAME => {
+            return Err(AppError::bad_request(format!(
+                "Give the folder a name of up to {MAX_NAME} characters."
+            )));
+        }
+        None if required => return Err(AppError::bad_request("Give the folder a name.")),
+        _ => {}
+    }
+    match &description {
+        Some(d) if d.is_empty() || d.chars().count() > MAX_DESCRIPTION => {
+            return Err(AppError::bad_request(format!(
+                "Say what goes in the folder, in up to {MAX_DESCRIPTION} characters."
+            )));
+        }
+        None if required => {
+            return Err(AppError::bad_request("Say what goes in the folder."));
+        }
+        _ => {}
+    }
+    Ok((name, description))
+}
+
+pub async fn create_folder(
+    State(state): State<Arc<AppState>>,
+    Json(input): Json<mimi_protocol::MailFolderInput>,
+) -> ApiResult<()> {
+    let (name, description) = folder_fields(&input, true)?;
+    let (name, description) = (name.unwrap_or_default(), description.unwrap_or_default());
+    let created = state
+        .db
+        .call(move |c| {
+            let count: i64 = c.query_row("SELECT count(*) FROM mail_folders", [], |r| r.get(0))?;
+            if count >= mail::folders::MAX_FOLDERS as i64 {
+                return Ok(false);
+            }
+            mail::folders::create(c, &name, &description).map(|_| true)
+        })
+        .await
+        .map_err(AppError::internal)?;
+    if !created {
+        return Err(AppError::bad_request(format!(
+            "You can have up to {} smart folders.",
+            mail::folders::MAX_FOLDERS
+        )));
+    }
+    mail::changed(&state);
+    state.mail.triage_wake.notify_one();
+    Ok(Json(()))
+}
+
+pub async fn update_folder(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(input): Json<mimi_protocol::MailFolderInput>,
+) -> ApiResult<()> {
+    let (name, description) = folder_fields(&input, false)?;
+    let found = state
+        .db
+        .call(move |c| mail::folders::update(c, id, name.as_deref(), description.as_deref()))
+        .await
+        .map_err(AppError::internal)?;
+    if !found {
+        return Err(AppError::not_found("Folder"));
+    }
+    mail::changed(&state);
+    state.mail.triage_wake.notify_one();
+    Ok(Json(()))
+}
+
+pub async fn delete_folder(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> ApiResult<()> {
+    let found = state
+        .db
+        .call(move |c| mail::folders::delete(c, id))
+        .await
+        .map_err(AppError::internal)?;
+    if !found {
+        return Err(AppError::not_found("Folder"));
+    }
+    mail::changed(&state);
+    Ok(Json(()))
+}
+
+/// The user puts a conversation in a folder or takes it out; the sorter won't undo it.
+pub async fn set_thread_folder(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(body): Json<mimi_protocol::FolderMembership>,
+) -> ApiResult<()> {
+    let ok = state
+        .db
+        .call(move |c| {
+            let thread: bool = c
+                .query_row("SELECT 1 FROM mail_threads WHERE id = ?1", [id], |_| Ok(()))
+                .optional()?
+                .is_some();
+            if !thread || !mail::folders::exists(c, body.folder)? {
+                return Ok(false);
+            }
+            mail::folders::set(c, body.folder, id, body.member, true).map(|_| true)
+        })
+        .await
+        .map_err(AppError::internal)?;
+    if !ok {
+        return Err(AppError::not_found("Conversation or folder"));
     }
     mail::changed(&state);
     Ok(Json(()))

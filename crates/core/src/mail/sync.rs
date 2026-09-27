@@ -70,6 +70,8 @@ pub struct Folders {
     /// Gmail's "All Mail": where archived Gmail messages live. Not read (it holds
     /// everything, the inbox included).
     pub all: Option<String>,
+    /// Where deleted mail goes. Not read.
+    pub trash: Option<String>,
 }
 
 pub async fn folders(session: &mut ImapSession) -> Result<Folders, MailError> {
@@ -83,6 +85,7 @@ pub async fn folders(session: &mut ImapSession) -> Result<Folders, MailError> {
     let mut f = Folders::default();
     let mut sent_by_name = None;
     let mut archive_by_name = None;
+    let mut trash_by_name = None;
     for n in &names {
         let attrs = n.attributes();
         if attrs.contains(&NameAttribute::NoSelect) {
@@ -95,6 +98,8 @@ pub async fn folders(session: &mut ImapSession) -> Result<Folders, MailError> {
             f.archive.get_or_insert(name.clone());
         } else if attrs.contains(&NameAttribute::All) {
             f.all.get_or_insert(name.clone());
+        } else if attrs.contains(&NameAttribute::Trash) {
+            f.trash.get_or_insert(name.clone());
         }
         let leaf = n
             .delimiter()
@@ -110,9 +115,23 @@ pub async fn folders(session: &mut ImapSession) -> Result<Folders, MailError> {
         if matches!(leaf.as_str(), "archive" | "archives") {
             archive_by_name.get_or_insert(name.clone());
         }
+        if matches!(
+            leaf.as_str(),
+            "trash"
+                | "deleted"
+                | "deleted items"
+                | "deleted messages"
+                | "bin"
+                | "corbeille"
+                | "papierkorb"
+                | "papelera"
+        ) {
+            trash_by_name.get_or_insert(name.clone());
+        }
     }
     f.sent = f.sent.or(sent_by_name);
     f.archive = f.archive.or(archive_by_name);
+    f.trash = f.trash.or(trash_by_name);
     Ok(f)
 }
 
@@ -650,48 +669,76 @@ pub async fn archive_on_server(
     state: &AppState,
     locations: &[(Uuid, String, String, u32)],
 ) -> Result<(), String> {
+    move_on_server(state, locations, Destination::Archive)
+        .await
+        .map_err(|e| format!("Couldn't archive it: {e}"))
+}
+
+/// Moves messages to the account's Trash (made if missing). Messages already there
+/// stay put.
+pub async fn trash_on_server(
+    state: &AppState,
+    locations: &[(Uuid, String, String, u32)],
+) -> Result<(), String> {
+    move_on_server(state, locations, Destination::Trash)
+        .await
+        .map_err(|e| format!("Couldn't delete it: {e}"))
+}
+
+#[derive(Clone, Copy)]
+enum Destination {
+    Archive,
+    Trash,
+}
+
+async fn move_on_server(
+    state: &AppState,
+    locations: &[(Uuid, String, String, u32)],
+    to: Destination,
+) -> Result<(), MailError> {
     let accounts = super::accounts(state).await;
     for ((conn, mailbox), uids) in group(locations) {
-        let account = accounts
-            .iter()
-            .find(|a| a.id == conn)
-            .ok_or("That account isn't connected any more.")?;
-        let result = async {
-            let mut s = session(&account.config).await?;
-            let f = folders(&mut s).await?;
-            let target = match (f.archive, f.all) {
-                (Some(a), _) => a,
-                (None, Some(all)) => all,
-                (None, None) => {
-                    s.create("Archive").await.map_err(proto)?;
-                    "Archive".to_owned()
-                }
-            };
-            let can_move = s.capabilities().await.map_err(proto)?.has_str("MOVE");
-            s.select(&mailbox).await.map_err(proto)?;
-            let set = uid_set(&uids);
-            if can_move {
-                s.uid_mv(&set, &target).await.map_err(proto)?;
-            } else {
-                s.uid_copy(&set, &target).await.map_err(proto)?;
-                s.uid_store(&set, "+FLAGS.SILENT (\\Deleted)")
-                    .await
-                    .map_err(proto)?
-                    .try_collect::<Vec<_>>()
-                    .await
-                    .map_err(proto)?;
-                s.expunge()
-                    .await
-                    .map_err(proto)?
-                    .try_collect::<Vec<_>>()
-                    .await
-                    .map_err(proto)?;
+        let account = accounts.iter().find(|a| a.id == conn).ok_or_else(|| {
+            MailError::Protocol("that account isn't connected any more".to_owned())
+        })?;
+        let mut s = session(&account.config).await?;
+        let f = folders(&mut s).await?;
+        let (found, made) = match to {
+            Destination::Archive => (f.archive.or(f.all), "Archive"),
+            Destination::Trash => (f.trash, "Trash"),
+        };
+        let target = match found {
+            Some(t) => t,
+            None => {
+                s.create(made).await.map_err(proto)?;
+                made.to_owned()
             }
+        };
+        if target == mailbox {
             let _ = s.logout().await;
-            Ok::<_, MailError>(())
+            continue;
         }
-        .await;
-        result.map_err(|e| format!("Couldn't archive it: {e}"))?;
+        let can_move = s.capabilities().await.map_err(proto)?.has_str("MOVE");
+        s.select(&mailbox).await.map_err(proto)?;
+        let set = uid_set(&uids);
+        if can_move {
+            s.uid_mv(&set, &target).await.map_err(proto)?;
+        } else {
+            s.uid_copy(&set, &target).await.map_err(proto)?;
+            s.uid_store(&set, "+FLAGS.SILENT (\\Deleted)")
+                .await
+                .map_err(proto)?
+                .try_collect::<Vec<_>>()
+                .await
+                .map_err(proto)?;
+            s.expunge()
+                .await
+                .map_err(proto)?
+                .try_collect::<Vec<_>>()
+                .await
+                .map_err(proto)?;
+        }
+        let _ = s.logout().await;
     }
     Ok(())
 }

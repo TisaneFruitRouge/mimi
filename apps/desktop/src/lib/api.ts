@@ -37,6 +37,7 @@ import type { MailBox } from "@/bindings/MailBox";
 import type { MailDraft } from "@/bindings/MailDraft";
 import type { MailOverview } from "@/bindings/MailOverview";
 import type { MailDiscovery } from "@/bindings/MailDiscovery";
+import type { MailFolderInput } from "@/bindings/MailFolderInput";
 import type { MailPreset } from "@/bindings/MailPreset";
 import type { MailSummary } from "@/bindings/MailSummary";
 import type { MailThread } from "@/bindings/MailThread";
@@ -161,10 +162,11 @@ export const api = {
   mailPresets: () => call<MailPreset[]>("GET", "/mail/presets"),
   /** Counts are for `scope` (all mail when empty); accounts are always all of them. */
   mailOverview: (scope: MailScope = {}) => call<MailOverview>("GET", `/mail?${scopeParams(scope)}`),
-  mailThreads: (view: MailBox | null, q: string, scope: MailScope = {}) => {
+  mailThreads: (view: MailBox | null, q: string, scope: MailScope = {}, folder: number | null = null) => {
     const params = scopeParams(scope);
     params.set("limit", "80");
-    if (view) params.set("view", view);
+    if (folder !== null) params.set("folder", String(folder));
+    else if (view) params.set("view", view);
     if (q.trim()) params.set("q", q.trim());
     return call<MailThread[]>("GET", `/mail/threads?${params}`);
   },
@@ -172,6 +174,14 @@ export const api = {
   markMailRead: (id: number, read: boolean) =>
     call<null>("POST", `/mail/threads/${id}/read`, { read }),
   archiveMail: (id: number) => call<null>("POST", `/mail/threads/${id}/archive`),
+  createMailFolder: (f: MailFolderInput) => call<null>("POST", "/mail/folders", f),
+  updateMailFolder: (id: number, f: MailFolderInput) => call<null>("PATCH", `/mail/folders/${id}`, f),
+  deleteMailFolder: (id: number) => call<null>("DELETE", `/mail/folders/${id}`),
+  /** The user puts a conversation in a smart folder or takes it out. */
+  setMailThreadFolder: (thread: number, folder: number, member: boolean) =>
+    call<null>("POST", `/mail/threads/${thread}/folders`, { folder, member }),
+  /** Moves a conversation to the Trash of its mail account. */
+  deleteMail: (id: number) => call<null>("DELETE", `/mail/threads/${id}`),
   summarizeMail: (id: number) => call<MailSummary>("POST", `/mail/threads/${id}/summarize`),
   draftMailReply: (id: number, instructions: string | null) =>
     call<MailDraft>("POST", `/mail/threads/${id}/draft`, { instructions }),
@@ -285,8 +295,8 @@ export const keys = {
   mailPresets: ["mail", "presets"] as const,
   mailOverview: (scope: MailScope = {}) =>
     ["mail", "overview", scope.account ?? null, scope.address ?? null] as const,
-  mailThreads: (view: MailBox | null, q: string, scope: MailScope = {}) =>
-    ["mail", "threads", view, q, scope.account ?? null, scope.address ?? null] as const,
+  mailThreads: (view: MailBox | null, q: string, scope: MailScope = {}, folder: number | null = null) =>
+    ["mail", "threads", view, q, scope.account ?? null, scope.address ?? null, folder] as const,
   mailThread: (id: number) => ["mail", "thread", id] as const,
   /** Every calendar and event read. */
   calendar: ["calendar"] as const,

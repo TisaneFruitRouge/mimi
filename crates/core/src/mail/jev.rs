@@ -159,6 +159,33 @@ fn questions() -> Value {
     })
 }
 
+/// Which of `folders` a conversation belongs in, by Jev (one yes/no each).
+pub async fn folders(
+    state_: &AppState,
+    detail: &MailThreadDetail,
+    folders: &[super::folders::FolderSpec],
+) -> Result<Vec<i64>, String> {
+    let api_key = key(&state_.db)
+        .await
+        .ok_or("Add your TypeSafe API key in Settings › Privacy, or file with your own model.")?;
+    let answer = ask(
+        state_,
+        &api_key,
+        state(detail),
+        super::folders::jev_questions(folders),
+    )
+    .await?;
+    Ok(folders
+        .iter()
+        .filter(|(id, _, _)| {
+            answer["answers"][format!("folder_{id}")]["noul"]
+                .as_f64()
+                .is_some_and(|p| p >= 0.5)
+        })
+        .map(|(id, _, _)| *id)
+        .collect())
+}
+
 /// Sorts one conversation with Jev.
 pub async fn sort(state_: &AppState, detail: &MailThreadDetail) -> Result<MailCategory, String> {
     let api_key = key(&state_.db)

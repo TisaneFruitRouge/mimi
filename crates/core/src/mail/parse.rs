@@ -115,11 +115,21 @@ pub struct Attachment {
 /// The `index`th named attachment of a raw message, in the order `Parsed::attachments`
 /// lists them.
 pub fn attachment(raw: &[u8], index: usize) -> Option<Attachment> {
-    let msg = MessageParser::default().parse(raw)?;
-    let part = msg
-        .attachments()
+    attachments(raw).into_iter().nth(index)
+}
+
+/// Every named attachment of a raw message, in the order `Parsed::attachments` lists them.
+pub fn attachments(raw: &[u8]) -> Vec<Attachment> {
+    let Some(msg) = MessageParser::default().parse(raw) else {
+        return Vec::new();
+    };
+    msg.attachments()
         .filter(|p| p.attachment_name().is_some())
-        .nth(index)?;
+        .filter_map(to_attachment)
+        .collect()
+}
+
+fn to_attachment(part: &mail_parser::MessagePart) -> Option<Attachment> {
     let content_type = part
         .content_type()
         .map(|c| match c.subtype() {

@@ -132,13 +132,19 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/mail/presets", get(mail::presets))
         .route("/mail/discover", post(mail::discover))
         .route("/mail/threads", get(mail::threads))
-        .route("/mail/threads/{id}", get(mail::thread))
+        .route("/mail/threads/{id}", get(mail::thread).delete(mail::delete))
         .route("/mail/threads/{id}/read", post(mail::read))
         .route("/mail/threads/{id}/archive", post(mail::archive))
         .route("/mail/threads/{id}/summarize", post(mail::summarize))
         .route("/mail/threads/{id}/draft", post(mail::draft))
         .route("/mail/send", post(mail::send))
         .route("/mail/refresh", post(mail::refresh))
+        .route("/mail/folders", post(mail::create_folder))
+        .route(
+            "/mail/folders/{id}",
+            axum::routing::patch(mail::update_folder).delete(mail::delete_folder),
+        )
+        .route("/mail/threads/{id}/folders", post(mail::set_thread_folder))
         .route(
             "/mail/jev",
             axum::routing::put(mail::jev_connect).delete(mail::jev_disconnect),

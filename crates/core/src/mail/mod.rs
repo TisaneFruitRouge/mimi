@@ -22,6 +22,7 @@ use crate::connections::store as connection_store;
 
 pub mod contacts;
 pub mod discover;
+pub mod folders;
 pub mod jev;
 pub mod mentions;
 pub mod model;
@@ -480,6 +481,11 @@ pub async fn overview(state: &AppState, scope: store::Scope) -> Result<MailOverv
             mimi_protocol::MailSorter::Jev => Some(mimi_protocol::Locality::Cloud),
         },
         jev_connected: jev::key(&state.db).await.is_some(),
+        folders: state
+            .db
+            .call(|c| folders::list(c))
+            .await
+            .map_err(|e| e.to_string())?,
     })
 }
 
@@ -586,6 +592,18 @@ pub async fn attachment(
     message: i64,
     index: usize,
 ) -> Result<parse::Attachment, String> {
+    let raw = source(state, message).await?;
+    let found = parse::attachment(&raw, index).ok_or("That attachment couldn't be found.")?;
+    if found.data.len() > MAX_ATTACHMENT {
+        return Err(
+            "That attachment is too large to open here. Open it in your usual mail app.".to_owned(),
+        );
+    }
+    Ok(found)
+}
+
+/// A stored message's full source, fetched from the server.
+async fn source(state: &AppState, message: i64) -> Result<Vec<u8>, String> {
     let (conn, mailbox, uid) = state
         .db
         .call(move |c| store::location(c, message))
@@ -595,17 +613,36 @@ pub async fn attachment(
     let account = account(state, conn)
         .await
         .ok_or("That account isn't connected any more.")?;
-    let raw = sync::fetch_source(&account, &mailbox, uid)
+    sync::fetch_source(&account, &mailbox, uid)
         .await
         .map_err(|e| e.to_string())?
-        .ok_or("That email isn't on the server any more. It may have been moved or deleted.")?;
-    let found = parse::attachment(&raw, index).ok_or("That attachment couldn't be found.")?;
-    if found.data.len() > MAX_ATTACHMENT {
-        return Err(
-            "That attachment is too large to open here. Open it in your usual mail app.".to_owned(),
-        );
+        .ok_or_else(|| {
+            "That email isn't on the server any more. It may have been moved or deleted.".to_owned()
+        })
+}
+
+/// Moves a conversation to the Trash on the server (every copy: inbox, sent, archive)
+/// and forgets it here.
+pub async fn delete(state: &Arc<AppState>, id: i64) -> Result<(), String> {
+    let locations = state
+        .db
+        .call(move |c| store::locations(c, id))
+        .await
+        .map_err(|e| e.to_string())?;
+    if locations.is_empty() {
+        return Err("That conversation isn't here any more.".to_owned());
     }
-    Ok(found)
+    sync::trash_on_server(state, &locations).await?;
+    state
+        .db
+        .call(move |c| store::forget_thread(c, id))
+        .await
+        .map_err(|e| e.to_string())?;
+    for (conn, ..) in &locations {
+        state.mail.poke(*conn);
+    }
+    changed(state);
+    Ok(())
 }
 
 /// Sends a message the user wrote or approved, and files it in Sent.
@@ -641,7 +678,18 @@ pub async fn send(state: &Arc<AppState>, draft: MailDraft) -> Result<(), String>
             .filter(|r| is_own(r))
             .unwrap_or_else(|| main.clone()),
     };
-    let raw = smtp::build(&from, &draft, reply.as_ref())?;
+    // A forward carries the original's attachments along.
+    let attachments = match draft.forward_of {
+        Some(message) => {
+            let files = parse::attachments(&source(state, message).await?);
+            if files.iter().map(|f| f.data.len()).sum::<usize>() > smtp::MAX_ATTACHMENTS {
+                return Err("The attachments are too large to forward from here.".to_owned());
+            }
+            files
+        }
+        None => Vec::new(),
+    };
+    let raw = smtp::build(&from, &draft, reply.as_ref(), &attachments)?;
     smtp::send(&account.config, &raw).await.map_err(|e| {
         if from == main {
             e

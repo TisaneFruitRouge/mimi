@@ -17,4 +17,8 @@ from: string | null, to: Array<string>, cc: Array<string>, subject: string, body
 /**
  * The conversation this answers, so it threads correctly.
  */
-reply_to: number | null, };
+reply_to: number | null, 
+/**
+ * A message being forwarded: its attachments go along (fetched from the server).
+ */
+forward_of: number | null, };

@@ -258,6 +258,18 @@ than inventing their own.
   no summaries. Tests point `state.mail.jev_api` at a fake. Local "System One" models
   (Laya, GLiNER2.5-Decide) were tried on a labelled set of 180 emails and scored well
   below the chat model for these categories (about 40–50% vs 66%), so none ships yet.
+- **Smart folders** (`folders.rs`, migration 0017): the user names a folder and describes
+  what goes in it; the chosen sorter (their model, or Jev with one yes/no per folder)
+  files conversations in the sorting queue after new mail is sorted (even with sorting
+  off: making a folder asked for it), newest first, one conversation at a time. Rows in
+  `mail_folder_threads` record each check (`source` auto | user); the user's choices are
+  never overwritten, and a new description forgets only the sorter's. Suspicious mail
+  is never filed. Folders are labels in Mimi only. `?folder=` on `/mail/threads`.
+- **Delete and forward**: `DELETE /mail/threads/{id}` moves every copy to the account's
+  Trash (found by `\Trash` or name, made if missing) and forgets it here; `forward_of`
+  on a draft re-attaches the original's attachments (fetched from the server). Thread
+  ids are never reused (`mail_thread_ids`, migration 0016), so a stale id can't reach
+  another conversation.
 - **Suspicious mail** (`suspicious.rs`, migration 0015): instructions addressed to an
   AI assistant (English and French phrasings, in visible or hidden HTML text) flag a
   message. Flagged conversations are never sorted or summarised by the model (filed as

@@ -5,7 +5,7 @@ use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use lettre::message::header::ContentType;
-use lettre::message::{Mailbox, Mailboxes};
+use lettre::message::{Attachment, Mailbox, Mailboxes, MultiPart, SinglePart};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::transport::smtp::client::{Tls, TlsParameters};
 use lettre::transport::smtp::extension::ClientId;
@@ -21,6 +21,8 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 /// Recipients per message, so a bad draft can't mail a whole address book.
 pub const MAX_RECIPIENTS: usize = 20;
 const MAX_BODY: usize = 100_000;
+/// Total size of attachments forwarded in one message.
+pub const MAX_ATTACHMENTS: usize = 20 * 1024 * 1024;
 
 fn transport(
     config: &EmailConfig,
@@ -151,7 +153,12 @@ fn mailbox(raw: &str) -> Result<Mailbox, String> {
 
 /// Builds the message from a draft: plain text, from `from` (the account's address or
 /// one of its aliases, checked by the caller).
-pub fn build(from: &str, draft: &MailDraft, reply: Option<&ReplyHeaders>) -> Result<Built, String> {
+pub fn build(
+    from: &str,
+    draft: &MailDraft,
+    reply: Option<&ReplyHeaders>,
+    attachments: &[super::parse::Attachment],
+) -> Result<Built, String> {
     // Each address once: a Cc that repeats a To (models do that) would get it twice.
     let mut seen = std::collections::HashSet::new();
     let mut unique = |list: &[String]| -> Result<Vec<Mailbox>, String> {
@@ -202,10 +209,18 @@ pub fn build(from: &str, draft: &MailDraft, reply: Option<&ReplyHeaders>) -> Res
             );
         }
     }
-    let message = builder
-        .header(ContentType::TEXT_PLAIN)
-        .body(draft.body.replace("\r\n", "\n"))
-        .map_err(|e| e.to_string())?;
+    let body = draft.body.replace("\r\n", "\n");
+    let message = if attachments.is_empty() {
+        builder.header(ContentType::TEXT_PLAIN).body(body)
+    } else {
+        let mut parts = MultiPart::mixed().singlepart(SinglePart::plain(body));
+        for a in attachments {
+            let kind = ContentType::parse(&a.content_type).unwrap_or(ContentType::TEXT_PLAIN);
+            parts = parts.singlepart(Attachment::new(a.name.clone()).body(a.data.clone(), kind));
+        }
+        builder.multipart(parts)
+    }
+    .map_err(|e| e.to_string())?;
     let formatted = message.formatted();
     Ok(Built { message, formatted })
 }

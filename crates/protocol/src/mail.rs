@@ -88,6 +88,9 @@ pub struct MailThread {
     pub received_on: Option<String>,
     /// A message in it contains instructions aimed at an AI assistant.
     pub suspicious: bool,
+    /// The smart folders it's in.
+    #[ts(type = "number[]")]
+    pub folders: Vec<i64>,
     pub subject: String,
     /// Everyone in the conversation except the user, most recent first.
     pub participants: Vec<MailAddress>,
@@ -152,6 +155,43 @@ pub struct MailOverview {
     pub sorter_locality: Option<crate::Locality>,
     /// Whether a TypeSafe key is saved, so Jev can be chosen.
     pub jev_connected: bool,
+    /// The user's smart folders.
+    pub folders: Vec<MailFolder>,
+}
+
+/// A smart folder: the user's sorter files conversations that fit its description.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MailFolder {
+    #[ts(type = "number")]
+    pub id: i64,
+    pub name: String,
+    /// What goes in it, in the user's words.
+    pub description: String,
+    /// Conversations in it, and how many of those are unread.
+    pub threads: u32,
+    pub unread: u32,
+    /// Conversations not yet checked against it (it's still being filled).
+    pub to_check: u32,
+}
+
+/// Body of `POST /v1/mail/folders`, and of `PATCH` (fields left out stay as they are).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct MailFolderInput {
+    pub name: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Body of `POST /v1/mail/threads/{id}/folders`: the user puts a conversation in a
+/// folder or takes it out. Their choice is kept over the sorter's.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct FolderMembership {
+    #[ts(type = "number")]
+    pub folder: i64,
+    pub member: bool,
 }
 
 /// Body of `PUT /v1/mail/jev`: the user's TypeSafe API key.
@@ -202,6 +242,10 @@ pub struct MailDraft {
     #[serde(default)]
     #[ts(type = "number | null")]
     pub reply_to: Option<i64>,
+    /// A message being forwarded: its attachments go along (fetched from the server).
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub forward_of: Option<i64>,
 }
 
 /// Body of `POST /v1/mail/threads/{id}/draft`.

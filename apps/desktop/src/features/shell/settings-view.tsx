@@ -399,7 +399,7 @@ function MailSortingGroup() {
             title="Sorted by"
             detail={
               sorter === "jev"
-                ? "Jev by TypeSafe, in the cloud: the sender, subject and text of new mail are sent to TypeSafe to be sorted. Newsletters and suspicious mail aren't. No summaries."
+                ? "Jev by TypeSafe, in the cloud: the sender, subject and text of new mail are sent to TypeSafe to be sorted (newsletters too when you have smart folders). Suspicious mail never is. No summaries."
                 : "Your model. Or choose Jev, a fast cloud service that only sorts (your own TypeSafe key)."
             }
             className="[&_.truncate]:whitespace-normal"
@@ -490,8 +490,9 @@ function JevKeyDialog({ open, onClose, onSaved }: { open: boolean; onClose: () =
           <DialogTitle>Sort mail with Jev</DialogTitle>
           <DialogDescription>
             Jev is a cloud service by TypeSafe that only sorts: it answers in a fraction of a second but
-            writes nothing, so there are no summaries. Each new email it sorts (sender, subject and text)
-            is sent to TypeSafe; newsletters and suspicious mail are sorted here and never sent.
+            writes nothing, so there are no summaries. Each new email it sorts or files into smart
+            folders (sender, subject and text) is sent to TypeSafe. Newsletters are only sent when you
+            have smart folders, and suspicious mail never is.
           </DialogDescription>
         </DialogHeader>
         <form

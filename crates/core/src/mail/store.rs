@@ -59,12 +59,16 @@ pub fn insert(c: &Connection, m: &NewMessage) -> rusqlite::Result<Option<i64>> {
             id
         }
         None => {
+            // A number never used before (see migration 0016).
+            c.execute("INSERT INTO mail_thread_ids DEFAULT VALUES", [])?;
+            let id = c.last_insert_rowid();
+            c.execute("DELETE FROM mail_thread_ids WHERE id = ?1", [id])?;
             c.execute(
-                "INSERT INTO mail_threads (connection_id, subject, last_at, automated)
-                 VALUES (?1, ?2, ?3, ?4)",
-                params![conn, display_subject(&p.subject), date, p.automated],
+                "INSERT INTO mail_threads (id, connection_id, subject, last_at, automated)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![id, conn, display_subject(&p.subject), date, p.automated],
             )?;
-            c.last_insert_rowid()
+            id
         }
     };
     c.execute(
@@ -410,6 +414,8 @@ pub struct Query {
     /// Only conversations newer than this.
     pub since: Option<i64>,
     pub unread_only: bool,
+    /// Only conversations in this smart folder (the view is ignored).
+    pub folder: Option<i64>,
     /// Only this account's conversations, and, within it, only those that arrived at
     /// (or were sent from) one address.
     pub scope: Scope,
@@ -464,7 +470,18 @@ pub fn threads(c: &Connection, q: &Query, me: &[String]) -> rusqlite::Result<Vec
         )
     };
     let (mut filters, mut args) = q.scope.filters();
-    match q.view {
+    let view = if let Some(folder) = q.folder {
+        filters.push(
+            "EXISTS (SELECT 1 FROM mail_folder_threads ft WHERE ft.thread_id = t.id
+               AND ft.folder_id = ? AND ft.member = 1)"
+                .to_owned(),
+        );
+        args.push(folder.into());
+        None
+    } else {
+        q.view
+    };
+    match view {
         Some(MailBox::Inbox) => filters.push(in_folder("inbox")),
         Some(MailBox::Sent) => filters.push(in_folder("sent")),
         Some(MailBox::Archive) => {
@@ -576,6 +593,7 @@ pub fn thread(c: &Connection, id: i64, me: &[String]) -> rusqlite::Result<Option
     let Some(last) = messages.last() else {
         return Ok(None);
     };
+    let folders = super::folders::of_thread(c, id)?;
     let suspicious: bool = c.query_row(
         "SELECT coalesce(max(suspicious), 0) FROM mail_messages WHERE thread_id = ?1",
         [id],
@@ -594,6 +612,7 @@ pub fn thread(c: &Connection, id: i64, me: &[String]) -> rusqlite::Result<Option
         connection_id: conn.parse().unwrap_or_default(),
         received_on,
         suspicious,
+        folders,
         subject,
         participants: participants(&messages, me),
         last_at,
@@ -802,6 +821,12 @@ pub fn set_thread_seen(c: &Connection, thread: i64, seen: bool) -> rusqlite::Res
         params![thread, seen],
     )?;
     Ok(())
+}
+
+/// Forgets a whole conversation locally (it was deleted on the server).
+pub fn forget_thread(c: &Connection, thread: i64) -> rusqlite::Result<()> {
+    c.execute("DELETE FROM mail_messages WHERE thread_id = ?1", [thread])?;
+    drop_empty_threads(c)
 }
 
 /// Takes a thread out of the inbox locally (the server move happens separately).

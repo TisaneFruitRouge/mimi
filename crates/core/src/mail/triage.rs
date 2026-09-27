@@ -60,7 +60,8 @@ pub async fn drain(state: &AppState) -> usize {
             MailSorter::Model => settings.default_model.is_some(),
             MailSorter::Jev => super::jev::key(&state.db).await.is_some(),
         };
-        if !settings.mail_sorting || !ready {
+        // Smart folders are filled even with sorting off: making one asked for it.
+        if !ready {
             break;
         }
         // The user comes first: wait while a chat reply is being written.
@@ -69,13 +70,31 @@ pub async fn drain(state: &AppState) -> usize {
             continue;
         }
         let since = now_ms() - SORT_DAYS * 24 * 3600 * 1000;
-        let next = state
-            .db
-            .call(move |c| store::unsorted(c, since, 1))
-            .await
-            .ok()
-            .and_then(|ids| ids.first().copied());
-        let Some(id) = next else { break };
+        let next = if settings.mail_sorting {
+            state
+                .db
+                .call(move |c| store::unsorted(c, since, 1))
+                .await
+                .ok()
+                .and_then(|ids| ids.first().copied())
+        } else {
+            None
+        };
+        let Some(id) = next else {
+            // New mail is sorted; now smart folders, one conversation at a time.
+            match super::folders::file_next(state, settings.mail_sorter).await {
+                Ok(true) => {
+                    sorted += 1;
+                    super::changed(state);
+                    continue;
+                }
+                Ok(false) => break,
+                Err(e) => {
+                    tracing::warn!("couldn't file a conversation into smart folders: {e}");
+                    break;
+                }
+            }
+        };
         match sort_one(state, id).await {
             Ok(()) => {
                 sorted += 1;
@@ -233,5 +252,6 @@ pub fn reply_draft(detail: &MailThreadDetail, body: String) -> mimi_protocol::Ma
         subject,
         body,
         reply_to: Some(detail.thread.id),
+        forward_of: None,
     }
 }

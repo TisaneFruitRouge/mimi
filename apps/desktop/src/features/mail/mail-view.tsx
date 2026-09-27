@@ -4,6 +4,9 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   Archive,
   AtSign,
+  Forward,
+  ReplyAll,
+  Trash2,
   ChevronDown,
   CircleAlert,
   Inbox,
@@ -28,6 +31,7 @@ import { toast } from "sonner";
 
 import type { MailBox } from "@/bindings/MailBox";
 import type { MailDraft } from "@/bindings/MailDraft";
+import type { MailFolder } from "@/bindings/MailFolder";
 import type { MailMessage } from "@/bindings/MailMessage";
 import type { MailOverview } from "@/bindings/MailOverview";
 import type { MailThread } from "@/bindings/MailThread";
@@ -35,6 +39,16 @@ import type { MailThreadDetail } from "@/bindings/MailThreadDetail";
 import { LocalityBadge } from "@/components/locality-badge";
 import { IconTile, Pill } from "@/components/page";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -46,6 +60,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ConnectDialog } from "@/features/connections/connect-dialogs";
 import { DraftEditor, SendButton, useSendDraft } from "@/features/mail/draft-editor";
+import { AddToFolder, FolderChips, FolderHeader, FolderList } from "@/features/mail/folders";
 import type { Section } from "@/features/shell/top-bar";
 import { api, keys, type MailScope } from "@/lib/api";
 import { type Draft, mentionDraft } from "@/lib/draft";
@@ -87,6 +102,25 @@ function storedView(): MailBox | null {
 function storeView(v: MailBox) {
   try {
     localStorage.setItem(VIEW_KEY, v);
+  } catch {
+    // Not important.
+  }
+}
+
+// The open smart folder, per viewer.
+const FOLDER_KEY = "mimi.mail.folder";
+function storedFolder(): number | null {
+  try {
+    const v = Number(localStorage.getItem(FOLDER_KEY));
+    return Number.isInteger(v) && v > 0 ? v : null;
+  } catch {
+    return null;
+  }
+}
+function storeFolder(id: number | null) {
+  try {
+    if (id === null) localStorage.removeItem(FOLDER_KEY);
+    else localStorage.setItem(FOLDER_KEY, String(id));
   } catch {
     // Not important.
   }
@@ -255,6 +289,7 @@ export function MailView({
     setSelected(null);
   };
   const [view, setViewState] = useState<MailBox | null>(storedView);
+  const [folderId, setFolderState] = useState<number | null>(storedFolder);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<number | null>(() => {
     const id = pendingThread;
@@ -269,8 +304,16 @@ export function MailView({
   const setView = (v: MailBox) => {
     setViewState(v);
     storeView(v);
+    setFolder(null);
     setQuery("");
   };
+  const setFolder = (id: number | null) => {
+    setFolderState(id);
+    storeFolder(id);
+    setQuery("");
+  };
+  // A remembered folder that was deleted means the usual views.
+  const folder = o?.folders.find((f) => f.id === folderId) ?? null;
 
   if (overview.isLoading) {
     return (
@@ -290,15 +333,26 @@ export function MailView({
 
   const compose = () => {
     setSelected(null);
-    setComposing({ connection_id: null, from: null, to: [], cc: [], subject: "", body: "", reply_to: null });
+    setComposing({
+      connection_id: null,
+      from: null,
+      to: [],
+      cc: [],
+      subject: "",
+      body: "",
+      reply_to: null,
+      forward_of: null,
+    });
   };
 
   return (
     <div className="flex h-full">
       <Mailboxes
         overview={o}
-        view={current}
+        view={folder ? null : current}
         onView={setView}
+        folder={folder?.id ?? null}
+        onFolder={setFolder}
         scope={scope}
         onScope={setScope}
         onCompose={compose}
@@ -307,6 +361,10 @@ export function MailView({
       <ThreadList
         view={current}
         onView={setView}
+        folder={folder}
+        overview={o}
+        onFolder={setFolder}
+        onLeaveFolder={() => setFolder(null)}
         scope={scope}
         onScope={setScope}
         rows={rows}
@@ -341,6 +399,10 @@ export function MailView({
                 onGone={() => setSelected(null)}
                 onAsk={onAsk}
                 onOpenPerson={onOpenPerson}
+                onForward={(draft) => {
+                  setSelected(null);
+                  setComposing(draft);
+                }}
               />
             ) : (
               <NothingOpen view={current} />
@@ -380,14 +442,18 @@ function Mailboxes({
   overview: o,
   view,
   onView,
+  folder,
+  onFolder,
   scope,
   onScope,
   onCompose,
   onSettings,
 }: {
   overview: MailOverview;
-  view: MailBox;
+  view: MailBox | null;
   onView: (v: MailBox) => void;
+  folder: number | null;
+  onFolder: (id: number) => void;
   scope: MailScope;
   onScope: (s: MailScope) => void;
   onCompose: () => void;
@@ -452,6 +518,7 @@ function Mailboxes({
         <span className="px-2.5 pb-1 section-label">Mailboxes</span>
         {views.filter((v) => !v.sorted).map(item)}
       </nav>
+      <FolderList overview={o} current={folder} onOpen={onFolder} />
       {rows.length > 0 && (
         <nav aria-label="Received on" className="flex flex-col gap-0.5">
           <span className="px-2.5 pb-1 section-label">Received on</span>
@@ -566,6 +633,10 @@ function IconButton({
 function ThreadList({
   view,
   onView,
+  folder,
+  overview,
+  onFolder,
+  onLeaveFolder,
   scope,
   onScope,
   rows,
@@ -579,6 +650,10 @@ function ThreadList({
 }: {
   view: MailBox;
   onView: (v: MailBox) => void;
+  folder: MailFolder | null;
+  overview: MailOverview;
+  onFolder: (id: number) => void;
+  onLeaveFolder: () => void;
   scope: MailScope;
   onScope: (s: MailScope) => void;
   rows: ScopeRow[];
@@ -593,8 +668,8 @@ function ThreadList({
   const searching = query.trim().length > 0;
   // A search looks through everything, not only the current view.
   const threads = useQuery({
-    queryKey: keys.mailThreads(searching ? null : view, query, scope),
-    queryFn: () => api.mailThreads(searching ? null : view, query, scope),
+    queryKey: keys.mailThreads(searching ? null : view, query, scope, searching ? null : (folder?.id ?? null)),
+    queryFn: () => api.mailThreads(searching ? null : view, query, scope, searching ? null : (folder?.id ?? null)),
     placeholderData: keepPreviousData,
   });
   const scopeLabel = rows.find((r) => sameScope(r.scope, scope))?.label;
@@ -624,7 +699,7 @@ function ThreadList({
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button className="flex min-w-0 items-center gap-1 type-title lg:pointer-events-none">
-              <span className="truncate">{searching ? "Search" : current.label}</span>
+              <span className="truncate">{searching ? "Search" : (folder?.name ?? current.label)}</span>
               <ChevronDown className="size-4 shrink-0 text-faint lg:hidden" />
             </button>
           </DropdownMenuTrigger>
@@ -632,6 +707,12 @@ function ThreadList({
             {views.map((v) => (
               <DropdownMenuItem key={v.id} onSelect={() => onView(v.id)}>
                 <v.icon /> {v.label}
+              </DropdownMenuItem>
+            ))}
+            {overview.folders.length > 0 && <DropdownMenuSeparator />}
+            {overview.folders.map((f) => (
+              <DropdownMenuItem key={f.id} onSelect={() => onFolder(f.id)}>
+                <Sparkles /> <span className="truncate">{f.name}</span>
               </DropdownMenuItem>
             ))}
             {rows.length > 0 && (
@@ -655,6 +736,7 @@ function ThreadList({
           </IconButton>
         </span>
       </div>
+      {folder && !searching && <FolderHeader folder={folder} overview={overview} onDeleted={onLeaveFolder} />}
       {scopeLabel && !searching && (
         <div className="-mt-2 flex items-center gap-1.5 px-4 pb-3 type-subhead text-muted-foreground">
           <span className="min-w-0 truncate">Received on {scopeLabel}</span>
@@ -728,7 +810,11 @@ function ThreadList({
             ) : searching ? (
               `Nothing matches “${query}”.`
             ) : (
-              empty[view]
+              folder ? (
+                folder.to_check > 0 ? "Filing your mail…" : "Nothing in this folder yet."
+              ) : (
+                empty[view]
+              )
             )}
           </div>
         )}
@@ -841,6 +927,7 @@ function Reader({
   overview,
   showAddress,
   onGone,
+  onForward,
   onAsk,
   onOpenPerson,
 }: {
@@ -848,6 +935,7 @@ function Reader({
   overview: MailOverview;
   showAddress: boolean;
   onGone: () => void;
+  onForward: (draft: MailDraft) => void;
   onAsk: (draft: Draft) => void;
   onOpenPerson: (id: string) => void;
 }) {
@@ -858,6 +946,7 @@ function Reader({
   const [summarizing, setSummarizing] = useState(false);
   const [reply, setReply] = useState<MailDraft | null>(null);
   const [archiving, setArchiving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const d = detail.data;
 
   // Opening an unread conversation marks it read, as mail apps do.
@@ -907,7 +996,18 @@ function Reader({
       setArchiving(false);
     }
   };
+  const mine = new Set(overview.accounts.flatMap((a) => a.addresses.map((x) => x.email.toLowerCase())));
   const startReply = () => setReply(replyTo(d));
+  const replyAll = replyAllTo(d, mine);
+  const remove = async () => {
+    try {
+      await api.deleteMail(id);
+      toast.success("Moved to the Trash");
+      onGone();
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
   // The conversation itself goes along as a # mention, so the assistant reads it.
   const ask = () => onAsk(mentionDraft("mail_thread", String(t.id), mailLabel(t.subject)));
   const openPerson = async (email: string) => {
@@ -931,6 +1031,7 @@ function Reader({
                 <AtSign className="size-3.5" /> Received on {t.received_on}
               </p>
             )}
+            <FolderChips thread={t.id} ids={t.folders} folders={overview.folders} />
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="secondary" size="sm" onClick={startReply} disabled={!!reply}>
@@ -954,12 +1055,42 @@ function Reader({
                 >
                   <MailOpen /> Mark as unread
                 </DropdownMenuItem>
+                {replyAll && (
+                  <DropdownMenuItem onSelect={() => setReply(replyAll)}>
+                    <ReplyAll /> Reply all
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem onSelect={() => onForward(forwardOf(d))}>
+                  <Forward /> Forward
+                </DropdownMenuItem>
+                <AddToFolder thread={t.id} ids={t.folders} folders={overview.folders} />
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={ask}>
                   <Sparkles /> Ask {assistant} about this
                 </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onSelect={() => setConfirmDelete(true)}>
+                  <Trash2 /> Delete
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete this conversation?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    “{t.subject || "(no subject)"}” moves to the Trash in your mail account, where you
+                    can still get it back from your usual mail app.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction variant="destructive" onClick={remove}>
+                    Delete
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         </header>
 
@@ -1008,6 +1139,47 @@ function Reader({
   );
 }
 
+/**
+ * Reply to everyone in the latest message, or `null` when that's just the sender: the
+ * sender in To, everyone else (but the user) in Cc.
+ */
+function replyAllTo(d: MailThreadDetail, mine: Set<string>): MailDraft | null {
+  const base = replyTo(d);
+  const last = [...d.messages].reverse().find((m) => !m.from_me) ?? d.messages.at(-1);
+  if (!last) return null;
+  const to = new Set(base.to.map((a) => a.toLowerCase()));
+  const cc = [...new Set([...last.to, ...last.cc].map((a) => a.email.toLowerCase()))].filter(
+    (a) => !mine.has(a) && !to.has(a),
+  );
+  return cc.length > 0 ? { ...base, cc } : null;
+}
+
+/** A new message forwarding the latest one, quoted, with its attachments along. */
+function forwardOf(d: MailThreadDetail): MailDraft {
+  const m = d.messages.at(-1)!;
+  const who = (a: { name: string | null; email: string }) => (a.name ? `${a.name} <${a.email}>` : a.email);
+  const subject = /^(fwd?|tr|wg)\s*:/i.test(d.thread.subject) ? d.thread.subject : `Fwd: ${d.thread.subject}`;
+  const header = [
+    "---------- Forwarded message ----------",
+    `From: ${who(m.from)}`,
+    `Date: ${longDate(m.date)}`,
+    `Subject: ${d.thread.subject}`,
+    m.to.length > 0 ? `To: ${m.to.map(who).join(", ")}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return {
+    connection_id: d.thread.connection_id,
+    from: d.thread.received_on,
+    to: [],
+    cc: [],
+    subject,
+    body: `\n\n${header}\n\n${m.body}`,
+    reply_to: null,
+    forward_of: m.attachments.length > 0 ? m.id : null,
+  };
+}
+
 function replyTo(d: MailThreadDetail): MailDraft {
   const lastOther = [...d.messages].reverse().find((m) => !m.from_me);
   const to = lastOther ? [lastOther.from.email] : (d.messages.at(-1)?.to.map((a) => a.email) ?? []);
@@ -1021,6 +1193,7 @@ function replyTo(d: MailThreadDetail): MailDraft {
     subject,
     body: "",
     reply_to: d.thread.id,
+    forward_of: null,
   };
 }
 
@@ -1220,7 +1393,12 @@ function Compose({
   return (
     <div className="h-full overflow-y-auto" onScroll={onScroll}>
       <div className="mx-auto flex w-full max-w-[760px] flex-col gap-5 px-6 pt-[84px] pb-20">
-        <h1 className="type-title">New message</h1>
+        <h1 className="type-title">{draft.subject.startsWith("Fwd:") ? "Forward" : "New message"}</h1>
+        {draft.forward_of !== null && (
+          <p className="-mt-2 flex items-center gap-1.5 type-subhead text-muted-foreground">
+            <Paperclip className="size-3.5" /> The original's attachments go along.
+          </p>
+        )}
         <div className="overflow-hidden rounded-[18px] bg-background shadow-[var(--shadow-card)]">
           <DraftEditor draft={draft} onChange={onChange} autoFocus="to" />
           <div className="flex items-center justify-end gap-2 border-t-[0.5px] border-separator px-4 py-2.5">

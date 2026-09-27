@@ -439,6 +439,7 @@ fn draft_from(args: &Value, reply_to: Option<i64>) -> MailDraft {
             .to_owned(),
         body: args["body"].as_str().unwrap_or_default().to_owned(),
         reply_to,
+        forward_of: None,
     }
 }
 
