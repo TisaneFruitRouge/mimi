@@ -171,6 +171,50 @@ pub async fn send(
     Ok(Json(()))
 }
 
+/// An attachment, always as a download: never shown inline, so an HTML attachment can't
+/// run in the web interface's origin.
+pub async fn attachment(
+    State(state): State<Arc<AppState>>,
+    Path((message, index)): Path<(i64, usize)>,
+) -> Result<axum::response::Response, AppError> {
+    let found = mail::attachment(&state, message, index)
+        .await
+        .map_err(AppError::bad_request)?;
+    let ascii: String = found
+        .name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_graphic() && c != '"' && c != '\\' || c == ' ' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let encoded: String = found
+        .name
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect();
+    axum::response::Response::builder()
+        .header("content-type", "application/octet-stream")
+        .header(
+            "content-disposition",
+            format!("attachment; filename=\"{ascii}\"; filename*=UTF-8''{encoded}"),
+        )
+        .header("x-content-type-options", "nosniff")
+        .header("content-security-policy", "sandbox")
+        .header("x-mimi-content-type", found.content_type)
+        .body(axum::body::Body::from(found.data))
+        .map_err(AppError::internal)
+}
+
 /// Checks every account for new mail now.
 pub async fn refresh(State(state): State<Arc<AppState>>) -> ApiResult<()> {
     for account in mail::accounts(&state).await {

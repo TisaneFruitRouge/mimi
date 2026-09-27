@@ -261,7 +261,9 @@ pub async fn pass(
     let (conn, me) = (account.id, account.config.email.clone());
     let mut changed = state
         .db
-        .call(move |c| store::backfill_received_on(c, conn, &me))
+        .call(move |c| {
+            Ok(store::backfill_received_on(c, conn, &me)? + store::backfill_suspicious(c, conn)?)
+        })
         .await
         .map_err(|e| MailError::Protocol(e.to_string()))?
         > 0;
@@ -618,6 +620,32 @@ pub fn spawn_flag_change(
 
 /// Moves messages out of the inbox on the server: to Archive, or on Gmail, out of the
 /// Inbox label (they stay in All Mail).
+/// One message's full source, fetched from the server (only names of attachments are
+/// kept locally). Leaves it unread if it was.
+pub async fn fetch_source(
+    account: &Account,
+    mailbox: &str,
+    uid: u32,
+) -> Result<Option<Vec<u8>>, MailError> {
+    let mut s = session(&account.config).await?;
+    s.select(mailbox).await.map_err(proto)?;
+    let mut raw = None;
+    {
+        let mut stream = s
+            .uid_fetch(uid.to_string(), "(UID BODY.PEEK[])")
+            .await
+            .map_err(proto)?;
+        while let Some(f) = stream.next().await {
+            let f = f.map_err(proto)?;
+            if f.uid == Some(uid) {
+                raw = f.body().map(<[u8]>::to_vec);
+            }
+        }
+    }
+    let _ = s.logout().await;
+    Ok(raw)
+}
+
 pub async fn archive_on_server(
     state: &AppState,
     locations: &[(Uuid, String, String, u32)],

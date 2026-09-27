@@ -1,11 +1,13 @@
 import { useState } from "react";
-import { Loader2, Send } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { ChevronDown, Loader2, Send } from "lucide-react";
 import { cn } from "cn";
 import { toast } from "sonner";
 
 import type { MailDraft } from "@/bindings/MailDraft";
 import { Button } from "@/components/ui/button";
-import { api } from "@/lib/api";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { api, keys } from "@/lib/api";
 
 /** "sam@example.com, Bo <bo@example.net>" ⇄ a list of addresses. */
 export const joinAddresses = (list: string[]) => list.join(", ");
@@ -36,6 +38,7 @@ export function DraftEditor({
   const [showCc, setShowCc] = useState(draft.cc.length > 0);
   return (
     <div className={cn("flex flex-col", className)}>
+      <FromLine draft={draft} onChange={onChange} />
       <Line label="To">
         <input
           value={to}
@@ -83,6 +86,42 @@ export function DraftEditor({
         className="field-sizing-content min-h-40 w-full resize-none bg-transparent px-4 py-3 type-body leading-[1.5] outline-none placeholder:text-[#a1a1a6]"
       />
     </div>
+  );
+}
+
+/**
+ * Which address it's sent from, when there's a choice: every connected account and the
+ * aliases mail has arrived at. Replies start from the address the mail was sent to.
+ */
+function FromLine({ draft, onChange }: { draft: MailDraft; onChange: (d: MailDraft) => void }) {
+  const overview = useQuery({ queryKey: keys.mailOverview(), queryFn: () => api.mailOverview() }).data;
+  const options = (overview?.accounts ?? []).flatMap((a) =>
+    a.addresses.map((x) => ({ connection: a.connection_id, email: x.email })),
+  );
+  if (options.length < 2) return null;
+  const account = overview!.accounts.find((a) => a.connection_id === draft.connection_id) ?? overview!.accounts[0];
+  const current = (draft.from ?? account.email).toLowerCase();
+  return (
+    <Line label="From">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button type="button" className="flex min-w-0 items-center gap-1 type-callout hover:text-foreground">
+            <span className="truncate">{current}</span>
+            <ChevronDown className="size-3.5 shrink-0 text-faint" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          {options.map((o) => (
+            <DropdownMenuItem
+              key={`${o.connection}:${o.email}`}
+              onSelect={() => onChange({ ...draft, connection_id: o.connection, from: o.email })}
+            >
+              {o.email}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </Line>
   );
 }
 

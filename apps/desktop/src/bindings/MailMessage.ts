@@ -5,4 +5,8 @@ export type MailMessage = { id: number, from: MailAddress, to: Array<MailAddress
 /**
  * Plain text. HTML mail is converted, with hidden text removed.
  */
-body: string, seen: boolean, from_me: boolean, attachments: Array<string>, };
+body: string, seen: boolean, from_me: boolean, attachments: Array<string>, 
+/**
+ * Contains instructions aimed at an AI assistant.
+ */
+suspicious: boolean, };

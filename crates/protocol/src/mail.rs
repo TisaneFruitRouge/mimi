@@ -86,6 +86,8 @@ pub struct MailThread {
     pub connection_id: Uuid,
     /// Which of the user's addresses its latest incoming message arrived at.
     pub received_on: Option<String>,
+    /// A message in it contains instructions aimed at an AI assistant.
+    pub suspicious: bool,
     pub subject: String,
     /// Everyone in the conversation except the user, most recent first.
     pub participants: Vec<MailAddress>,
@@ -121,6 +123,8 @@ pub struct MailMessage {
     pub seen: bool,
     pub from_me: bool,
     pub attachments: Vec<String>,
+    /// Contains instructions aimed at an AI assistant.
+    pub suspicious: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -172,6 +176,11 @@ pub struct MailDraft {
     /// Which account sends it. Defaults to the thread's account, else the first one.
     #[serde(default)]
     pub connection_id: Option<Uuid>,
+    /// Which of that account's addresses it's from: its own, or an alias mail has
+    /// arrived at. Defaults to the address a replied-to conversation arrived at, else
+    /// the account's.
+    #[serde(default)]
+    pub from: Option<String>,
     pub to: Vec<String>,
     #[serde(default)]
     pub cc: Vec<String>,

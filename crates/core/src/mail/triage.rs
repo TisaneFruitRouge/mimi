@@ -100,7 +100,9 @@ pub async fn sort_one(state: &AppState, id: i64) -> Result<(), String> {
     let Some(detail) = super::thread(state, id).await? else {
         return Ok(());
     };
-    let (category, summary) = if detail.thread.automated {
+    // Mail that tries to instruct the assistant is never given to the model to sort:
+    // it would only label and summarise itself the way it wants.
+    let (category, summary) = if detail.thread.automated || detail.thread.suspicious {
         (MailCategory::Other, None)
     } else {
         let reply = model::ask(state, INSTRUCTIONS, prompt(&detail)).await?;
@@ -214,6 +216,7 @@ pub fn reply_draft(detail: &MailThreadDetail, body: String) -> mimi_protocol::Ma
     };
     mimi_protocol::MailDraft {
         connection_id: Some(detail.thread.connection_id),
+        from: detail.thread.received_on.clone(),
         to,
         cc: Vec::new(),
         subject,

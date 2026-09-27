@@ -115,6 +115,33 @@ function subscribeBrowser(onEvent: (e: Event) => void, onConnection: (c: boolean
 }
 
 /** Opens an external link in the user's browser, never inside the app's own view. */
+/**
+ * Opens an email attachment: in the desktop app with the system's app for it (programs
+ * are only saved to Downloads, never opened); in a browser, as a download.
+ */
+export async function openAttachment(
+  message: number,
+  index: number,
+  name: string,
+): Promise<"opened" | "saved_to_downloads" | "downloaded"> {
+  if (isTauri) {
+    try {
+      return await invoke<"opened" | "saved_to_downloads">("open_attachment", { message, index, name });
+    } catch (err) {
+      throw new Error((err as { message?: string })?.message ?? "Couldn't open that attachment.");
+    }
+  }
+  // The daemon always sends attachments as downloads, never shown in this page.
+  const link = document.createElement("a");
+  link.href = `/v1/mail/messages/${message}/attachments/${index}`;
+  link.download = name;
+  link.rel = "noopener";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  return "downloaded";
+}
+
 /** Whether the top bar must draw window buttons (Linux desktops without a tiling WM). */
 export async function windowChrome(): Promise<{ controls: boolean }> {
   if (!isTauri) return { controls: false };

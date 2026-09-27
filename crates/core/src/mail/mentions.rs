@@ -204,9 +204,14 @@ pub async fn describe(
                 m.to.iter()
                     .map(|a| quote(&super::tools::address(a)))
                     .collect();
+            let warning = if m.suspicious {
+                format!(" Warning: {}", super::tools::SUSPICIOUS)
+            } else {
+                String::new()
+            };
             Some(format!(
                 "- #{label} is one email (in conversation id: {thread}, for the mail tools), \
-                 subject \"{}\", from {} to {}, sent {}:\n  {}",
+                 subject \"{}\", from {} to {}, sent {}.{warning}\n  {}",
                 quote(&subject),
                 from_line(&m),
                 if to.is_empty() {

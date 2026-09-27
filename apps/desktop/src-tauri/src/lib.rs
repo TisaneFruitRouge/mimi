@@ -9,6 +9,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::daemon_process::{BackgroundStatus, DaemonProcess, Owner};
 
+mod attachments;
 mod daemon_process;
 mod tray;
 
@@ -136,6 +137,52 @@ async fn set_background(
     Ok(status)
 }
 
+/// What happened to an attachment the user clicked.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum Opened {
+    /// Opened in the app the system uses for that kind of file.
+    Opened,
+    /// A program or script: saved to Downloads and shown in its folder, never run.
+    SavedToDownloads,
+}
+
+/// Opens an email attachment: fetched through the daemon, written to Mimi's cache and
+/// opened with the system's app for it. Programs and scripts are only ever saved.
+#[tauri::command]
+async fn open_attachment(
+    app: AppHandle,
+    message: i64,
+    index: u32,
+    name: String,
+) -> Result<Opened, CommandError> {
+    let other = |e: &dyn std::fmt::Display| CommandError::Other {
+        message: e.to_string(),
+    };
+    let data = Client::local()?
+        .get_bytes(&format!("/mail/messages/{message}/attachments/{index}"))
+        .await?;
+    let name = attachments::safe_name(&name);
+    if attachments::is_program(&name) {
+        let dir = app.path().download_dir().map_err(|e| other(&e))?;
+        std::fs::create_dir_all(&dir).map_err(|e| other(&e))?;
+        let path = attachments::unused_path(&dir, &name);
+        std::fs::write(&path, data).map_err(|e| other(&e))?;
+        let _ = app.opener().reveal_item_in_dir(&path);
+        return Ok(Opened::SavedToDownloads);
+    }
+    let dir = attachments::cache_dir(&app)
+        .map_err(|e| other(&e))?
+        .join(message.to_string());
+    std::fs::create_dir_all(&dir).map_err(|e| other(&e))?;
+    let path = dir.join(&name);
+    std::fs::write(&path, data).map_err(|e| other(&e))?;
+    app.opener()
+        .open_path(path.to_string_lossy(), None::<&str>)
+        .map_err(|e| other(&e))?;
+    Ok(Opened::Opened)
+}
+
 /// How the window is framed, for the top bar. On Linux the app draws no system title
 /// bar (it would only say "Mimi" above our own bar); the top bar then brings its own
 /// window buttons, except under tiling window managers, which manage windows
@@ -191,6 +238,10 @@ pub fn run() {
         .manage(Connection::default())
         .manage(Arc::new(DaemonProcess::default()))
         .setup(|app| {
+            // Attachments opened last time: they're only kept while in use.
+            if let Ok(dir) = attachments::cache_dir(app.handle()) {
+                let _ = std::fs::remove_dir_all(dir);
+            }
             #[cfg(target_os = "linux")]
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_decorations(false);
@@ -226,7 +277,8 @@ pub fn run() {
             open_in_browser,
             background_status,
             set_background,
-            window_chrome
+            window_chrome,
+            open_attachment
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

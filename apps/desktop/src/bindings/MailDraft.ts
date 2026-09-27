@@ -7,7 +7,13 @@ export type MailDraft = {
 /**
  * Which account sends it. Defaults to the thread's account, else the first one.
  */
-connection_id: string | null, to: Array<string>, cc: Array<string>, subject: string, body: string, 
+connection_id: string | null, 
+/**
+ * Which of that account's addresses it's from: its own, or an alias mail has
+ * arrived at. Defaults to the address a replied-to conversation arrived at, else
+ * the account's.
+ */
+from: string | null, to: Array<string>, cc: Array<string>, subject: string, body: string, 
 /**
  * The conversation this answers, so it threads correctly.
  */

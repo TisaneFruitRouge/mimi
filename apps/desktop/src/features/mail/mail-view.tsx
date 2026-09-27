@@ -15,6 +15,7 @@ import {
   Paperclip,
   RefreshCw,
   Reply,
+  ShieldAlert,
   Search,
   Send,
   Sparkles,
@@ -50,6 +51,7 @@ import { api, keys, type MailScope } from "@/lib/api";
 import { type Draft, mentionDraft } from "@/lib/draft";
 import { useAssistantName, useConnections } from "@/lib/queries";
 import { useScrollEdge } from "@/lib/scroll-edge";
+import { openAttachment } from "@/lib/transport";
 
 // --- Views ---------------------------------------------------------------------------
 
@@ -288,7 +290,7 @@ export function MailView({
 
   const compose = () => {
     setSelected(null);
-    setComposing({ connection_id: null, to: [], cc: [], subject: "", body: "", reply_to: null });
+    setComposing({ connection_id: null, from: null, to: [], cc: [], subject: "", body: "", reply_to: null });
   };
 
   return (
@@ -765,7 +767,11 @@ function ThreadRow({
   showAddress: boolean;
   onClick: () => void;
 }) {
-  const pill = showCategory && t.category ? categoryPill[t.category] : undefined;
+  const pill = t.suspicious
+    ? { label: "Suspicious", className: "bg-[#fdeeec] text-destructive" }
+    : showCategory && t.category
+      ? categoryPill[t.category]
+      : undefined;
   return (
     <button
       data-id={t.id}
@@ -956,6 +962,20 @@ function Reader({
           </div>
         </header>
 
+        {t.suspicious && (
+          <div role="note" className="flex gap-3 rounded-[16px] bg-[#fdeeec] px-4 py-3">
+            <ShieldAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
+            <div className="flex min-w-0 flex-1 flex-col gap-1">
+              <p className="type-callout font-semibold text-destructive">This email looks suspicious</p>
+              <p className="type-subhead text-foreground/80">
+                It contains instructions written for AI assistants, a trick used to make them share or
+                send your mail. {assistant} won't follow them, and nothing is ever sent without your OK.
+                Be careful with any link or request in it.
+              </p>
+            </div>
+          </div>
+        )}
+
         {(summary || t.summary) && (
           <div className="flex gap-3 rounded-[16px] bg-subtle px-4 py-3">
             <Sparkles className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
@@ -991,7 +1011,16 @@ function replyTo(d: MailThreadDetail): MailDraft {
   const lastOther = [...d.messages].reverse().find((m) => !m.from_me);
   const to = lastOther ? [lastOther.from.email] : (d.messages.at(-1)?.to.map((a) => a.email) ?? []);
   const subject = /^(re|aw|sv|antw|réf?)\s*:/i.test(d.thread.subject) ? d.thread.subject : `Re: ${d.thread.subject}`;
-  return { connection_id: d.thread.connection_id, to, cc: [], subject, body: "", reply_to: d.thread.id };
+  // From the address the mail arrived at (an alias, say), as mail apps do.
+  return {
+    connection_id: d.thread.connection_id,
+    from: d.thread.received_on,
+    to,
+    cc: [],
+    subject,
+    body: "",
+    reply_to: d.thread.id,
+  };
 }
 
 function Messages({ messages, onPerson }: { messages: MailMessage[]; onPerson: (email: string) => void }) {
@@ -1067,15 +1096,41 @@ function MessageCard({ message: m, onPerson }: { message: MailMessage; onPerson:
       {m.attachments.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
           {m.attachments.map((a, i) => (
-            <Pill key={`${a}-${i}`} className="max-w-[240px]">
-              <Paperclip className="size-3 shrink-0" />
-              <span className="truncate">{a}</span>
-            </Pill>
+            <AttachmentButton key={`${a}-${i}`} message={m.id} index={i} name={a} />
           ))}
-          <span className="type-footnote text-faint">Open attachments in your usual mail app.</span>
         </div>
       )}
     </article>
+  );
+}
+
+/** An attachment: fetched from the mail server and opened when clicked. */
+function AttachmentButton({ message, index, name }: { message: number; index: number; name: string }) {
+  const [opening, setOpening] = useState(false);
+  const open = async () => {
+    setOpening(true);
+    try {
+      const result = await openAttachment(message, index, name);
+      if (result === "saved_to_downloads")
+        toast(`Saved “${name}” to Downloads`, {
+          description: "It's a program or script, so Mimi doesn't open it for you. Only run it if you trust who sent it.",
+        });
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setOpening(false);
+    }
+  };
+  return (
+    <button
+      onClick={open}
+      disabled={opening}
+      title={`Open ${name}`}
+      className="pressable inline-flex h-[26px] max-w-[260px] items-center gap-1.5 rounded-full bg-fill px-2.5 text-[12px] font-medium text-muted-foreground hover:bg-[rgb(118_118_128/0.18)] hover:text-foreground disabled:opacity-70"
+    >
+      {opening ? <Loader2 className="size-3 shrink-0 animate-spin" /> : <Paperclip className="size-3 shrink-0" />}
+      <span className="truncate">{name}</span>
+    </button>
   );
 }
 

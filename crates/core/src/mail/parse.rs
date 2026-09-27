@@ -22,6 +22,9 @@ pub struct Parsed {
     pub attachments: Vec<String>,
     /// Newsletters, notifications and other mail no person wrote by hand.
     pub automated: bool,
+    /// Contains instructions aimed at an AI assistant, in its visible or hidden text
+    /// (`suspicious::aimed_at_assistants`).
+    pub suspicious: bool,
     /// Addresses the receiving server says it delivered to (X-Original-To,
     /// Delivered-To…), most telling first. See `received_on`.
     pub delivered_to: Vec<String>,
@@ -38,6 +41,14 @@ pub fn parse(raw: &[u8]) -> Option<Parsed> {
         });
     // A real text/plain part if there is one. Not `body_text`: for HTML-only mail it
     // converts the HTML itself, hidden text included.
+    // Hidden HTML is left out of the body, but instructions hidden there still make the
+    // message suspicious.
+    let hidden_instructions = match msg.html_part(0).map(|p| &p.body) {
+        Some(PartType::Html(html)) => super::suspicious::aimed_at_assistants(
+            &html2text::from_read(html.as_bytes(), 100).unwrap_or_default(),
+        ),
+        _ => false,
+    };
     let body = match msg.text_part(0).map(|p| &p.body) {
         Some(PartType::Text(text)) if !text.trim().is_empty() => clean_text(text),
         _ => match msg.html_part(0).map(|p| &p.body) {
@@ -60,6 +71,7 @@ pub fn parse(raw: &[u8]) -> Option<Parsed> {
         })
         || header("Auto-Submitted").is_some_and(|v| !v.eq_ignore_ascii_case("no"))
         || looks_automated_sender(&from.email);
+    let suspicious = hidden_instructions || super::suspicious::aimed_at_assistants(&body);
     Some(Parsed {
         message_id: msg.message_id().map(clean_id),
         in_reply_to: ids(msg.in_reply_to()).into_iter().next(),
@@ -72,6 +84,7 @@ pub fn parse(raw: &[u8]) -> Option<Parsed> {
         body,
         attachments,
         automated,
+        suspicious,
         delivered_to: DELIVERY_HEADERS
             .iter()
             .filter_map(|name| top_most(&msg, name))
@@ -90,6 +103,36 @@ const DELIVERY_HEADERS: [&str; 5] = [
     "Envelope-To",
     "X-Envelope-To",
 ];
+
+/// An attachment taken out of a message.
+pub struct Attachment {
+    pub name: String,
+    /// As the sender labelled it, e.g. "application/pdf".
+    pub content_type: String,
+    pub data: Vec<u8>,
+}
+
+/// The `index`th named attachment of a raw message, in the order `Parsed::attachments`
+/// lists them.
+pub fn attachment(raw: &[u8], index: usize) -> Option<Attachment> {
+    let msg = MessageParser::default().parse(raw)?;
+    let part = msg
+        .attachments()
+        .filter(|p| p.attachment_name().is_some())
+        .nth(index)?;
+    let content_type = part
+        .content_type()
+        .map(|c| match c.subtype() {
+            Some(sub) => format!("{}/{sub}", c.ctype()),
+            None => c.ctype().to_owned(),
+        })
+        .unwrap_or_else(|| "application/octet-stream".to_owned());
+    Some(Attachment {
+        name: part.attachment_name()?.to_owned(),
+        content_type,
+        data: part.contents().to_vec(),
+    })
+}
 
 /// The first (top-most, most recently added) instance of a header, raw.
 /// `header_raw` would give the last one.

@@ -209,6 +209,21 @@ impl Client {
         self.send(method, path, body).await
     }
 
+    /// A `/v1` GET whose answer is a file (e.g. an email attachment), as bytes.
+    pub async fn get_bytes(&self, path: &str) -> Result<Vec<u8>, Error> {
+        let res = self
+            .http
+            .get(format!("http://127.0.0.1:{}{API_PREFIX}{path}", self.port))
+            .bearer_auth(&self.token)
+            .send()
+            .await
+            .map_err(connect_error)?;
+        if !res.status().is_success() {
+            return Err(error_of(res).await);
+        }
+        Ok(res.bytes().await?.to_vec())
+    }
+
     /// Subscribes to daemon events. The stream ends when the daemon goes away.
     /// Events this client version doesn't know are skipped.
     pub async fn events(&self) -> Result<BoxStream<'static, Result<Event, Error>>, Error> {
@@ -267,25 +282,30 @@ fn connect_error(e: reqwest::Error) -> Error {
     }
 }
 
-async fn decode<T: DeserializeOwned>(res: reqwest::Response) -> Result<T, Error> {
+/// The error an unsuccessful response carries.
+async fn error_of(res: reqwest::Response) -> Error {
     let status = res.status();
     if status == reqwest::StatusCode::UNAUTHORIZED {
-        return Err(Error::Unauthorized);
+        return Error::Unauthorized;
     }
-    if !status.is_success() {
-        let body: Option<ApiError> = res.json().await.ok();
-        let (code, message) = match body {
-            Some(e) => (e.code, e.message),
-            None => (
-                "unknown".to_owned(),
-                format!("the daemon returned {status}"),
-            ),
-        };
-        return Err(Error::Api {
-            status: status.as_u16(),
-            code,
-            message,
-        });
+    let body: Option<ApiError> = res.json().await.ok();
+    let (code, message) = match body {
+        Some(e) => (e.code, e.message),
+        None => (
+            "unknown".to_owned(),
+            format!("the daemon returned {status}"),
+        ),
+    };
+    Error::Api {
+        status: status.as_u16(),
+        code,
+        message,
+    }
+}
+
+async fn decode<T: DeserializeOwned>(res: reqwest::Response) -> Result<T, Error> {
+    if !res.status().is_success() {
+        return Err(error_of(res).await);
     }
     // `()`-returning routes send an empty body.
     let bytes = res.bytes().await?;

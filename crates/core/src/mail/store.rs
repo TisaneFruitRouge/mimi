@@ -70,9 +70,9 @@ pub fn insert(c: &Connection, m: &NewMessage) -> rusqlite::Result<Option<i64>> {
     c.execute(
         "INSERT INTO mail_messages (connection_id, mailbox, folder, uid, thread_id, message_id,
             in_reply_to, refs, from_name, from_email, to_json, cc_json, subject, date, body,
-            snippet, attachments, seen, flagged, outgoing, automated, received_on)
+            snippet, attachments, seen, flagged, outgoing, automated, received_on, suspicious)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-            ?18, ?19, ?20, ?21, ?22)",
+            ?18, ?19, ?20, ?21, ?22, ?23)",
         params![
             conn,
             m.mailbox,
@@ -96,6 +96,7 @@ pub fn insert(c: &Connection, m: &NewMessage) -> rusqlite::Result<Option<i64>> {
             m.outgoing,
             p.automated,
             m.received_on,
+            p.suspicious && !m.outgoing,
         ],
     )?;
     Ok(Some(thread))
@@ -332,6 +333,46 @@ pub fn backfill_received_on(c: &Connection, conn: Uuid, account: &str) -> rusqli
     Ok(rows.len())
 }
 
+/// Checks mail stored before the `suspicious` column existed (visible text only: hidden
+/// HTML wasn't kept). Flagged conversations leave "Needs a reply". Returns how many
+/// messages were checked.
+pub fn backfill_suspicious(c: &Connection, conn: Uuid) -> rusqlite::Result<usize> {
+    let rows: Vec<(i64, i64, String, bool)> = c
+        .prepare(
+            "SELECT id, thread_id, body, outgoing FROM mail_messages
+             WHERE connection_id = ?1 AND suspicious IS NULL",
+        )?
+        .query_map([conn.to_string()], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })?
+        .collect::<Result<_, _>>()?;
+    for (id, thread, body, outgoing) in &rows {
+        let flagged = !outgoing && super::suspicious::aimed_at_assistants(body);
+        c.execute(
+            "UPDATE mail_messages SET suspicious = ?2 WHERE id = ?1",
+            params![id, flagged],
+        )?;
+        if flagged {
+            set_sorted(c, *thread, MailCategory::Other, None)?;
+            c.execute(
+                "UPDATE mail_threads SET summary = NULL WHERE id = ?1",
+                [thread],
+            )?;
+        }
+    }
+    Ok(rows.len())
+}
+
+/// Every address one account's mail arrived at.
+pub fn account_addresses(c: &Connection, conn: Uuid) -> rusqlite::Result<Vec<String>> {
+    c.prepare(
+        "SELECT DISTINCT received_on FROM mail_messages
+         WHERE connection_id = ?1 AND received_on IS NOT NULL",
+    )?
+    .query_map([conn.to_string()], |r| r.get(0))?
+    .collect()
+}
+
 /// Every address mail arrived at, in any account.
 pub fn received_addresses(c: &Connection) -> rusqlite::Result<Vec<String>> {
     c.prepare("SELECT DISTINCT received_on FROM mail_messages WHERE received_on IS NOT NULL")?
@@ -535,6 +576,11 @@ pub fn thread(c: &Connection, id: i64, me: &[String]) -> rusqlite::Result<Option
     let Some(last) = messages.last() else {
         return Ok(None);
     };
+    let suspicious: bool = c.query_row(
+        "SELECT coalesce(max(suspicious), 0) FROM mail_messages WHERE thread_id = ?1",
+        [id],
+        |r| r.get(0),
+    )?;
     let received_on = c
         .query_row(
             "SELECT received_on FROM mail_messages WHERE thread_id = ?1 AND received_on IS NOT NULL
@@ -547,6 +593,7 @@ pub fn thread(c: &Connection, id: i64, me: &[String]) -> rusqlite::Result<Option
         id,
         connection_id: conn.parse().unwrap_or_default(),
         received_on,
+        suspicious,
         subject,
         participants: participants(&messages, me),
         last_at,
@@ -587,7 +634,8 @@ pub fn detail(
 /// in both Sent and Inbox).
 pub fn messages(c: &Connection, thread: i64, me: &[String]) -> rusqlite::Result<Vec<MailMessage>> {
     let mut stmt = c.prepare(
-        "SELECT id, from_name, from_email, to_json, cc_json, date, body, seen, outgoing, attachments, message_id
+        "SELECT id, from_name, from_email, to_json, cc_json, date, body, seen, outgoing, attachments,
+                message_id, coalesce(suspicious, 0)
          FROM mail_messages WHERE thread_id = ?1 ORDER BY date, id",
     )?;
     let rows = stmt.query_map([thread], |r| {
@@ -608,6 +656,7 @@ pub fn messages(c: &Connection, thread: i64, me: &[String]) -> rusqlite::Result<
                 seen: r.get(7)?,
                 from_me: outgoing || me.iter().any(|e| e.eq_ignore_ascii_case(&from_email)),
                 attachments: serde_json::from_str(&r.get::<_, String>(9)?).unwrap_or_default(),
+                suspicious: r.get(11)?,
             },
         ))
     })?;
@@ -710,6 +759,22 @@ pub fn counts(c: &Connection, scope: &Scope) -> rusqlite::Result<(u32, u32, u32)
             "EXISTS (SELECT 1 FROM mail_messages x WHERE x.thread_id = t.id AND NOT x.seen AND NOT x.outgoing)",
         )?,
     ))
+}
+
+/// Where one message lives on the server: (connection, mailbox, uid).
+pub fn location(c: &Connection, message: i64) -> rusqlite::Result<Option<(Uuid, String, u32)>> {
+    c.query_row(
+        "SELECT connection_id, mailbox, uid FROM mail_messages WHERE id = ?1",
+        [message],
+        |r| {
+            Ok((
+                r.get::<_, String>(0)?.parse().unwrap_or_default(),
+                r.get(1)?,
+                r.get(2)?,
+            ))
+        },
+    )
+    .optional()
 }
 
 /// Where a thread's messages live on the server: (connection, mailbox, uid).

@@ -9,7 +9,11 @@ export type MailThread = { id: number, connection_id: string,
 /**
  * Which of the user's addresses its latest incoming message arrived at.
  */
-received_on: string | null, subject: string, 
+received_on: string | null, 
+/**
+ * A message in it contains instructions aimed at an AI assistant.
+ */
+suspicious: boolean, subject: string, 
 /**
  * Everyone in the conversation except the user, most recent first.
  */

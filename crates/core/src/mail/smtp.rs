@@ -88,6 +88,8 @@ pub async fn check(config: &EmailConfig, user: Option<&str>) -> Result<(), MailE
 #[derive(Debug, Clone)]
 pub struct ReplyHeaders {
     pub connection_id: Uuid,
+    /// The address the conversation's latest incoming mail arrived at.
+    pub received_on: Option<String>,
     pub in_reply_to: Option<String>,
     pub references: Vec<String>,
 }
@@ -96,6 +98,14 @@ pub async fn reply_headers(state: &AppState, thread: i64) -> Result<Option<Reply
     state
         .db
         .call(move |c| {
+            let received_on: Option<String> = c
+                .query_row(
+                    "SELECT received_on FROM mail_messages
+                     WHERE thread_id = ?1 AND received_on IS NOT NULL ORDER BY date DESC LIMIT 1",
+                    [thread],
+                    |r| r.get(0),
+                )
+                .optional()?;
             c.query_row(
                 "SELECT connection_id, message_id, refs FROM mail_messages
                  WHERE thread_id = ?1 ORDER BY date DESC, id DESC LIMIT 1",
@@ -115,6 +125,7 @@ pub async fn reply_headers(state: &AppState, thread: i64) -> Result<Option<Reply
                     }
                     Ok(ReplyHeaders {
                         connection_id: conn.parse().unwrap_or_default(),
+                        received_on: received_on.clone(),
                         in_reply_to: mid,
                         references,
                     })
@@ -138,12 +149,9 @@ fn mailbox(raw: &str) -> Result<Mailbox, String> {
         .map_err(|_| format!("“{}” isn't an email address.", raw.trim()))
 }
 
-/// Builds the message from a draft: plain text, from the account's address.
-pub fn build(
-    config: &EmailConfig,
-    draft: &MailDraft,
-    reply: Option<&ReplyHeaders>,
-) -> Result<Built, String> {
+/// Builds the message from a draft: plain text, from `from` (the account's address or
+/// one of its aliases, checked by the caller).
+pub fn build(from: &str, draft: &MailDraft, reply: Option<&ReplyHeaders>) -> Result<Built, String> {
     // Each address once: a Cc that repeats a To (models do that) would get it twice.
     let mut seen = std::collections::HashSet::new();
     let mut unique = |list: &[String]| -> Result<Vec<Mailbox>, String> {
@@ -167,8 +175,8 @@ pub fn build(
     if draft.body.len() > MAX_BODY {
         return Err("That message is too long.".to_owned());
     }
-    let from = mailbox(&config.email)?;
-    let domain = config.email.rsplit('@').next().unwrap_or("localhost");
+    let domain = from.rsplit('@').next().unwrap_or("localhost").to_owned();
+    let from = mailbox(from)?;
     let mut builder = Message::builder()
         .from(from)
         .subject(draft.subject.trim())
@@ -202,9 +210,19 @@ pub fn build(
     Ok(Built { message, formatted })
 }
 
+/// Who to sign in to SMTP as: the account's username when it has one (iCloud always
+/// wants the full address for SMTP), else the address.
+pub fn user(config: &EmailConfig) -> Option<&str> {
+    if config.preset == "icloud" {
+        None
+    } else {
+        config.servers.username.as_deref()
+    }
+}
+
 /// Hands the message to the account's SMTP server.
 pub async fn send(config: &EmailConfig, built: &Built) -> Result<(), String> {
-    let t = transport(config, None).map_err(|e| e.to_string())?;
+    let t = transport(config, user(config)).map_err(|e| e.to_string())?;
     t.send(built.message.clone())
         .await
         .map(|_| ())

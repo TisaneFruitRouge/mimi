@@ -28,6 +28,7 @@ pub mod net;
 pub mod parse;
 pub mod smtp;
 pub mod store;
+pub mod suspicious;
 pub mod sync;
 pub mod tools;
 pub mod triage;
@@ -336,13 +337,7 @@ pub async fn connect(
     if !signed_in {
         return Err(last.to_string());
     }
-    // SMTP always signs in with the full address on the services above.
-    let smtp_user = if preset_id == "icloud" {
-        None
-    } else {
-        config.servers.username.clone()
-    };
-    smtp::check(&config, smtp_user.as_deref())
+    smtp::check(&config, smtp::user(&config))
         .await
         .map_err(|e| format!("Reading mail works, but sending doesn't: {e}"))?;
     Ok((email, config))
@@ -573,6 +568,37 @@ pub async fn archive(state: &Arc<AppState>, id: i64) -> Result<(), String> {
     Ok(())
 }
 
+/// Largest attachment Mimi fetches.
+const MAX_ATTACHMENT: usize = 50 * 1024 * 1024;
+
+/// One attachment of a stored message, fetched from the server on request.
+pub async fn attachment(
+    state: &AppState,
+    message: i64,
+    index: usize,
+) -> Result<parse::Attachment, String> {
+    let (conn, mailbox, uid) = state
+        .db
+        .call(move |c| store::location(c, message))
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("That email isn't here any more.")?;
+    let account = account(state, conn)
+        .await
+        .ok_or("That account isn't connected any more.")?;
+    let raw = sync::fetch_source(&account, &mailbox, uid)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("That email isn't on the server any more. It may have been moved or deleted.")?;
+    let found = parse::attachment(&raw, index).ok_or("That attachment couldn't be found.")?;
+    if found.data.len() > MAX_ATTACHMENT {
+        return Err(
+            "That attachment is too large to open here. Open it in your usual mail app.".to_owned(),
+        );
+    }
+    Ok(found)
+}
+
 /// Sends a message the user wrote or approved, and files it in Sent.
 pub async fn send(state: &Arc<AppState>, draft: MailDraft) -> Result<(), String> {
     let accounts = accounts(state).await;
@@ -586,8 +612,37 @@ pub async fn send(state: &Arc<AppState>, draft: MailDraft) -> Result<(), String>
         .and_then(|id| accounts.iter().find(|a| a.id == id))
         .or(accounts.first())
         .ok_or("No email account is connected.")?;
-    let raw = smtp::build(&account.config, &draft, reply.as_ref())?;
-    smtp::send(&account.config, &raw).await?;
+    // From the address asked for, else the one the conversation arrived at: only ever
+    // one of this account's own.
+    let (conn, main) = (account.id, account.config.email.to_lowercase());
+    let own = state
+        .db
+        .call(move |c| store::account_addresses(c, conn))
+        .await
+        .map_err(|e| e.to_string())?;
+    let is_own = |a: &str| a == main || own.iter().any(|o| o == a);
+    let from = match draft.from.as_deref().map(|f| f.trim().to_lowercase()) {
+        Some(f) if !f.is_empty() && !is_own(&f) => {
+            return Err(format!("{f} isn't one of this account's addresses."));
+        }
+        Some(f) if !f.is_empty() => f,
+        _ => reply
+            .as_ref()
+            .and_then(|r| r.received_on.clone())
+            .filter(|r| is_own(r))
+            .unwrap_or_else(|| main.clone()),
+    };
+    let raw = smtp::build(&from, &draft, reply.as_ref())?;
+    smtp::send(&account.config, &raw).await.map_err(|e| {
+        if from == main {
+            e
+        } else {
+            format!(
+                "{e} Your mail service may not allow sending from {from}: add it as a sending \
+                 address (an identity) in its settings, or send from {main}."
+            )
+        }
+    })?;
     tracing::info!(connection = %account.id, "sent an email");
     sync::file_sent(account, raw.formatted).await;
     state.mail.poke(account.id);
