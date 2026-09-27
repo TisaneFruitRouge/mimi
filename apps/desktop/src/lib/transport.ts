@@ -38,11 +38,18 @@ export async function request<T>(method: string, path: string, body?: unknown): 
   }
   if (res.status === 401) throw { kind: "unauthorized" } satisfies TransportError;
   const text = await res.text();
-  const json = text ? JSON.parse(text) : null;
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    if (res.ok) throw { kind: "other", message: "The assistant sent an unreadable reply." } satisfies TransportError;
+  }
   if (!res.ok) {
+    // Requests the daemon couldn't even read come back without the usual error body,
+    // as they do through the desktop app's proxy.
     throw (json?.code
       ? { kind: "api", code: json.code, message: json.message }
-      : { kind: "other", message: `The assistant returned ${res.status}.` }) satisfies TransportError;
+      : { kind: "api", code: "unknown", message: `The assistant returned ${res.status}.` }) satisfies TransportError;
   }
   return json as T;
 }

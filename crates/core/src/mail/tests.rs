@@ -124,6 +124,20 @@ async fn connecting_checks_the_account_and_refuses_what_it_cant_do() {
     assert_eq!(name, ME);
     assert_eq!(config.servers.imap_port, fake.imap_port);
 
+    // A name typed where the username goes still signs in, with the address.
+    let mut named = servers(&fake);
+    named.username = Some("Sam Example".to_owned());
+    let (_, config) = connect(
+        &reqwest::Client::new(),
+        ME.to_owned(),
+        PASSWORD.to_owned(),
+        Some("other".to_owned()),
+        Some(named),
+    )
+    .await
+    .unwrap();
+    assert_eq!(config.username(), ME);
+
     // Unencrypted is only for this computer, and is refused before anything is sent.
     let mut remote = servers(&fake);
     remote.imap_host = "imap.example.com".to_owned();

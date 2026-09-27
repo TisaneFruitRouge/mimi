@@ -60,10 +60,12 @@ impl Default for DaemonProcess {
 }
 
 async fn reachable() -> bool {
-    match Client::local() {
-        Ok(client) => client.health().await.is_ok(),
-        Err(_) => false,
-    }
+    running_version().await.is_some()
+}
+
+/// The version of the daemon that's running, if one is.
+async fn running_version() -> Option<String> {
+    Some(Client::local().ok()?.health().await.ok()?.version)
 }
 
 async fn wait_until(up: bool, timeout: Duration) -> bool {
@@ -85,6 +87,18 @@ fn spec() -> Result<Spec, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Stops the service's daemon and starts it again from the program on disk.
+async fn restart_service(spec: &Spec) {
+    if let Ok(paths) = Paths::resolve() {
+        mimi_service::stop_daemon(&paths);
+    }
+    wait_until(false, Duration::from_secs(10)).await;
+    if let Err(e) = mimi_service::start(spec) {
+        eprintln!("mimi: couldn't restart the assistant after an update: {e}");
+    }
+    wait_until(true, Duration::from_secs(15)).await;
+}
+
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -96,12 +110,19 @@ impl DaemonProcess {
 
     /// Brings a daemon up if none is running. Call once at launch.
     pub async fn ensure_running(&self) {
-        if reachable().await {
+        if let Some(version) = running_version().await {
             let service = spec()
                 .ok()
-                .and_then(|s| mimi_service::status(&s).ok())
-                .is_some_and(|s| s.installed);
-            *lock(&self.owner) = if service {
+                .filter(|s| mimi_service::status(s).is_ok_and(|s| s.installed));
+            if let Some(spec) = &service
+                && version != env!("CARGO_PKG_VERSION")
+                && !mimi_service::daemon_is_external()
+            {
+                // Mimi was updated, but the background service still runs the old
+                // program, which doesn't know what this app asks for.
+                restart_service(spec).await;
+            }
+            *lock(&self.owner) = if service.is_some() {
                 Owner::Service
             } else {
                 Owner::External

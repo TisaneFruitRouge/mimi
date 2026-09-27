@@ -444,6 +444,7 @@ function EmailAccount({ onDone }: { onDone: () => void }) {
     retry: false,
   });
   const found = debounced === address ? discovery.data : undefined;
+  const lookupError = debounced === address && discovery.error ? discovery.error.message : null;
   const searching = looksComplete && (debounced !== address || discovery.isFetching);
 
   // Pre-fill the server fields with what was found, unless the user typed their own.
@@ -506,7 +507,11 @@ function EmailAccount({ onDone }: { onDone: () => void }) {
             autoComplete="off"
             autoFocus
           />
-          <DiscoveryLine searching={searching} found={found} />
+          {lookupError && !searching ? (
+            <p className="type-subhead text-destructive">{lookupError}</p>
+          ) : (
+            <DiscoveryLine searching={searching} found={found} />
+          )}
         </div>
         {unsupported ? (
           <Note icon="warn">{found?.help ?? "This mail service can't be connected."}</Note>
@@ -547,7 +552,7 @@ function EmailAccount({ onDone }: { onDone: () => void }) {
                   <ChevronRight className={cn("size-3.5 transition-transform", showServers && "rotate-90")} />
                   Server settings
                 </button>
-                {showServers && <CustomServers servers={servers} set={set} />}
+                {showServers && <CustomServers email={email} servers={servers} set={set} />}
               </div>
             )}
           </>
@@ -602,7 +607,15 @@ function DiscoveryLine({ searching, found }: { searching: boolean; found: MailDi
   );
 }
 
-function CustomServers({ servers, set }: { servers: MailServers; set: (patch: Partial<MailServers>) => void }) {
+function CustomServers({
+  email,
+  servers,
+  set,
+}: {
+  email: string;
+  servers: MailServers;
+  set: (patch: Partial<MailServers>) => void;
+}) {
   const server = (kind: "imap" | "smtp", label: string) => {
     const host = kind === "imap" ? servers.imap_host : servers.smtp_host;
     const port = kind === "imap" ? servers.imap_port : servers.smtp_port;
@@ -654,14 +667,18 @@ function CustomServers({ servers, set }: { servers: MailServers; set: (patch: Pa
       {server("imap", "Incoming mail server (IMAP)")}
       {server("smtp", "Outgoing mail server (SMTP)")}
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="mail-username">Login name</Label>
+        <Label htmlFor="mail-username">Username</Label>
         <Input
           id="mail-username"
           value={servers.username ?? ""}
           onChange={(e) => set({ username: e.target.value || null })}
-          placeholder="Only if it isn't your email address"
+          placeholder={email.trim() || "you@example.com"}
           autoComplete="off"
         />
+        <p className="type-subhead text-muted-foreground">
+          What you sign in to your mail with, not your name. Leave it empty to use your email
+          address.
+        </p>
       </div>
     </>
   );

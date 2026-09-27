@@ -313,11 +313,12 @@ pub async fn connect(
         servers,
     };
     // Most services sign in with the full address; some (iCloud at times, older
-    // hosting) want only the part before the @. A username from the settings wins.
-    let mut usernames = vec![config.servers.username.clone()];
-    if config.servers.username.is_none() {
-        usernames.push(email.split('@').next().map(str::to_owned));
-    }
+    // hosting) want only the part before the @. A username from the settings goes
+    // first, then the address, in case a name was typed there by mistake.
+    let usernames = match config.servers.username.clone() {
+        Some(name) => vec![Some(name), None],
+        None => vec![None, email.split('@').next().map(str::to_owned)],
+    };
     let mut last = MailError::Login;
     let mut signed_in = false;
     for username in usernames {

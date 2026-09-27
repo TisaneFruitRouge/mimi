@@ -48,6 +48,17 @@ import type { NewCalendarEvent } from "@/bindings/NewCalendarEvent";
 import type { PersonConversation } from "@/bindings/PersonConversation";
 import { type TransportError, request } from "@/lib/transport";
 
+/**
+ * The daemon didn't understand the request: a route it doesn't have, or a body it
+ * can't read. Both come from an older daemon still running after an update.
+ */
+function isOutdated(err: TransportError) {
+  return (
+    err.kind === "api" &&
+    (err.code === "unknown" || (err.code === "not_found" && err.message === "Route not found"))
+  );
+}
+
 export class DaemonError extends Error {
   readonly kind: TransportError["kind"];
   readonly code?: string;
@@ -58,10 +69,12 @@ export class DaemonError extends Error {
         ? "The assistant isn't running."
         : err.kind === "unauthorized"
           ? "This browser isn't signed in to the assistant."
-          : err.message,
+          : isOutdated(err)
+            ? "Mimi was updated, but the old version is still running in the background. Quit Mimi and open it again."
+            : err.message,
     );
     this.kind = err.kind;
-    this.code = err.kind === "api" ? err.code : undefined;
+    this.code = isOutdated(err) ? "outdated" : err.kind === "api" ? err.code : undefined;
   }
 }
 

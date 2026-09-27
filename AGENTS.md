@@ -387,6 +387,10 @@ than inventing their own.
   (`apps/desktop/src-tauri/src/daemon_process.rs`). "Keep Mimi running in the
   background" in Settings installs/removes the login service and hands the daemon over;
   `mimi service install|uninstall|status|start` does the same headless.
+- **After an update** the login service may still run the old daemon. At launch the app
+  compares the daemon's `/health` version with its own and restarts the service when
+  they differ (not under `pnpm dev`). Requests an older daemon can't read (unknown route,
+  unreadable body) surface as `DaemonError.code === "outdated"` with a plain message.
 - **Finding `mimid`** is `mimi_service::daemon_binary()` only: `MIMI_DAEMON_BIN`, else
   next to the running executable (bundles ship it as the Tauri sidecar `binaries/mimid`,
   which lands beside the app binary; `target/<profile>/` in dev), else `PATH`. Don't add
