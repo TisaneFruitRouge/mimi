@@ -114,6 +114,8 @@ pub struct Spec {
     /// launchd label.
     pub label: String,
     pub binary: PathBuf,
+    /// Arguments for `binary`; empty when it's `mimid` itself.
+    pub args: Vec<String>,
     pub data_dir: PathBuf,
     /// Extra environment for the daemon (only what differs from the defaults).
     pub env: Vec<(String, String)>,
@@ -156,11 +158,37 @@ impl Spec {
                 format!("dev.mimi.daemon.{s}")
             }),
             binary,
+            args: Vec::new(),
             data_dir,
             env,
         }
     }
+
+    /// Makes the service survive the app being an AppImage. An AppImage runs from a
+    /// temporary mount that disappears when it quits, so a service pointing inside it
+    /// would break; instead the service runs the AppImage file itself with `--daemon`,
+    /// which also keeps working when the AppImage is replaced by a newer one.
+    pub fn launched_from_app(mut self) -> Self {
+        if let Some((program, args)) = app_launch(std::env::var_os("APPIMAGE")) {
+            self.binary = program;
+            self.args = args;
+        }
+        self
+    }
 }
+
+/// How to start the daemon through the running app, when the app can't be pointed at
+/// directly (see [`Spec::launched_from_app`]). `appimage` is the `APPIMAGE` variable the
+/// AppImage runtime sets to the image's own path.
+pub fn app_launch(appimage: Option<std::ffi::OsString>) -> Option<(PathBuf, Vec<String>)> {
+    let image = PathBuf::from(appimage.filter(|v| !v.is_empty())?);
+    image
+        .is_file()
+        .then(|| (image, vec![DAEMON_FLAG.to_owned()]))
+}
+
+/// Passed to the desktop app to make it run the bundled daemon instead of its window.
+pub const DAEMON_FLAG: &str = "--daemon";
 
 /// 32-bit FNV-1a: a stable, short, dependency-free name for a data directory.
 fn fnv1a(bytes: &[u8]) -> u32 {
@@ -184,7 +212,12 @@ pub fn systemd_unit(spec: &Spec) -> String {
     );
     // ExecStart also expands `$VARIABLES`, so a literal `$` is doubled there.
     let binary = systemd_quote(&spec.binary.to_string_lossy()).replace('$', "$$");
-    out.push_str(&format!("ExecStart={binary}\n"));
+    let args: String = spec
+        .args
+        .iter()
+        .map(|a| format!(" {}", systemd_quote(a).replace('$', "$$")))
+        .collect();
+    out.push_str(&format!("ExecStart={binary}{args}\n"));
     for (k, v) in &spec.env {
         out.push_str(&format!(
             "Environment={}\n",
@@ -237,7 +270,7 @@ pub fn launchd_plist(spec: &Spec) -> String {
   <key>ProgramArguments</key>
   <array>
     <string>{binary}</string>
-  </array>
+{args}  </array>
 {env}  <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
@@ -256,6 +289,11 @@ pub fn launchd_plist(spec: &Spec) -> String {
 "#,
         label = xml_escape(&spec.label),
         binary = xml_escape(&spec.binary.to_string_lossy()),
+        args = spec
+            .args
+            .iter()
+            .map(|a| format!("    <string>{}</string>\n", xml_escape(a)))
+            .collect::<String>(),
     )
 }
 
@@ -277,6 +315,10 @@ pub fn autostart_entry(spec: &Spec) -> String {
         }
     }
     exec.push_str(&desktop_quote(&spec.binary.to_string_lossy()));
+    for a in &spec.args {
+        exec.push(' ');
+        exec.push_str(&desktop_quote(a));
+    }
     format!(
         "[Desktop Entry]\n\
          Type=Application\n\
@@ -468,6 +510,7 @@ pub fn start(spec: &Spec) -> Result<(), Error> {
 pub fn spawn_detached(spec: &Spec) -> Result<(), Error> {
     use std::os::unix::process::CommandExt;
     Command::new(&spec.binary)
+        .args(&spec.args)
         .envs(spec.env.iter().map(|(k, v)| (k, v)))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -541,6 +584,29 @@ fn run(program: &str, args: &[&str]) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn appimage_services_run_the_image_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let image = dir.path().join("Mimi.AppImage");
+        std::fs::write(&image, b"").unwrap();
+        assert_eq!(
+            app_launch(Some(image.clone().into_os_string())),
+            Some((image.clone(), vec!["--daemon".to_owned()]))
+        );
+        assert_eq!(app_launch(None), None);
+        assert_eq!(app_launch(Some("".into())), None);
+        assert_eq!(app_launch(Some("/gone/Mimi.AppImage".into())), None);
+
+        let mut s = spec(false);
+        s.binary = image.clone();
+        s.args = vec!["--daemon".to_owned()];
+        assert!(
+            systemd_unit(&s).contains(&format!("ExecStart=\"{}\" \"--daemon\"\n", image.display()))
+        );
+        assert!(launchd_plist(&s).contains("<string>--daemon</string>"));
+        assert!(autostart_entry(&s).contains("\" \"--daemon\"\n"));
+    }
 
     fn spec(custom: bool) -> Spec {
         Spec::new(

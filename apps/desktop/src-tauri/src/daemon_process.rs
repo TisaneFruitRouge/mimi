@@ -80,7 +80,9 @@ async fn wait_until(up: bool, timeout: Duration) -> bool {
 fn spec() -> Result<Spec, String> {
     let binary =
         mimi_service::daemon_binary().ok_or_else(|| mimi_service::Error::NoBinary.to_string())?;
-    Spec::current(binary).map_err(|e| e.to_string())
+    Spec::current(binary)
+        .map(Spec::launched_from_app)
+        .map_err(|e| e.to_string())
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {

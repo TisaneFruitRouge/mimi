@@ -4,6 +4,11 @@ A self-hosted, private personal AI assistant for everyday people, not only devel
 "Mimi" is a working name. Keep the name confined to identifiers and strings so a
 rename is a find-and-replace.
 
+- **AppImage:** an AppImage runs from a temporary mount that vanishes when it quits, so
+  a service installed from one runs the AppImage *file* (`$APPIMAGE`) with `--daemon`
+  instead (`Spec::launched_from_app`); `main.rs` hands `--daemon` over to the bundled
+  `mimid`. Replacing the AppImage at the same path keeps the service working.
+
 ## Principles (apply to every change)
 
 0. **There is no Mimi server. Ever.** Everything runs on the user's own machines. No

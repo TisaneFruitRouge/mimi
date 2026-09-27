@@ -241,7 +241,7 @@ function ChooseModel({ onNext, onBack }: { onNext: (patch?: Partial<Settings>) =
     const firstInstalled = r.installed.find((m) => m.fits);
     if (firstInstalled) setChoice({ kind: "installed", ref: firstInstalled.model });
     else if (r.prefer_cloud || !r.download_provider_id || r.suggested.length === 0) setChoice({ kind: "cloud" });
-    else setChoice({ kind: "download", model: r.suggested[0] });
+    else setChoice({ kind: "download", model: quickStart(r.suggested) });
   }, [r, choice]);
 
   if (!r) {
@@ -252,6 +252,10 @@ function ChooseModel({ onNext, onBack }: { onNext: (patch?: Partial<Settings>) =
     );
   }
   const installed = r.installed.filter((m) => m.fits);
+  // Quick to download first; the biggest model that fits is offered as an upgrade.
+  const quick = r.suggested.length > 0 ? quickStart(r.suggested) : null;
+  const downloads = quick ? [quick, ...r.suggested.filter((m) => m.id !== quick.id)] : [];
+  const best = r.suggested[0];
   const server = r.detected_servers.find((s) => !s.already_added);
   const canDownload = r.download_provider_id !== null;
   const gpu = r.hardware.gpus.find((g) => g.kind === "discrete") ?? r.hardware.gpus[0];
@@ -326,7 +330,7 @@ function ChooseModel({ onNext, onBack }: { onNext: (patch?: Partial<Settings>) =
           <CloudOption selected={choice?.kind === "cloud"} onSelect={() => setChoice({ kind: "cloud" })} recommended />
         )}
         {canDownload &&
-          r.suggested.map((m, i) => (
+          downloads.map((m) => (
             <Option
               key={m.id}
               selected={choice?.kind === "download" && choice.model.id === m.id}
@@ -335,8 +339,10 @@ function ChooseModel({ onNext, onBack }: { onNext: (patch?: Partial<Settings>) =
               tone="bg-lime-soft text-lime-deep"
               title={m.name}
               badge={
-                i === 0 && !r.prefer_cloud && installed.length === 0 ? (
+                m.id === quick?.id && !r.prefer_cloud && installed.length === 0 ? (
                   <Pill className="bg-lime-soft text-lime-deep">Recommended</Pill>
+                ) : m.id === best?.id && best.id !== quick?.id ? (
+                  <Pill className="bg-fill text-muted-foreground">Best quality</Pill>
                 ) : undefined
               }
               detail={`${m.description} ${formatBytes(m.download_bytes)} download, private.`}
@@ -731,5 +737,22 @@ function Finish({ onDone, onChooseAgain }: { onDone: () => void; onChooseAgain: 
         )}
       </div>
     </div>
+  );
+}
+
+/** Largest download that still sets up quickly on a first run. */
+const QUICK_START_BYTES = 6e9;
+
+/**
+ * The model to start with: the best one that downloads quickly (a first run shouldn't
+ * wait on a 10+ GB download), or the smallest if none is that small.
+ */
+function quickStart(models: CatalogModel[]): CatalogModel {
+  const small = models.filter((m) => m.download_bytes <= QUICK_START_BYTES);
+  const pool = small.length > 0 ? small : models;
+  return pool.reduce((a, b) =>
+    small.length > 0
+      ? b.download_bytes > a.download_bytes ? b : a
+      : b.download_bytes < a.download_bytes ? b : a,
   );
 }
