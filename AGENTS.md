@@ -1,8 +1,8 @@
 # Mimi
 
 A self-hosted, private personal AI assistant for everyday people, not only developers.
-"Mimi" is a working name. Keep the name confined to identifiers and strings so a
-rename is a find-and-replace.
+Keep the product name confined to identifiers and strings so a rename stays a
+find-and-replace (it was renamed from Hearth once already).
 
 ## Principles (apply to every change)
 
