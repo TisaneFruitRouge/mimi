@@ -1,6 +1,6 @@
 import { forwardRef, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowUp, AtSign, Blocks, MessageSquarePlus, Plus, Sparkles } from "lucide-react";
+import { ArrowUp, AtSign, Blocks, Hash, MessageSquarePlus, Plus, Sparkles } from "lucide-react";
 import { cn } from "cn";
 
 import type { Mention } from "@/bindings/Mention";
@@ -24,7 +24,7 @@ export interface ComposerHandle {
 
 /**
  * The message box: a floating card with the text field on top and a quiet toolbar
- * below. Entry points on the left (`@` mentions, `/` actions), privacy and send on the
+ * below. Entry points on the left (`@` and `#` mentions, `/` actions), privacy and send on the
  * right.
  */
 export const Composer = forwardRef<
@@ -90,6 +90,7 @@ export const Composer = forwardRef<
         {mention.open && (
           <MentionPicker
             query={mention.query}
+            sigil={mention.sigil}
             candidates={mention.candidates}
             loading={mention.loading}
             highlight={mention.highlight}
@@ -136,9 +137,15 @@ export const Composer = forwardRef<
         <div className="flex items-center gap-1 px-3 pt-1 pb-3">
           <Tooltip>
             <TooltipTrigger asChild>
-              <ToolbarChip icon={<AtSign />} label="Mention a person or event" onClick={mention.start} />
+              <ToolbarChip icon={<AtSign />} label="Mention a person or event" onClick={() => mention.start("@")} />
             </TooltipTrigger>
             <TooltipContent>Mention a person or event · or type @</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <ToolbarChip icon={<Hash />} label="Mention an email" onClick={() => mention.start("#")} />
+            </TooltipTrigger>
+            <TooltipContent>Mention an email · or type #</TooltipContent>
           </Tooltip>
 
           <Popover open={actionsOpen} onOpenChange={setActionsOpen}>

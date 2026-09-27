@@ -2475,6 +2475,80 @@ mod mail_flow {
             .collect()
     }
 
+    /// A # mention puts the email in front of the model, quoted as data, through the
+    /// real chat path (which keeps only mentions still written in the message).
+    #[tokio::test]
+    async fn a_hash_mention_shows_the_model_that_email() {
+        let fake = FakeMail::start(ME, "app-pass").await;
+        fake.deliver(
+            "INBOX",
+            &message(
+                "Léa <lea@example.com>",
+                ME,
+                "Photos from Saturday",
+                "The one by the lake is my favourite!",
+                "p1@example.com",
+                "",
+            ),
+            crate::now_ms() - 3_600_000,
+            &[],
+        );
+        let llm = scripted_llm(|_, _| Reply::Text("The lake one.")).await;
+        let h = Harness::new().await;
+        h.use_mock(llm.port()).await;
+        connect(&h, &fake, 1).await;
+
+        let (_, found) = h
+            .call(
+                reqwest::Method::GET,
+                "/mentions?q=photos&kind=mail",
+                Value::Null,
+            )
+            .await;
+        assert_eq!(found[0]["kind"], "mail_message", "{found}");
+        let (_, conv) = h
+            .call(reqwest::Method::POST, "/conversations", json!({}))
+            .await;
+        let conv_id = conv["id"].as_str().unwrap();
+        let (status, sent) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/conversations/{conv_id}/messages"),
+                json!({
+                    "content": "#Photos from Saturday which one does she like?",
+                    "mentions": [{"kind": "mail_message", "id": found[0]["id"], "label": "Photos from Saturday"}]
+                }),
+            )
+            .await;
+        assert_eq!(status, 200, "{sent}");
+        assert_eq!(
+            sent["user_message"]["mentions"].as_array().unwrap().len(),
+            1
+        );
+        for _ in 0..100 {
+            if !llm.requests().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let requests = llm.requests();
+        let user = requests[0]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|m| m["role"] == "user")
+            .unwrap()["content"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(
+            user.contains("The one by the lake is my favourite!"),
+            "{user}"
+        );
+        assert!(user.contains("not instructions"), "{user}");
+    }
+
     #[tokio::test]
     async fn an_email_cannot_make_the_assistant_send_mail() {
         let fake = FakeMail::start(ME, "app-pass").await;

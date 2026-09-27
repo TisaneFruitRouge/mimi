@@ -8,6 +8,7 @@ export type SendMessage = { content: string,
  */
 model: ModelRef | null, 
 /**
- * People and events tagged with @. Each label appears in `content` as `@label`.
+ * People and events tagged with @, email tagged with #. Each label appears in
+ * `content` as `@label` (or `#label` for email).
  */
 mentions: Array<Mention>, };

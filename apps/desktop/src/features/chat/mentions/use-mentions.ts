@@ -4,11 +4,13 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { Mention } from "@/bindings/Mention";
 import type { MentionCandidate } from "@/bindings/MentionCandidate";
 import { activeTrigger, tokenRanges } from "@/features/chat/mentions/ranges";
-import { api, keys } from "@/lib/api";
+import { api, keys, type MentionSigil } from "@/lib/api";
+import { mentionSigil } from "@/lib/draft";
 
 /**
- * @ mentions in a plain textarea: tracks which "@label"s are tokens, opens the picker
- * while an "@query" is being typed, and makes tokens behave as one unit when deleted.
+ * @ and # mentions in a plain textarea: tracks which "@label"s and "#subject"s are
+ * tokens, opens the picker while an "@query" (people, events) or "#query" (email) is
+ * being typed, and makes tokens behave as one unit when deleted.
  */
 export function useMentions({
   text,
@@ -20,7 +22,7 @@ export function useMentions({
   area: RefObject<HTMLTextAreaElement | null>;
 }) {
   const [mentions, setMentions] = useState<Mention[]>([]);
-  const [trigger, setTrigger] = useState<{ start: number; query: string } | null>(null);
+  const [trigger, setTrigger] = useState<{ start: number; query: string; sigil: MentionSigil } | null>(null);
   const [dismissed, setDismissed] = useState<number | null>(null);
   const [highlight, setHighlight] = useState(0);
 
@@ -32,20 +34,25 @@ export function useMentions({
   }, [tokens, mentions.length]);
 
   const query = trigger?.query ?? "";
-  const [debounced, setDebounced] = useState(query);
+  const sigil = trigger?.sigil ?? "@";
+  const [debounced, setDebounced] = useState({ query, sigil });
   useEffect(() => {
-    const t = setTimeout(() => setDebounced(query), 120);
+    const t = setTimeout(() => setDebounced({ query, sigil }), 120);
     return () => clearTimeout(t);
-  }, [query]);
+  }, [query, sigil]);
   const open = trigger !== null && trigger.start !== dismissed;
   const results = useQuery({
-    queryKey: keys.mentions(debounced),
-    queryFn: () => api.mentions(debounced),
+    queryKey: keys.mentions(debounced.query, debounced.sigil),
+    queryFn: () => api.mentions(debounced.query, debounced.sigil),
     enabled: open,
     placeholderData: keepPreviousData,
     staleTime: 30_000,
   });
-  const candidates = useMemo(() => results.data ?? [], [results.data]);
+  // Until the debounce catches up after switching between @ and #, show nothing stale.
+  const candidates = useMemo(
+    () => (debounced.sigil === sigil ? (results.data ?? []) : []),
+    [results.data, debounced.sigil, sigil],
+  );
   useEffect(() => setHighlight(0), [debounced]);
 
   /** Re-reads the "@query" at the caret. Call after input and caret moves. */
@@ -62,7 +69,7 @@ export function useMentions({
     const el = area.current;
     if (!trigger || !el) return;
     const caret = el.selectionStart;
-    const inserted = `@${c.label} `;
+    const inserted = `${mentionSigil(c.kind)}${c.label} `;
     const next = text.slice(0, trigger.start) + inserted + text.slice(caret);
     setMentions((m) => [...m, { kind: c.kind, id: c.id, label: c.label }]);
     setText(next);
@@ -114,17 +121,17 @@ export function useMentions({
     return false;
   };
 
-  /** Opens the picker from a button: types an "@" at the caret. */
-  const start = () => {
+  /** Opens the picker from a button: types an "@" (or "#") at the caret. */
+  const start = (with_: MentionSigil = "@") => {
     const el = area.current;
     if (!el) return;
     const caret = el.selectionStart ?? text.length;
     const needsSpace = caret > 0 && !/\s/.test(text[caret - 1]);
-    const insert = needsSpace ? " @" : "@";
+    const insert = needsSpace ? ` ${with_}` : with_;
     const next = text.slice(0, caret) + insert + text.slice(caret);
     setText(next);
     const at = caret + insert.length;
-    setTrigger({ start: at - 1, query: "" });
+    setTrigger({ start: at - 1, query: "", sigil: with_ });
     setDismissed(null);
     requestAnimationFrame(() => {
       el.focus();
@@ -137,8 +144,9 @@ export function useMentions({
     tokens,
     open,
     query,
+    sigil,
     candidates,
-    loading: results.isFetching && candidates.length === 0,
+    loading: (results.isFetching || debounced.sigil !== sigil) && candidates.length === 0,
     highlight,
     setHighlight,
     pick,

@@ -2,14 +2,15 @@
 import type { MentionKind } from "./MentionKind";
 
 /**
- * Something the user tagged with @ in a message.
+ * Something the user tagged with @ (people, events) or # (email) in a message.
  */
 export type Mention = { kind: MentionKind, 
 /**
- * A person's id, or an event's id from the mention search.
+ * A person's id, an event's id from the mention search, or an email
+ * conversation's or message's number.
  */
 id: string, 
 /**
- * The text shown after the @, e.g. "Sam Carter".
+ * The text shown after the @ or #, e.g. "Sam Carter".
  */
 label: string, };

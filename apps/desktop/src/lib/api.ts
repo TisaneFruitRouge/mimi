@@ -59,6 +59,22 @@ function isOutdated(err: TransportError) {
   );
 }
 
+/** Part of the mail: one account, or one address mail arrived at. Empty is all of it. */
+export interface MailScope {
+  account?: string;
+  address?: string;
+}
+
+function scopeParams(scope: MailScope) {
+  const params = new URLSearchParams();
+  if (scope.account) params.set("account", scope.account);
+  if (scope.address) params.set("address", scope.address);
+  return params;
+}
+
+/** What starts a mention: @ for people and events, # for email. */
+export type MentionSigil = "@" | "#";
+
 export class DaemonError extends Error {
   readonly kind: TransportError["kind"];
   readonly code?: string;
@@ -143,9 +159,11 @@ export const api = {
 
   mailDiscover: (email: string) => call<MailDiscovery>("POST", "/mail/discover", { email }),
   mailPresets: () => call<MailPreset[]>("GET", "/mail/presets"),
-  mailOverview: () => call<MailOverview>("GET", "/mail"),
-  mailThreads: (view: MailBox | null, q: string) => {
-    const params = new URLSearchParams({ limit: "80" });
+  /** Counts are for `scope` (all mail when empty); accounts are always all of them. */
+  mailOverview: (scope: MailScope = {}) => call<MailOverview>("GET", `/mail?${scopeParams(scope)}`),
+  mailThreads: (view: MailBox | null, q: string, scope: MailScope = {}) => {
+    const params = scopeParams(scope);
+    params.set("limit", "80");
     if (view) params.set("view", view);
     if (q.trim()) params.set("q", q.trim());
     return call<MailThread[]>("GET", `/mail/threads?${params}`);
@@ -165,7 +183,12 @@ export const api = {
   events: (from: number, to: number) =>
     call<CalendarEvents>("GET", `/calendar/events?from=${from}&to=${to}`),
   addEvent: (e: NewCalendarEvent) => call<CreatedEvent>("POST", "/calendar/events", e),
-  mentions: (q: string) => call<MentionCandidate[]>("GET", `/mentions?q=${encodeURIComponent(q)}`),
+  /** @ suggestions (people and events), or # suggestions (conversations and emails). */
+  mentions: (q: string, kind: MentionSigil = "@") =>
+    call<MentionCandidate[]>(
+      "GET",
+      `/mentions?q=${encodeURIComponent(q)}${kind === "#" ? "&kind=mail" : ""}`,
+    ),
 
   hardware: () => call<HardwareInfo>("GET", "/hardware"),
   recommendations: () => call<Recommendations>("GET", "/recommendations"),
@@ -244,7 +267,9 @@ export const keys = {
   personExtra: (id: string, what: "events" | "conversations" | "memory" | "mail") =>
     ["people", "person", id, what] as const,
   duplicates: ["people", "duplicates"] as const,
-  mentions: (q: string) => ["people", "mentions", q] as const,
+  // Under "mail" for #, so new mail refreshes the suggestions.
+  mentions: (q: string, kind: MentionSigil = "@") =>
+    kind === "#" ? (["mail", "mentions", q] as const) : (["people", "mentions", q] as const),
   conversations: ["conversations"] as const,
   conversation: (id: string) => ["conversation", id] as const,
   memory: ["memory"] as const,
@@ -255,8 +280,10 @@ export const keys = {
   /** Everything read from mail. */
   mail: ["mail"] as const,
   mailPresets: ["mail", "presets"] as const,
-  mailOverview: ["mail", "overview"] as const,
-  mailThreads: (view: MailBox | null, q: string) => ["mail", "threads", view, q] as const,
+  mailOverview: (scope: MailScope = {}) =>
+    ["mail", "overview", scope.account ?? null, scope.address ?? null] as const,
+  mailThreads: (view: MailBox | null, q: string, scope: MailScope = {}) =>
+    ["mail", "threads", view, q, scope.account ?? null, scope.address ?? null] as const,
   mailThread: (id: number) => ["mail", "thread", id] as const,
   /** Every calendar and event read. */
   calendar: ["calendar"] as const,

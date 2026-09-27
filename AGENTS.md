@@ -254,6 +254,15 @@ than inventing their own.
   seeded mail on 127.0.0.1:3143 (IMAP) / 3025 (SMTP) as `me@example.org` / `app-pass`
   (connect with "Other", security "None"). Never point tests at a real mailbox.
 
+- **Received on** (migration 0014, `parse::received_on`): each incoming message records
+  which of the user's addresses it arrived at: the top-most X-Original-To/Delivered-To
+  (believed when it's on the user's own domain, their address with a +tag, or also a
+  visible recipient), else a matching To/Cc, else the account's address. Mail stored
+  before the column is filled from To/Cc at the next sync. `store::Scope` (account or
+  address) narrows lists and counts (`?account=` / `?address=` on `/mail` and
+  `/mail/threads`); the Mail panel's "Received on" section shows each account's
+  addresses once there's more than one. Those addresses count as the user's own
+  (`my_addresses`).
 - **Finding servers** (`mail/discover.rs`): users only type their address and password.
   Order: known consumer domains → the domain's MX mapped to known hosts (Migadu, Google
   Workspace, iCloud custom domains, Fastmail, mailbox.org, Posteo, Infomaniak, OVH,
@@ -277,11 +286,16 @@ than inventing their own.
   username). Never on names: those become "possible duplicates" for the user. Never
   guess a phone's country code. Once placed, a card stays with its person (so user
   splits survive syncs); imported handles are read-only, "change it in the address book".
-- **Mentions:** `Mention { kind: person | event, id, label }`, with `@label` in the
-  message text. The engine resolves them into a `<mentioned>` block (data, not
-  instructions), stores it in `messages.mention_context` and replays it later. Event
-  ids come from `people::mentions::event_id` (calendar + uid + occurrence start).
-- **Composer:** the textarea stays the input. The @ logic lives in
+- **Mentions:** `Mention { kind: person | event | mail_thread | mail_message, id, label }`,
+  with `@label` in the message text for people and events and `#label` for email
+  (`MentionKind::sigil`, `mentionSigil` in `lib/draft.ts`). The engine resolves them
+  into a `<mentioned>` block (data, not instructions), stores it in
+  `messages.mention_context` and replays it later. Event ids come from
+  `people::mentions::event_id` (calendar + uid + occurrence start). `GET
+  /mentions?kind=mail` gives the # suggestions (`mail/mentions.rs`; single-message
+  conversations come as emails). A mentioned email is quoted with its angle brackets
+  replaced, so it can't close the block, within a 3,000-character budget.
+- **Composer:** the textarea stays the input. The @ and # logic lives in
   `apps/desktop/src/features/chat/mentions/` (`useMentions`, picker, highlight layer);
   the highlight layer must share the textarea's box and type (`fieldText` in
   composer.tsx) or the pills drift from the text.

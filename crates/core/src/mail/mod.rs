@@ -10,8 +10,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use mimi_protocol::{
-    Event, MailAccount, MailBox, MailDraft, MailOverview, MailPreset, MailSecurity, MailServers,
-    MailThread, MailThreadDetail,
+    Event, MailAccount, MailBox, MailDraft, MailOverview, MailPreset, MailReceivedAddress,
+    MailSecurity, MailServers, MailThread, MailThreadDetail,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
@@ -22,6 +22,7 @@ use crate::connections::store as connection_store;
 
 pub mod contacts;
 pub mod discover;
+pub mod mentions;
 pub mod model;
 pub mod net;
 pub mod parse;
@@ -371,11 +372,23 @@ pub async fn account(state: &AppState, id: Uuid) -> Option<Account> {
 
 /// The user's own addresses, to tell their messages apart.
 pub async fn my_addresses(state: &AppState) -> Vec<String> {
-    accounts(state)
+    let mut me: Vec<String> = accounts(state)
         .await
         .into_iter()
-        .map(|a| a.config.email)
-        .collect()
+        .map(|a| a.config.email.to_lowercase())
+        .collect();
+    // Aliases and catch-all addresses mail arrived at are the user's too.
+    let received = state
+        .db
+        .call(|c| store::received_addresses(c))
+        .await
+        .unwrap_or_default();
+    for address in received {
+        if !me.contains(&address) {
+            me.push(address);
+        }
+    }
+    me
 }
 
 /// Tells clients that mail changed.
@@ -404,23 +417,58 @@ pub fn install(state: &Arc<AppState>) {
 
 // --- What the panel and the tools use -------------------------------------------------
 
-pub async fn overview(state: &AppState) -> Result<MailOverview, String> {
+pub async fn overview(state: &AppState, scope: store::Scope) -> Result<MailOverview, String> {
     let accounts = accounts(state).await;
     let settings = crate::settings::load(&state.db)
         .await
         .map_err(|e| e.to_string())?;
-    let (needs_reply, important, unread) = state
+    let ids: Vec<Uuid> = accounts.iter().map(|a| a.id).collect();
+    let ((needs_reply, important, unread), addresses) = state
         .db
-        .call(|c| store::counts(c))
+        .call(move |c| {
+            let addresses = ids
+                .iter()
+                .map(|id| store::inbox_addresses(c, *id))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((store::counts(c, &scope)?, addresses))
+        })
         .await
         .map_err(|e| e.to_string())?;
     Ok(MailOverview {
         accounts: accounts
             .into_iter()
-            .map(|a| MailAccount {
-                connection_id: a.id,
-                email: a.config.email,
-                name: a.name,
+            .zip(addresses)
+            .map(|(a, found)| {
+                let own = a.config.email.to_lowercase();
+                // The account's own address first, even before mail arrives at it.
+                let mut addresses: Vec<MailReceivedAddress> = found
+                    .into_iter()
+                    .map(|(email, threads, unread)| MailReceivedAddress {
+                        email,
+                        threads,
+                        unread,
+                    })
+                    .collect();
+                match addresses.iter().position(|x| x.email == own) {
+                    Some(i) => {
+                        let first = addresses.remove(i);
+                        addresses.insert(0, first);
+                    }
+                    None => addresses.insert(
+                        0,
+                        MailReceivedAddress {
+                            email: own,
+                            threads: 0,
+                            unread: 0,
+                        },
+                    ),
+                }
+                MailAccount {
+                    connection_id: a.id,
+                    email: a.config.email,
+                    name: a.name,
+                    addresses,
+                }
             })
             .collect(),
         needs_reply,

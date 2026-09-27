@@ -1,17 +1,20 @@
 import { useEffect, useRef } from "react";
-import { CalendarDays, Loader2 } from "lucide-react";
+import { CalendarDays, Loader2, Mail, MessagesSquare } from "lucide-react";
 import { motion } from "motion/react";
 import { cn } from "cn";
 
 import type { MentionCandidate } from "@/bindings/MentionCandidate";
 import { ChannelIcons, PersonAvatar } from "@/components/people";
+import type { MentionSigil } from "@/lib/api";
 
 /**
- * The @ suggestions, floating above the composer. Focus stays in the textarea: keys are
+ * The @ (people, events) or # (conversations, emails) suggestions, floating above the
+ * composer. Focus stays in the textarea: keys are
  * handled by `useMentions`, the mouse picks with mousedown so the caret isn't lost.
  */
 export function MentionPicker({
   query,
+  sigil,
   candidates,
   loading,
   highlight,
@@ -19,6 +22,7 @@ export function MentionPicker({
   onPick,
 }: {
   query: string;
+  sigil: MentionSigil;
   candidates: MentionCandidate[];
   loading: boolean;
   highlight: number;
@@ -32,12 +36,14 @@ export function MentionPicker({
 
   const people = candidates.filter((c) => c.kind === "person");
   const events = candidates.filter((c) => c.kind === "event");
+  const threads = candidates.filter((c) => c.kind === "mail_thread");
+  const emails = candidates.filter((c) => c.kind === "mail_message");
   const indexOf = (c: MentionCandidate) => candidates.indexOf(c);
 
   return (
     <motion.div
       role="listbox"
-      aria-label="People and events"
+      aria-label={sigil === "#" ? "Conversations and emails" : "People and events"}
       initial={{ opacity: 0, scale: 0.97, y: 4 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
       transition={{ type: "spring", stiffness: 520, damping: 36 }}
@@ -51,9 +57,13 @@ export function MentionPicker({
         )}
         {!loading && candidates.length === 0 && (
           <p className="px-3 py-3 type-subhead text-muted-foreground">
-            {query
-              ? `No one and nothing called “${query}”.`
-              : "Add people or connect a calendar in Connections to mention them here."}
+            {sigil === "#"
+              ? query
+                ? `No email matches “${query}”.`
+                : "Connect your email in Connections to mention it here."
+              : query
+                ? `No one and nothing called “${query}”.`
+                : "Add people or connect a calendar in Connections to mention them here."}
           </p>
         )}
         {people.length > 0 && <Heading>People</Heading>}
@@ -79,6 +89,14 @@ export function MentionPicker({
             </span>
           </Row>
         ))}
+        {threads.length > 0 && <Heading>Conversations</Heading>}
+        {threads.map((c) => (
+          <MailRow key={`t-${c.id}`} c={c} icon={MessagesSquare} index={indexOf(c)} active={indexOf(c) === highlight} onHighlight={onHighlight} onPick={onPick} />
+        ))}
+        {emails.length > 0 && <Heading>Emails</Heading>}
+        {emails.map((c) => (
+          <MailRow key={`m-${c.id}`} c={c} icon={Mail} index={indexOf(c)} active={indexOf(c) === highlight} onHighlight={onHighlight} onPick={onPick} />
+        ))}
       </div>
       <div className="flex gap-3 bg-canvas px-3 py-1.5 type-footnote text-faint shadow-[inset_0_0.5px_0_var(--separator)]">
         <span>↑↓ to choose</span>
@@ -86,6 +104,31 @@ export function MentionPicker({
         <span>esc to close</span>
       </div>
     </motion.div>
+  );
+}
+
+function MailRow({
+  c,
+  icon: Icon,
+  ...row
+}: {
+  c: MentionCandidate;
+  icon: typeof Mail;
+  index: number;
+  active: boolean;
+  onHighlight: (i: number) => void;
+  onPick: (c: MentionCandidate) => void;
+}) {
+  return (
+    <Row c={c} {...row}>
+      <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-mail-soft text-mail">
+        <Icon className="size-3.5" />
+      </span>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate">{c.label}</span>
+        {c.detail && <span className="truncate type-footnote text-muted-foreground">{c.detail}</span>}
+      </span>
+    </Row>
   );
 }
 

@@ -84,6 +84,8 @@ pub struct MailThread {
     #[ts(type = "number")]
     pub id: i64,
     pub connection_id: Uuid,
+    /// Which of the user's addresses its latest incoming message arrived at.
+    pub received_on: Option<String>,
     pub subject: String,
     /// Everyone in the conversation except the user, most recent first.
     pub participants: Vec<MailAddress>,
@@ -128,7 +130,8 @@ pub struct MailThreadDetail {
     pub messages: Vec<MailMessage>,
 }
 
-/// Counts for the sidebar, plus the connected accounts.
+/// Counts for the sidebar (for the whole mail, or the account or address asked for),
+/// plus the connected accounts.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct MailOverview {
@@ -148,6 +151,18 @@ pub struct MailAccount {
     pub connection_id: Uuid,
     pub email: String,
     pub name: String,
+    /// The addresses its inbox mail arrived at (aliases, catch-all addresses, +tags),
+    /// the account's own first.
+    pub addresses: Vec<MailReceivedAddress>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MailReceivedAddress {
+    pub email: String,
+    /// Conversations in the inbox that arrived at it.
+    pub threads: u32,
+    pub unread: u32,
 }
 
 /// A message to send, written by the user (or drafted for them).

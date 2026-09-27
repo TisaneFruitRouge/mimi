@@ -25,6 +25,8 @@ pub struct NewMessage {
     pub seen: bool,
     pub flagged: bool,
     pub outgoing: bool,
+    /// Which of the user's addresses it arrived at (`None` for sent mail).
+    pub received_on: Option<String>,
 }
 
 /// Stores a message, threading it. Returns its thread, or `None` if it was already there.
@@ -68,9 +70,9 @@ pub fn insert(c: &Connection, m: &NewMessage) -> rusqlite::Result<Option<i64>> {
     c.execute(
         "INSERT INTO mail_messages (connection_id, mailbox, folder, uid, thread_id, message_id,
             in_reply_to, refs, from_name, from_email, to_json, cc_json, subject, date, body,
-            snippet, attachments, seen, flagged, outgoing, automated)
+            snippet, attachments, seen, flagged, outgoing, automated, received_on)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-            ?18, ?19, ?20, ?21)",
+            ?18, ?19, ?20, ?21, ?22)",
         params![
             conn,
             m.mailbox,
@@ -93,6 +95,7 @@ pub fn insert(c: &Connection, m: &NewMessage) -> rusqlite::Result<Option<i64>> {
             m.flagged,
             m.outgoing,
             p.automated,
+            m.received_on,
         ],
     )?;
     Ok(Some(thread))
@@ -306,6 +309,49 @@ pub fn forget_connection(c: &Connection, conn: Uuid) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// Works out where mail stored before `received_on` existed arrived, from its visible
+/// recipients (the delivery headers weren't kept). Returns how many were filled in.
+pub fn backfill_received_on(c: &Connection, conn: Uuid, account: &str) -> rusqlite::Result<usize> {
+    let rows: Vec<(i64, String, String)> = c
+        .prepare(
+            "SELECT id, to_json, cc_json FROM mail_messages
+             WHERE connection_id = ?1 AND received_on IS NULL AND NOT outgoing",
+        )?
+        .query_map([conn.to_string()], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })?
+        .collect::<Result<_, _>>()?;
+    for (id, to, cc) in &rows {
+        let to: Vec<MailAddress> = serde_json::from_str(to).unwrap_or_default();
+        let cc: Vec<MailAddress> = serde_json::from_str(cc).unwrap_or_default();
+        c.execute(
+            "UPDATE mail_messages SET received_on = ?2 WHERE id = ?1",
+            params![id, parse::received_on(&[], &to, &cc, account)],
+        )?;
+    }
+    Ok(rows.len())
+}
+
+/// Every address mail arrived at, in any account.
+pub fn received_addresses(c: &Connection) -> rusqlite::Result<Vec<String>> {
+    c.prepare("SELECT DISTINCT received_on FROM mail_messages WHERE received_on IS NOT NULL")?
+        .query_map([], |r| r.get(0))?
+        .collect()
+}
+
+/// An account's addresses that have mail in the inbox: (address, conversations, unread
+/// conversations), most used first.
+pub fn inbox_addresses(c: &Connection, conn: Uuid) -> rusqlite::Result<Vec<(String, u32, u32)>> {
+    c.prepare(
+        "SELECT received_on, count(DISTINCT thread_id),
+                count(DISTINCT CASE WHEN NOT seen THEN thread_id END)
+         FROM mail_messages WHERE connection_id = ?1 AND folder = 'inbox' AND received_on IS NOT NULL
+         GROUP BY received_on ORDER BY 2 DESC, 1",
+    )?
+    .query_map([conn.to_string()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+    .collect()
+}
+
 // --- Reading --------------------------------------------------------------------------
 
 /// What to list.
@@ -323,7 +369,39 @@ pub struct Query {
     /// Only conversations newer than this.
     pub since: Option<i64>,
     pub unread_only: bool,
+    /// Only this account's conversations, and, within it, only those that arrived at
+    /// (or were sent from) one address.
+    pub scope: Scope,
     pub limit: u32,
+}
+
+/// Part of the user's mail: one account, or one address.
+#[derive(Debug, Clone, Default)]
+pub struct Scope {
+    pub account: Option<Uuid>,
+    pub address: Option<String>,
+}
+
+impl Scope {
+    /// SQL conditions on a thread `t`, with their arguments.
+    fn filters(&self) -> (Vec<String>, Vec<rusqlite::types::Value>) {
+        let mut filters = Vec::new();
+        let mut args: Vec<rusqlite::types::Value> = Vec::new();
+        if let Some(account) = self.account {
+            filters.push("t.connection_id = ?".to_owned());
+            args.push(account.to_string().into());
+        }
+        if let Some(address) = &self.address {
+            filters.push(
+                "EXISTS (SELECT 1 FROM mail_messages x WHERE x.thread_id = t.id
+                   AND (x.received_on = ? OR (x.outgoing AND x.from_email = ?)))"
+                    .to_owned(),
+            );
+            args.push(address.to_lowercase().into());
+            args.push(address.to_lowercase().into());
+        }
+        (filters, args)
+    }
 }
 
 /// Turns what the user typed into an FTS5 query: every word must match (as a prefix).
@@ -344,8 +422,7 @@ pub fn threads(c: &Connection, q: &Query, me: &[String]) -> rusqlite::Result<Vec
             "EXISTS (SELECT 1 FROM mail_messages x WHERE x.thread_id = t.id AND x.folder = '{f}')"
         )
     };
-    let mut filters: Vec<String> = Vec::new();
-    let mut args: Vec<rusqlite::types::Value> = Vec::new();
+    let (mut filters, mut args) = q.scope.filters();
     match q.view {
         Some(MailBox::Inbox) => filters.push(in_folder("inbox")),
         Some(MailBox::Sent) => filters.push(in_folder("sent")),
@@ -458,9 +535,18 @@ pub fn thread(c: &Connection, id: i64, me: &[String]) -> rusqlite::Result<Option
     let Some(last) = messages.last() else {
         return Ok(None);
     };
+    let received_on = c
+        .query_row(
+            "SELECT received_on FROM mail_messages WHERE thread_id = ?1 AND received_on IS NOT NULL
+             ORDER BY date DESC LIMIT 1",
+            [id],
+            |r| r.get(0),
+        )
+        .optional()?;
     Ok(Some(MailThread {
         id,
         connection_id: conn.parse().unwrap_or_default(),
+        received_on,
         subject,
         participants: participants(&messages, me),
         last_at,
@@ -539,6 +625,36 @@ pub fn messages(c: &Connection, thread: i64, me: &[String]) -> rusqlite::Result<
     Ok(out)
 }
 
+/// One message, with its conversation and subject.
+pub fn message(
+    c: &Connection,
+    id: i64,
+    me: &[String],
+) -> rusqlite::Result<Option<(i64, String, MailMessage)>> {
+    let Some((thread, subject)) = c
+        .query_row(
+            "SELECT thread_id, subject FROM mail_messages WHERE id = ?1",
+            [id],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+        )
+        .optional()?
+    else {
+        return Ok(None);
+    };
+    let found = messages(c, thread, me)?.into_iter().find(|m| m.id == id);
+    Ok(found.map(|m| (thread, subject, m)))
+}
+
+/// Messages matching an FTS query, newest first: (message, conversation).
+pub fn search_messages(c: &Connection, fts: &str, limit: u32) -> rusqlite::Result<Vec<(i64, i64)>> {
+    c.prepare(
+        "SELECT m.id, m.thread_id FROM mail_fts JOIN mail_messages m ON m.id = mail_fts.rowid
+         WHERE mail_fts MATCH ?1 ORDER BY m.date DESC LIMIT ?2",
+    )?
+    .query_map(params![fts, limit], |r| Ok((r.get(0)?, r.get(1)?)))?
+    .collect()
+}
+
 fn participants(messages: &[MailMessage], me: &[String]) -> Vec<MailAddress> {
     let mut out: Vec<MailAddress> = Vec::new();
     for m in messages.iter().rev() {
@@ -572,13 +688,18 @@ pub fn category_str(c: MailCategory) -> &'static str {
 }
 
 /// Counts for the sidebar: needs a reply, important, unread (all in the inbox).
-pub fn counts(c: &Connection) -> rusqlite::Result<(u32, u32, u32)> {
-    let inbox =
-        "EXISTS (SELECT 1 FROM mail_messages x WHERE x.thread_id = t.id AND x.folder = 'inbox')";
+pub fn counts(c: &Connection, scope: &Scope) -> rusqlite::Result<(u32, u32, u32)> {
+    let (filters, args) = scope.filters();
+    let mut inbox = vec![
+        "EXISTS (SELECT 1 FROM mail_messages x WHERE x.thread_id = t.id AND x.folder = 'inbox')"
+            .to_owned(),
+    ];
+    inbox.extend(filters);
+    let inbox = inbox.join(" AND ");
     let count = |extra: &str| -> rusqlite::Result<u32> {
         c.query_row(
             &format!("SELECT count(*) FROM mail_threads t WHERE {inbox} AND {extra}"),
-            [],
+            rusqlite::params_from_iter(args.iter()),
             |r| r.get(0),
         )
     };

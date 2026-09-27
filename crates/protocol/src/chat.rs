@@ -147,7 +147,8 @@ pub struct SendMessage {
     /// Overrides the default model for this reply.
     #[serde(default)]
     pub model: Option<ModelRef>,
-    /// People and events tagged with @. Each label appears in `content` as `@label`.
+    /// People and events tagged with @, email tagged with #. Each label appears in
+    /// `content` as `@label` (or `#label` for email).
     #[serde(default)]
     pub mentions: Vec<crate::Mention>,
 }

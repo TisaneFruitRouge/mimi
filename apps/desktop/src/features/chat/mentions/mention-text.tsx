@@ -1,9 +1,25 @@
 import { forwardRef } from "react";
-import { CalendarDays } from "lucide-react";
+import { CalendarDays, Mail } from "lucide-react";
 import { cn } from "cn";
 
 import type { Mention } from "@/bindings/Mention";
 import { segments } from "@/features/chat/mentions/ranges";
+
+const isMail = (m: Mention) => m.kind === "mail_thread" || m.kind === "mail_message";
+
+/** Pill colours per kind: lime for people, blue for events, violet for email. */
+function tint(m: Mention) {
+  if (m.kind === "person") return { soft: "bg-lime-soft shadow-[0_0_0_2px_var(--lime-soft)]", pill: "bg-lime-soft text-lime-deep" };
+  if (isMail(m)) return { soft: "bg-mail-soft shadow-[0_0_0_2px_var(--mail-soft)]", pill: "bg-mail-soft text-mail" };
+  return { soft: "bg-event-soft shadow-[0_0_0_2px_var(--event-soft)]", pill: "bg-event-soft text-event" };
+}
+
+const titles: Record<Mention["kind"], string> = {
+  person: "Someone from your contacts",
+  event: "An event from your calendar",
+  mail_thread: "An email conversation",
+  mail_message: "An email",
+};
 
 /**
  * Pills behind a textarea's text: same box, font and wrapping as the textarea, text
@@ -25,15 +41,7 @@ export const MentionHighlights = forwardRef<HTMLDivElement, { text: string; ment
           s.kind === "text" ? (
             <span key={i}>{s.text}</span>
           ) : (
-            <span
-              key={i}
-              className={cn(
-                "rounded-[5px]",
-                s.mention.kind === "person"
-                  ? "bg-lime-soft shadow-[0_0_0_2px_var(--lime-soft)]"
-                  : "bg-event-soft shadow-[0_0_0_2px_var(--event-soft)]",
-              )}
-            >
+            <span key={i} className={cn("rounded-[5px]", tint(s.mention).soft)}>
               {s.text}
             </span>
           ),
@@ -56,13 +64,14 @@ export function MentionText({ text, mentions }: { text: string; mentions: Mentio
         ) : (
           <span
             key={i}
-            title={s.mention.kind === "event" ? "An event from your calendar" : "Someone from your contacts"}
+            title={titles[s.mention.kind]}
             className={cn(
               "inline-flex items-center gap-1 rounded-md px-1.5 py-px align-baseline font-medium",
-              s.mention.kind === "person" ? "bg-lime-soft text-lime-deep" : "bg-event-soft text-event",
+              tint(s.mention).pill,
             )}
           >
             {s.mention.kind === "event" && <CalendarDays className="size-3.5 self-center" />}
+            {isMail(s.mention) && <Mail className="size-3.5 self-center" />}
             {s.mention.label}
           </span>
         ),

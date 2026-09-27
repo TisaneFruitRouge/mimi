@@ -22,6 +22,9 @@ pub struct Parsed {
     pub attachments: Vec<String>,
     /// Newsletters, notifications and other mail no person wrote by hand.
     pub automated: bool,
+    /// Addresses the receiving server says it delivered to (X-Original-To,
+    /// Delivered-To…), most telling first. See `received_on`.
+    pub delivered_to: Vec<String>,
 }
 
 pub fn parse(raw: &[u8]) -> Option<Parsed> {
@@ -69,7 +72,122 @@ pub fn parse(raw: &[u8]) -> Option<Parsed> {
         body,
         attachments,
         automated,
+        delivered_to: DELIVERY_HEADERS
+            .iter()
+            .filter_map(|name| top_most(&msg, name))
+            .filter_map(bare_address)
+            .collect(),
     })
+}
+
+/// Headers the receiving side adds with the address a message was delivered to. The
+/// first one found of each is the top-most, added by the user's own server. X-Original-To
+/// keeps an alias from before it was expanded, so it comes first.
+const DELIVERY_HEADERS: [&str; 5] = [
+    "X-Original-To",
+    "Delivered-To",
+    "X-Delivered-To",
+    "Envelope-To",
+    "X-Envelope-To",
+];
+
+/// The first (top-most, most recently added) instance of a header, raw.
+/// `header_raw` would give the last one.
+fn top_most<'a>(msg: &'a mail_parser::Message, name: &str) -> Option<&'a str> {
+    let h = msg
+        .headers()
+        .iter()
+        .find(|h| h.name.as_str().eq_ignore_ascii_case(name))?;
+    std::str::from_utf8(
+        msg.raw_message
+            .get(h.offset_start as usize..h.offset_end as usize)?,
+    )
+    .ok()
+}
+
+/// "<Sam@Example.com>" → "sam@example.com"; `None` for anything that isn't one address.
+fn bare_address(v: &str) -> Option<String> {
+    let v = v
+        .trim()
+        .trim_start_matches('<')
+        .trim_end_matches('>')
+        .trim();
+    let ok = v.split('@').count() == 2
+        && !v.starts_with('@')
+        && !v.ends_with('@')
+        && !v.contains(|c: char| c.is_whitespace() || c == ',' || c == '<' || c == '>');
+    ok.then(|| v.to_lowercase())
+}
+
+/// Domains shared by many people: an address there is only the user's if it's theirs
+/// exactly (or with a +tag).
+const SHARED_DOMAINS: &[&str] = &[
+    "gmail.com",
+    "googlemail.com",
+    "icloud.com",
+    "me.com",
+    "mac.com",
+    "outlook.com",
+    "hotmail.com",
+    "live.com",
+    "yahoo.com",
+    "yahoo.fr",
+    "aol.com",
+    "gmx.de",
+    "gmx.net",
+    "gmx.ch",
+    "gmx.fr",
+    "web.de",
+    "proton.me",
+    "protonmail.com",
+    "pm.me",
+    "fastmail.com",
+    "posteo.de",
+    "mailbox.org",
+    "orange.fr",
+    "free.fr",
+    "laposte.net",
+    "yandex.ru",
+];
+
+/// Which of the user's addresses an incoming message arrived at, for an account whose
+/// main address is `account`: an alias or catch-all address on their own domain, a
+/// +tag, or the account's address itself.
+///
+/// A delivery header is believed when the address is plainly the user's (their own
+/// domain, or their address with a +tag) or when the message was also addressed to it
+/// (an alias on another domain). Otherwise the visible recipients decide, and failing
+/// that (Bcc, mailing lists) it's the account's address.
+pub fn received_on(
+    delivered_to: &[String],
+    to: &[MailAddress],
+    cc: &[MailAddress],
+    account: &str,
+) -> String {
+    let account = account.to_lowercase();
+    let (local, domain) = account.split_once('@').unwrap_or((&account, ""));
+    let own_domain = !domain.is_empty() && !SHARED_DOMAINS.contains(&domain);
+    let mine = |a: &str| {
+        let Some((l, d)) = a.split_once('@') else {
+            return false;
+        };
+        a == account || (d == domain && (own_domain || l.split('+').next() == Some(local)))
+    };
+    let visible: Vec<&str> = to.iter().chain(cc).map(|a| a.email.as_str()).collect();
+    if let Some(a) = delivered_to
+        .iter()
+        .find(|a| mine(a) || visible.contains(&a.as_str()))
+    {
+        return a.clone();
+    }
+    if visible.contains(&account.as_str()) {
+        return account;
+    }
+    visible
+        .into_iter()
+        .find(|a| mine(a))
+        .map(str::to_owned)
+        .unwrap_or(account)
 }
 
 fn addresses(a: &Address) -> Vec<MailAddress> {
@@ -408,6 +526,67 @@ mod tests {
         assert_eq!(strip_quoted(&p.body), "Sure, 19:30 works.");
         assert_eq!(normalize_subject(&p.subject), "dinner on thursday");
         assert!(is_reply_subject(&p.subject));
+    }
+
+    #[test]
+    fn finds_the_address_mail_arrived_at() {
+        let msg = |headers: &str| {
+            let raw = format!("From: sam@example.com\r\n{headers}Subject: hi\r\n\r\nhello\r\n");
+            parse(raw.as_bytes()).unwrap()
+        };
+        let received_on =
+            |p: &Parsed, account: &str| received_on(&p.delivered_to, &p.to, &p.cc, account);
+        // An alias on the user's own domain, as the server recorded it.
+        let p = msg(
+            "To: shop@thewendlings.com\r\nX-Original-To: shop@thewendlings.com\r\nDelivered-To: vincent@thewendlings.com\r\n",
+        );
+        assert_eq!(
+            p.delivered_to,
+            ["shop@thewendlings.com", "vincent@thewendlings.com"]
+        );
+        assert_eq!(
+            received_on(&p, "vincent@thewendlings.com"),
+            "shop@thewendlings.com"
+        );
+        // Catch-all mail Bcc'd to a made-up address: only the delivery header knows.
+        let p = msg("To: list@lists.example.net\r\nDelivered-To: <Amazon@TheWendlings.com>\r\n");
+        assert_eq!(
+            received_on(&p, "vincent@thewendlings.com"),
+            "amazon@thewendlings.com"
+        );
+        // No delivery headers: the visible recipients decide.
+        let p = msg("To: lea@example.org\r\nCc: hello@thewendlings.com\r\n");
+        assert_eq!(
+            received_on(&p, "vincent@thewendlings.com"),
+            "hello@thewendlings.com"
+        );
+        let p = msg("To: lea@example.org, vincent@thewendlings.com\r\n");
+        assert_eq!(
+            received_on(&p, "vincent@thewendlings.com"),
+            "vincent@thewendlings.com"
+        );
+        // On a shared domain, only the user's own address (or a +tag of it) is theirs.
+        let p = msg("To: friends@example.org\r\nDelivered-To: someone.else@gmail.com\r\n");
+        assert_eq!(received_on(&p, "me@gmail.com"), "me@gmail.com");
+        // Forwarded from another account: the top-most (last) hop is this one.
+        let p = msg(
+            "Delivered-To: me@gmail.com\r\nTo: old@example.org\r\nDelivered-To: old@example.org\r\n",
+        );
+        assert_eq!(received_on(&p, "me@gmail.com"), "me@gmail.com");
+        let p = msg("To: me+shop@gmail.com\r\n");
+        assert_eq!(received_on(&p, "me@gmail.com"), "me+shop@gmail.com");
+        // An alias on another domain counts when the message was addressed to it.
+        let p = msg("To: v@other.example\r\nX-Original-To: v@other.example\r\n");
+        assert_eq!(
+            received_on(&p, "vincent@thewendlings.com"),
+            "v@other.example"
+        );
+        // A forwarding hop's foreign address is not.
+        let p = msg("To: list@lists.example.net\r\nX-Original-To: stranger@other.example\r\n");
+        assert_eq!(
+            received_on(&p, "vincent@thewendlings.com"),
+            "vincent@thewendlings.com"
+        );
     }
 
     #[test]

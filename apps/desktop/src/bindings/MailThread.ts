@@ -5,7 +5,11 @@ import type { MailCategory } from "./MailCategory";
 /**
  * One conversation, as the list shows it.
  */
-export type MailThread = { id: number, connection_id: string, subject: string, 
+export type MailThread = { id: number, connection_id: string, 
+/**
+ * Which of the user's addresses its latest incoming message arrived at.
+ */
+received_on: string | null, subject: string, 
 /**
  * Everyone in the conversation except the user, most recent first.
  */

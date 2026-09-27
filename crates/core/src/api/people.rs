@@ -17,6 +17,10 @@ use crate::{AppState, now_ms};
 pub struct Search {
     #[serde(default)]
     q: String,
+    /// For mentions: `mail` suggests conversations and emails (the # picker) instead
+    /// of people and events.
+    #[serde(default)]
+    kind: Option<String>,
 }
 
 pub async fn list(
@@ -246,5 +250,10 @@ pub async fn mentions(
     State(state): State<Arc<AppState>>,
     Query(s): Query<Search>,
 ) -> ApiResult<Vec<MentionCandidate>> {
+    if s.kind.as_deref() == Some("mail") {
+        return Ok(Json(
+            crate::mail::mentions::candidates(&state, &s.q, 6).await,
+        ));
+    }
     Ok(Json(people::mentions::candidates(&state, &s.q, 6).await))
 }

@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   Archive,
+  AtSign,
   ChevronDown,
   CircleAlert,
   Inbox,
@@ -45,8 +46,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { ConnectDialog } from "@/features/connections/connect-dialogs";
 import { DraftEditor, SendButton, useSendDraft } from "@/features/mail/draft-editor";
 import type { Section } from "@/features/shell/top-bar";
-import { api, keys } from "@/lib/api";
-import type { Draft } from "@/lib/draft";
+import { api, keys, type MailScope } from "@/lib/api";
+import { type Draft, mentionDraft } from "@/lib/draft";
 import { useAssistantName, useConnections } from "@/lib/queries";
 import { useScrollEdge } from "@/lib/scroll-edge";
 
@@ -96,6 +97,75 @@ export function showMailThread(id: number) {
   pendingThread = id;
 }
 
+// Which account or address the panel shows, per viewer (like the view).
+const SCOPE_KEY = "mimi.mail.scope";
+function storedScope(): MailScope {
+  try {
+    const v = JSON.parse(localStorage.getItem(SCOPE_KEY) ?? "{}");
+    return {
+      account: typeof v.account === "string" ? v.account : undefined,
+      address: typeof v.address === "string" ? v.address : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+function storeScope(s: MailScope) {
+  try {
+    localStorage.setItem(SCOPE_KEY, JSON.stringify(s));
+  } catch {
+    // Not important.
+  }
+}
+const sameScope = (a: MailScope, b: MailScope) => (a.account ?? null) === (b.account ?? null) && (a.address ?? null) === (b.address ?? null);
+
+interface ScopeRow {
+  key: string;
+  label: string;
+  scope: MailScope;
+  unread: number | null;
+  nested: boolean;
+  account: boolean;
+}
+
+/**
+ * "Received on" choices: each account when there are several, and each address mail
+ * arrived at when an account has more than one (aliases, catch-all, +tags). Empty when
+ * there's only one address in all: nothing to split.
+ */
+function scopeRows(o: MailOverview): ScopeRow[] {
+  const rows: ScopeRow[] = [];
+  const several = o.accounts.length > 1;
+  for (const a of o.accounts) {
+    if (several)
+      rows.push({
+        key: a.connection_id,
+        label: a.email,
+        scope: { account: a.connection_id },
+        unread: null,
+        nested: false,
+        account: true,
+      });
+    if (a.addresses.length > 1)
+      for (const x of a.addresses)
+        rows.push({
+          key: `${a.connection_id}:${x.email}`,
+          label: x.email,
+          scope: { address: x.email },
+          unread: x.unread,
+          nested: several,
+          account: false,
+        });
+  }
+  return rows;
+}
+
+/** Whether conversations should say which address they arrived at. */
+const manyAddresses = (o: MailOverview) => o.accounts.reduce((n, a) => n + a.addresses.length, 0) > 1;
+
+/** The accounts' own addresses: mail to these needs no tag in the list, only aliases do. */
+const mainAddresses = (o: MailOverview) => new Set(o.accounts.map((a) => a.email.toLowerCase()));
+
 // --- Formatting ----------------------------------------------------------------------
 
 function listDate(ms: number) {
@@ -118,6 +188,12 @@ function longDate(ms: number) {
 }
 
 const nameOf = (a: { name: string | null; email: string }) => a.name || a.email.split("@")[0];
+
+/** A subject as a # tag: one line, as the daemon's suggestions label it. */
+function mailLabel(subject: string) {
+  const s = subject.split(/\s+/).filter(Boolean).join(" ") || "(no subject)";
+  return s.length > 60 ? `${s.slice(0, 60)}…` : s;
+}
 
 function who(t: MailThread) {
   const names = t.participants.map(nameOf);
@@ -161,8 +237,21 @@ export function MailView({
   onAsk: (draft: Draft) => void;
   onOpenPerson: (id: string) => void;
 }) {
-  const overview = useQuery({ queryKey: keys.mailOverview, queryFn: api.mailOverview });
+  const [scopeState, setScopeState] = useState<MailScope>(storedScope);
+  const overview = useQuery({
+    queryKey: keys.mailOverview(scopeState),
+    queryFn: () => api.mailOverview(scopeState),
+    placeholderData: keepPreviousData,
+  });
   const o = overview.data;
+  // A remembered account or address that's gone (disconnected) means all mail.
+  const rows = o ? scopeRows(o) : [];
+  const scope: MailScope = rows.some((r) => sameScope(r.scope, scopeState)) ? scopeState : {};
+  const setScope = (next: MailScope) => {
+    setScopeState(next);
+    storeScope(next);
+    setSelected(null);
+  };
   const [view, setViewState] = useState<MailBox | null>(storedView);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<number | null>(() => {
@@ -204,10 +293,23 @@ export function MailView({
 
   return (
     <div className="flex h-full">
-      <Mailboxes overview={o} view={current} onView={setView} onCompose={compose} onSettings={onSection} />
+      <Mailboxes
+        overview={o}
+        view={current}
+        onView={setView}
+        scope={scope}
+        onScope={setScope}
+        onCompose={compose}
+        onSettings={onSection}
+      />
       <ThreadList
         view={current}
         onView={setView}
+        scope={scope}
+        onScope={setScope}
+        rows={rows}
+        showAddress={manyAddresses(o) && !scope.address}
+        mainAddresses={mainAddresses(o)}
         query={query}
         onQuery={setQuery}
         selected={composing ? null : selected}
@@ -233,6 +335,7 @@ export function MailView({
               <Reader
                 id={selected}
                 overview={o}
+                showAddress={manyAddresses(o)}
                 onGone={() => setSelected(null)}
                 onAsk={onAsk}
                 onOpenPerson={onOpenPerson}
@@ -275,15 +378,20 @@ function Mailboxes({
   overview: o,
   view,
   onView,
+  scope,
+  onScope,
   onCompose,
   onSettings,
 }: {
   overview: MailOverview;
   view: MailBox;
   onView: (v: MailBox) => void;
+  scope: MailScope;
+  onScope: (s: MailScope) => void;
   onCompose: () => void;
   onSettings: (s: Section) => void;
 }) {
+  const rows = scopeRows(o);
   const [refreshing, setRefreshing] = useState(false);
   const count: Partial<Record<MailBox, number>> = {
     needs_reply: o.needs_reply,
@@ -342,6 +450,28 @@ function Mailboxes({
         <span className="px-2.5 pb-1 section-label">Mailboxes</span>
         {views.filter((v) => !v.sorted).map(item)}
       </nav>
+      {rows.length > 0 && (
+        <nav aria-label="Received on" className="flex flex-col gap-0.5">
+          <span className="px-2.5 pb-1 section-label">Received on</span>
+          <ScopeButton
+            label={o.accounts.length > 1 ? "All accounts" : "All addresses"}
+            icon={Layers}
+            active={!scope.account && !scope.address}
+            onClick={() => onScope({})}
+          />
+          {rows.map((r) => (
+            <ScopeButton
+              key={r.key}
+              label={r.label}
+              icon={r.account ? Mail : AtSign}
+              count={r.unread}
+              nested={r.nested}
+              active={sameScope(r.scope, scope)}
+              onClick={() => onScope(r.scope)}
+            />
+          ))}
+        </nav>
+      )}
       <div className="mt-auto flex flex-col gap-2 px-2.5 type-footnote text-faint">
         {o.sorting ? (
           o.model_locality && (
@@ -354,13 +484,47 @@ function Mailboxes({
             Sorting is off. Turn it on in Settings › Privacy.
           </button>
         )}
-        {o.accounts.map((a) => (
-          <span key={a.connection_id} className="truncate">
-            {a.email}
-          </span>
-        ))}
+        {rows.length === 0 &&
+          o.accounts.map((a) => (
+            <span key={a.connection_id} className="truncate">
+              {a.email}
+            </span>
+          ))}
       </div>
     </aside>
+  );
+}
+
+function ScopeButton({
+  label,
+  icon: Icon,
+  count,
+  nested,
+  active,
+  onClick,
+}: {
+  label: string;
+  icon: typeof Inbox;
+  count?: number | null;
+  nested?: boolean;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-current={active ? "true" : undefined}
+      title={label}
+      className={cn(
+        "flex h-9 items-center gap-2.5 rounded-[8px] px-2.5 text-left type-callout transition-colors",
+        nested && "pl-7",
+        active ? "bg-fill font-medium" : "text-foreground/85 hover:bg-[rgb(118_118_128/0.07)]",
+      )}
+    >
+      <Icon className={cn("size-4 shrink-0", active ? "text-foreground" : "text-muted-foreground")} />
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {!!count && <span className="type-footnote font-medium text-muted-foreground tabular-nums">{count}</span>}
+    </button>
   );
 }
 
@@ -399,6 +563,11 @@ function IconButton({
 function ThreadList({
   view,
   onView,
+  scope,
+  onScope,
+  rows,
+  showAddress,
+  mainAddresses,
   query,
   onQuery,
   selected,
@@ -407,6 +576,11 @@ function ThreadList({
 }: {
   view: MailBox;
   onView: (v: MailBox) => void;
+  scope: MailScope;
+  onScope: (s: MailScope) => void;
+  rows: ScopeRow[];
+  showAddress: boolean;
+  mainAddresses: Set<string>;
   query: string;
   onQuery: (q: string) => void;
   selected: number | null;
@@ -416,10 +590,11 @@ function ThreadList({
   const searching = query.trim().length > 0;
   // A search looks through everything, not only the current view.
   const threads = useQuery({
-    queryKey: keys.mailThreads(searching ? null : view, query),
-    queryFn: () => api.mailThreads(searching ? null : view, query),
+    queryKey: keys.mailThreads(searching ? null : view, query, scope),
+    queryFn: () => api.mailThreads(searching ? null : view, query, scope),
     placeholderData: keepPreviousData,
   });
+  const scopeLabel = rows.find((r) => sameScope(r.scope, scope))?.label;
   const connections = useConnections().data ?? [];
   const accounts = connections.filter((c) => c.integration === "email");
   const problem = accounts.find((c) => c.status === "error");
@@ -456,6 +631,19 @@ function ThreadList({
                 <v.icon /> {v.label}
               </DropdownMenuItem>
             ))}
+            {rows.length > 0 && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => onScope({})}>
+                  <Layers /> All mail
+                </DropdownMenuItem>
+                {rows.map((r) => (
+                  <DropdownMenuItem key={r.key} onSelect={() => onScope(r.scope)}>
+                    {r.account ? <Mail /> : <AtSign />} <span className="truncate">{r.label}</span>
+                  </DropdownMenuItem>
+                ))}
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
         <span className="lg:hidden">
@@ -464,6 +652,18 @@ function ThreadList({
           </IconButton>
         </span>
       </div>
+      {scopeLabel && !searching && (
+        <div className="-mt-2 flex items-center gap-1.5 px-4 pb-3 type-subhead text-muted-foreground">
+          <span className="min-w-0 truncate">Received on {scopeLabel}</span>
+          <button
+            onClick={() => onScope({})}
+            aria-label="Show all mail"
+            className="shrink-0 rounded-full p-0.5 text-faint hover:bg-fill hover:text-foreground"
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+      )}
       <div className="px-3 pb-2">
         <label className="flex h-9 items-center gap-2 rounded-[10px] bg-fill px-3 focus-within:bg-background focus-within:shadow-[0_0_0_3px_rgb(200_242_93/0.35)]">
           <Search className="size-4 shrink-0 text-faint" />
@@ -536,6 +736,7 @@ function ThreadList({
             active={t.id === selected}
             focusable={t.id === selected || (selected === null && t === list[0])}
             showCategory={searching || view === "inbox"}
+            showAddress={showAddress && !!t.received_on && !mainAddresses.has(t.received_on)}
             onClick={() => onSelect(t.id)}
           />
         ))}
@@ -554,12 +755,14 @@ function ThreadRow({
   active,
   focusable,
   showCategory,
+  showAddress,
   onClick,
 }: {
   thread: MailThread;
   active: boolean;
   focusable: boolean;
   showCategory: boolean;
+  showAddress: boolean;
   onClick: () => void;
 }) {
   const pill = showCategory && t.category ? categoryPill[t.category] : undefined;
@@ -586,6 +789,13 @@ function ThreadRow({
       <span className="flex items-center gap-1.5">
         <span className="min-w-0 flex-1 truncate type-subhead">{t.subject || "(no subject)"}</span>
         {t.flagged && <Star className="size-3 shrink-0 fill-[#ff9f0a] text-[#ff9f0a]" aria-label="Flagged" />}
+        {showAddress && t.received_on && !t.last_from_me && (
+          <span title={`Received on ${t.received_on}`} className="flex min-w-0 shrink">
+            <Pill className="h-[18px] max-w-[130px] bg-fill px-2 text-[11px] text-muted-foreground">
+              <span className="truncate">{t.received_on}</span>
+            </Pill>
+          </span>
+        )}
         {pill && <Pill className={cn("h-[18px] px-2 text-[11px]", pill.className)}>{pill.label}</Pill>}
       </span>
       <span className="line-clamp-2 type-subhead text-muted-foreground">
@@ -622,12 +832,14 @@ function NothingOpen({ view }: { view: MailBox }) {
 function Reader({
   id,
   overview,
+  showAddress,
   onGone,
   onAsk,
   onOpenPerson,
 }: {
   id: number;
   overview: MailOverview;
+  showAddress: boolean;
   onGone: () => void;
   onAsk: (draft: Draft) => void;
   onOpenPerson: (id: string) => void;
@@ -689,13 +901,8 @@ function Reader({
     }
   };
   const startReply = () => setReply(replyTo(d));
-  const ask = () => {
-    const from = t.participants[0];
-    onAsk({
-      text: `About the email “${t.subject}”${from ? ` from ${nameOf(from)}` : ""}: `,
-      mentions: [],
-    });
-  };
+  // The conversation itself goes along as a # mention, so the assistant reads it.
+  const ask = () => onAsk(mentionDraft("mail_thread", String(t.id), mailLabel(t.subject)));
   const openPerson = async (email: string) => {
     try {
       const hit = (await api.people(email))[0];
@@ -710,7 +917,14 @@ function Reader({
     <div className="h-full overflow-y-auto" onScroll={onScroll}>
       <div className="mx-auto flex w-full max-w-[760px] flex-col gap-5 px-6 pt-[84px] pb-20">
         <header className="flex flex-col gap-3">
-          <h1 className="type-title break-words">{t.subject || "(no subject)"}</h1>
+          <div className="flex flex-col gap-1">
+            <h1 className="type-title break-words">{t.subject || "(no subject)"}</h1>
+            {showAddress && t.received_on && (
+              <p className="flex items-center gap-1 type-subhead text-muted-foreground">
+                <AtSign className="size-3.5" /> Received on {t.received_on}
+              </p>
+            )}
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="secondary" size="sm" onClick={startReply} disabled={!!reply}>
               <Reply /> Reply

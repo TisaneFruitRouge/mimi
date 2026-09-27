@@ -99,7 +99,10 @@ pub async fn send_with_context(
     // Only mentions that are still in the text count; a deleted "@Sam" means no Sam.
     let mut mentions: Vec<Mention> = mentions
         .into_iter()
-        .filter(|m| !m.label.trim().is_empty() && content.contains(&format!("@{}", m.label)))
+        .filter(|m| {
+            !m.label.trim().is_empty()
+                && content.contains(&format!("{}{}", m.kind.sigil(), m.label))
+        })
         .take(20)
         .collect();
     mentions.dedup_by(|a, b| a.kind == b.kind && a.id == b.id);
@@ -690,7 +693,8 @@ struct PromptMemory {
     learning: bool,
 }
 
-/// A user message as the model reads it: the text, then what its @ mentions refer to.
+/// A user message as the model reads it: the text, then what its @ and # mentions
+/// refer to.
 fn with_context(content: &str, mention_context: Option<&str>) -> String {
     match mention_context {
         Some(context) => format!("{content}\n\n{context}"),

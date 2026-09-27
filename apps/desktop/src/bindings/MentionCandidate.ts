@@ -7,7 +7,8 @@ import type { MentionKind } from "./MentionKind";
  */
 export type MentionCandidate = { kind: MentionKind, id: string, label: string, 
 /**
- * One quiet line: an event's day and time and calendar, a nickname…
+ * One quiet line: an event's day and time and calendar, a nickname, who an email
+ * is from…
  */
 detail: string | null, 
 /**

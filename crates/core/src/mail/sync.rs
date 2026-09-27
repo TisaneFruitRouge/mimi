@@ -258,7 +258,13 @@ pub async fn pass(
     account: &Account,
 ) -> Result<(), MailError> {
     let f = folders(session).await?;
-    let mut changed = false;
+    let (conn, me) = (account.id, account.config.email.clone());
+    let mut changed = state
+        .db
+        .call(move |c| store::backfill_received_on(c, conn, &me))
+        .await
+        .map_err(|e| MailError::Protocol(e.to_string()))?
+        > 0;
     changed |= sync_mailbox(state, session, account, "INBOX", "inbox").await?;
     if let Some(sent) = &f.sent {
         changed |= sync_mailbox(state, session, account, sent, "sent").await?;
@@ -492,6 +498,8 @@ impl Fetched {
             seen: self.seen || outgoing,
             flagged: self.flagged,
             outgoing,
+            received_on: (!outgoing)
+                .then(|| parse::received_on(&parsed.delivered_to, &parsed.to, &parsed.cc, me)),
             parsed,
         })
     }

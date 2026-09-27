@@ -131,16 +131,31 @@ pub struct DismissDuplicate {
 pub enum MentionKind {
     Person,
     Event,
+    /// An email conversation (tagged with #).
+    MailThread,
+    /// One email (tagged with #).
+    MailMessage,
 }
 
-/// Something the user tagged with @ in a message.
+impl MentionKind {
+    /// What the tag starts with in the message text: `#` for email, `@` otherwise.
+    pub fn sigil(self) -> char {
+        match self {
+            Self::MailThread | Self::MailMessage => '#',
+            Self::Person | Self::Event => '@',
+        }
+    }
+}
+
+/// Something the user tagged with @ (people, events) or # (email) in a message.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct Mention {
     pub kind: MentionKind,
-    /// A person's id, or an event's id from the mention search.
+    /// A person's id, an event's id from the mention search, or an email
+    /// conversation's or message's number.
     pub id: String,
-    /// The text shown after the @, e.g. "Sam Carter".
+    /// The text shown after the @ or #, e.g. "Sam Carter".
     pub label: String,
 }
 
@@ -151,7 +166,8 @@ pub struct MentionCandidate {
     pub kind: MentionKind,
     pub id: String,
     pub label: String,
-    /// One quiet line: an event's day and time and calendar, a nickname…
+    /// One quiet line: an event's day and time and calendar, a nickname, who an email
+    /// is from…
     pub detail: Option<String>,
     /// For people: how they can be reached.
     pub channels: Vec<Channel>,

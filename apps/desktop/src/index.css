@@ -63,6 +63,8 @@
     --color-cloud-soft: var(--cloud-soft);
     --color-event: var(--event);
     --color-event-soft: var(--event-soft);
+    --color-mail: var(--mail);
+    --color-mail-soft: var(--mail-soft);
 
     /* Elevation: hairline + soft layered shadows, never a hard border. */
     --shadow-card: 0 0 0 0.5px rgb(0 0 0 / 0.06), 0 1px 2px rgb(0 0 0 / 0.04), 0 2px 8px -2px rgb(0 0 0 / 0.04);
@@ -115,6 +117,8 @@
     --cloud-soft: #fdf1df;
     --event: #2f5bd3;
     --event-soft: #e9eefd;
+    --mail: #6146ad;            /* # email mentions */
+    --mail-soft: #efe9fb;
 
     /* Translucent "material" behind bars and floating surfaces. */
     --material: rgb(245 245 247 / 0.72);

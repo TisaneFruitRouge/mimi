@@ -43,7 +43,7 @@ impl ToolSource for MailTools {
     }
 }
 
-fn local_time(ms: i64) -> String {
+pub(super) fn local_time(ms: i64) -> String {
     Local
         .timestamp_millis_opt(ms)
         .single()
@@ -51,7 +51,7 @@ fn local_time(ms: i64) -> String {
         .unwrap_or_default()
 }
 
-fn address(a: &MailAddress) -> String {
+pub(super) fn address(a: &MailAddress) -> String {
     match &a.name {
         Some(n) => format!("{n} <{}>", a.email),
         None => a.email.clone(),

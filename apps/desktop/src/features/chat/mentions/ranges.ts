@@ -1,4 +1,6 @@
 import type { Mention } from "@/bindings/Mention";
+import type { MentionSigil } from "@/lib/api";
+import { mentionSigil } from "@/lib/draft";
 
 export interface TokenRange {
   start: number;
@@ -10,15 +12,16 @@ export interface TokenRange {
 const wordChar = /[\p{L}\p{N}_]/u;
 
 /**
- * Where each mention's "@label" sits in `text`, first occurrence per mention, never
- * overlapping, sorted. Mentions whose text is gone have no range.
+ * Where each mention's "@label" (or "#subject" for email) sits in `text`, first
+ * occurrence per mention, never overlapping, sorted. Mentions whose text is gone have
+ * no range.
  */
 export function tokenRanges(text: string, mentions: Mention[]): TokenRange[] {
   const ranges: TokenRange[] = [];
   // Longer labels first, so "@Sam Carter" wins over "@Sam".
   const ordered = [...mentions].sort((a, b) => b.label.length - a.label.length);
   for (const mention of ordered) {
-    const needle = `@${mention.label}`;
+    const needle = `${mentionSigil(mention.kind)}${mention.label}`;
     let from = 0;
     while (from <= text.length) {
       const start = text.indexOf(needle, from);
@@ -50,16 +53,22 @@ export function segments(text: string, mentions: Mention[]) {
 }
 
 /**
- * The "@query" being typed at the caret, if any: an @ at the start or after a space
- * or bracket, not inside an existing token, followed by at most a few words.
+ * The "@query" or "#query" being typed at the caret, if any: an @ or # at the start or
+ * after a space or bracket, not inside an existing token, followed by at most a few
+ * words.
  */
-export function activeTrigger(text: string, caret: number, tokens: TokenRange[]) {
+export function activeTrigger(
+  text: string,
+  caret: number,
+  tokens: TokenRange[],
+): { start: number; query: string; sigil: MentionSigil } | null {
   const before = text.slice(0, caret);
-  const at = before.lastIndexOf("@");
+  const at = Math.max(before.lastIndexOf("@"), before.lastIndexOf("#"));
   if (at === -1) return null;
+  const sigil = before[at] as MentionSigil;
   if (at > 0 && !/[\s([{"'“]/.test(before[at - 1])) return null;
   if (tokens.some((t) => at >= t.start && at < t.end)) return null;
   const query = before.slice(at + 1);
   if (query.length > 40 || /\n/.test(query) || /^\s/.test(query) || /\s{2,}$/.test(query)) return null;
-  return { start: at, query };
+  return { start: at, query, sigil };
 }

@@ -3,7 +3,8 @@ import type { Locality } from "./Locality";
 import type { MailAccount } from "./MailAccount";
 
 /**
- * Counts for the sidebar, plus the connected accounts.
+ * Counts for the sidebar (for the whole mail, or the account or address asked for),
+ * plus the connected accounts.
  */
 export type MailOverview = { accounts: Array<MailAccount>, needs_reply: number, important: number, unread: number, 
 /**

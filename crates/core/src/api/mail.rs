@@ -27,8 +27,31 @@ pub async fn presets() -> ApiResult<Vec<MailPreset>> {
     Ok(Json(mail::presets()))
 }
 
-pub async fn overview(State(state): State<Arc<AppState>>) -> ApiResult<MailOverview> {
-    mail::overview(&state)
+/// Part of the mail: one account (`account`), or one address it received mail at
+/// (`address`). Neither means all of it.
+#[derive(Deserialize, Default)]
+pub struct ScopeQuery {
+    account: Option<Uuid>,
+    address: Option<String>,
+}
+
+impl ScopeQuery {
+    fn scope(self) -> store::Scope {
+        store::Scope {
+            account: self.account,
+            address: self
+                .address
+                .map(|a| a.trim().to_lowercase())
+                .filter(|a| !a.is_empty()),
+        }
+    }
+}
+
+pub async fn overview(
+    State(state): State<Arc<AppState>>,
+    Query(scope): Query<ScopeQuery>,
+) -> ApiResult<MailOverview> {
+    mail::overview(&state, scope.scope())
         .await
         .map(Json)
         .map_err(AppError::internal)
@@ -36,6 +59,9 @@ pub async fn overview(State(state): State<Arc<AppState>>) -> ApiResult<MailOverv
 
 #[derive(Deserialize)]
 pub struct ListQuery {
+    /// See `ScopeQuery`. (Not flattened: that breaks numbers in query strings.)
+    account: Option<Uuid>,
+    address: Option<String>,
     /// needs_reply | important | other | inbox | sent | archive
     view: Option<String>,
     /// Words to search for.
@@ -69,6 +95,11 @@ pub async fn threads(
         search: q.q.filter(|s| !s.trim().is_empty()),
         before: q.before,
         limit,
+        scope: ScopeQuery {
+            account: q.account,
+            address: q.address,
+        }
+        .scope(),
         ..Default::default()
     };
     mail::threads(&state, query)
