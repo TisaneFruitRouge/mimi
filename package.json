@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "MIMI_HOME=\"${MIMI_HOME:-$PWD/.dev}\" concurrently --kill-others --names daemon,app --prefix-colors yellow,cyan \"pnpm dev:daemon\" \"pnpm dev:app\"",
     "dev:daemon": "MIMI_HOME=\"${MIMI_HOME:-$PWD/.dev}\" cargo run -p mimi-core --bin mimid",
-    "dev:app": "MIMI_HOME=\"${MIMI_HOME:-$PWD/.dev}\" pnpm --filter @mimi/desktop tauri dev",
+    "dev:app": "MIMI_HOME=\"${MIMI_HOME:-$PWD/.dev}\" MIMI_DAEMON=external pnpm --filter @mimi/desktop tauri dev",
     "web": "pnpm build && MIMI_HOME=\"${MIMI_HOME:-$PWD/.dev}\" cargo run -q -p mimi-cli -- open",
     "mimi": "MIMI_HOME=\"${MIMI_HOME:-$PWD/.dev}\" cargo run -q -p mimi-cli --",
     "build": "pnpm --filter @mimi/desktop build",

@@ -118,3 +118,29 @@ export async function openInBrowser(): Promise<void> {
   if (!isTauri) return;
   await invoke("open_in_browser");
 }
+
+/** Mirrors BackgroundStatus in src-tauri/src/daemon_process.rs. */
+export interface BackgroundStatus {
+  /** Whether the switch can be used here. */
+  available: boolean;
+  unavailable_reason: string | null;
+  /** Starts at login and keeps running with no window open. */
+  enabled: boolean;
+  /** Starts at login, but nothing restarts it after a crash (no systemd). */
+  no_restart: boolean;
+}
+
+/** Desktop only: whether Mimi keeps running in the background. Null in a browser. */
+export async function backgroundStatus(): Promise<BackgroundStatus | null> {
+  if (!isTauri) return null;
+  return invoke<BackgroundStatus>("background_status");
+}
+
+/** Desktop only: turns background mode on or off. Rejects with a readable message. */
+export async function setBackground(enabled: boolean): Promise<BackgroundStatus> {
+  try {
+    return await invoke<BackgroundStatus>("set_background", { enabled });
+  } catch (err) {
+    throw new Error((err as { message?: string })?.message ?? "Couldn't change this setting.");
+  }
+}

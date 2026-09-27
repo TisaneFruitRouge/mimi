@@ -227,6 +227,30 @@ than inventing their own.
 - Try it for real with `MIMI_MEMORY_QUIET_SECS=15` so the background learning pass
   runs soon after a chat; it logs `learning pass done … notes_changed=N`.
 
+## Running in the background (daemon lifecycle)
+
+- Full design in `docs/architecture.md` › Running the daemon. The user never starts
+  `mimid`: the app uses a running daemon, else starts the installed login service, else
+  runs `mimid` as a supervised child and stops it on quit
+  (`apps/desktop/src-tauri/src/daemon_process.rs`). "Keep Mimi running in the
+  background" in Settings installs/removes the login service and hands the daemon over;
+  `mimi service install|uninstall|status|start` does the same headless.
+- **Finding `mimid`** is `mimi_service::daemon_binary()` only: `MIMI_DAEMON_BIN`, else
+  next to the running executable (bundles ship it as the Tauri sidecar `binaries/mimid`,
+  which lands beside the app binary; `target/<profile>/` in dev), else `PATH`. Don't add
+  other lookups elsewhere.
+- **One daemon per data directory.** Service names derive from it: `mimi` /
+  `dev.mimi.daemon` for the default install, `mimi-<hash>` for any custom `MIMI_HOME`.
+  So dev and test installs can never replace a real one.
+- `pnpm dev` sets `MIMI_DAEMON=external` for the app: it only connects, never starts,
+  stops or installs a daemon, and the background switch explains why it's unavailable.
+- **Testing without disturbing the user's session:** never install, start or stop the
+  plain `mimi` unit, and never touch the `pnpm dev` daemon. Use a scratch `MIMI_HOME`,
+  `MIMI_KEY_STORE=file` and a spare `MIMI_PORT` (hashed unit name), and remove what you
+  created. The desktop lifecycle has an opt-in test that runs real processes without a
+  window: `MIMI_HOME=… MIMI_PORT=… MIMI_KEY_STORE=file MIMI_DAEMON_BIN=$PWD/target/debug/mimid
+  cargo test -p mimi-desktop lifecycle -- --ignored`.
+
 ## Commands
 
 ```sh
@@ -234,6 +258,7 @@ pnpm dev                 # daemon + desktop app together, data in .dev/
 pnpm web                 # build the frontend and open it in a browser (daemon running)
 pnpm dev:daemon          # daemon only (pnpm dev:app for the app only)
 pnpm mimi <args>       # CLI against the .dev/ instance
+mimi service status      # background service (install | uninstall | status | start)
 pnpm check               # fmt, clippy, tests, typecheck (what CI runs)
 MIMI_HOME=/tmp/h1 ...  # any other isolated instance
 ```

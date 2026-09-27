@@ -25,6 +25,7 @@
 | `crates/core` | `mimi-core` | The daemon (`mimid` binary) and all assistant logic. |
 | `crates/client` | `mimi-client` | Typed client for the daemon API. Every frontend uses it. |
 | `crates/cli` | `mimi-cli` | The `mimi` command. The TUI will live here too. |
+| `crates/service` | `mimi-service` | Finds `mimid` and runs it as a login service (systemd, launchd, XDG autostart). Shared by the app and the CLI. |
 | `apps/desktop/src-tauri` | `mimi-desktop` | Tauri shell. Exposes Tauri commands that call `mimi-client`. |
 | `apps/desktop/src` | `@mimi/desktop` | React + Tailwind + shadcn/ui frontend. |
 
@@ -189,11 +190,47 @@ small in the prompt however much accumulates. It works like a tiny file system:
   drawn as pills behind the text, and a token deletes as a whole. People live at
   `#/people`, reached from Connections.
 
+## Running the daemon
+
+The user never starts `mimid` by hand. Who runs it:
+
+| Owner | When | Stops when |
+|---|---|---|
+| The background service | "Keep Mimi running in the background" is on | The switch is turned off (the app then runs it itself) |
+| The desktop app, as a child | The switch is off | The app quits |
+| Someone else | `pnpm dev` (`MIMI_DAEMON=external`), or a daemon started by hand | Its owner stops it |
+
+On launch the app (`apps/desktop/src-tauri/src/daemon_process.rs`): uses a daemon that
+already answers; else starts the installed service; else spawns `mimid` as a child
+(logging to `daemon.log` in the data directory), restarts it if it crashes (at most 5
+times a minute) and stops it with SIGTERM on quit. With `MIMI_DAEMON=external` it only
+connects. Only one daemon runs per data directory, so turning the switch on first stops
+the app's child, then installs and starts the service.
+
+Finding the binary (`mimi_service::daemon_binary`): `MIMI_DAEMON_BIN`, else `mimid`
+next to the running executable (the bundled Tauri sidecar, or `target/<profile>/` in
+development), else `PATH`.
+
+The service (`crates/service`), one per data directory:
+
+- **Linux, systemd:** user unit `~/.config/systemd/user/mimi.service`,
+  `Restart=on-failure`, enabled for login with `systemctl --user enable --now`.
+- **Linux without systemd:** XDG autostart entry `~/.config/autostart/mimi.desktop`
+  (starts at login, nothing restarts it after a crash; the switch's text says so).
+- **macOS:** LaunchAgent `~/Library/LaunchAgents/dev.mimi.daemon.plist`, `RunAtLoad`,
+  `KeepAlive` on unsuccessful exit, logs to `daemon.log`.
+- A non-default data directory (`MIMI_HOME`: development, tests) gets its own name,
+  `mimi-<hash>` / `dev.mimi.daemon.<hash>`, so it can never replace the real install.
+  `MIMI_HOME`, `MIMI_PORT` and `MIMI_KEY_STORE` are carried into the service only when set.
+
+The tray (`tray.rs`) offers Open Mimi, a status line and Quit Mimi. In background mode,
+closing the window hides it to the tray; quitting leaves a service-run daemon running.
+Linux trays need libayatana-appindicator at runtime; without it there's no tray and
+closing the window quits the app (the service, if on, keeps the assistant running).
+Release builds are single-instance: launching again brings the window forward.
+
 ## Planned
 
-- **Background service**: install `mimid` as a systemd user unit (Linux) or a launchd
-  agent (macOS) from the GUI, so messaging channels and scheduled tasks work with the
-  window closed.
 - **Models**: bundle and manage `llama-server` (Metal on macOS, Vulkan on Linux); also
   connect to Ollama or any OpenAI-compatible endpoint. Cloud providers are allowed but
   never the default, and are labeled wherever they're in use. Recommendations come from

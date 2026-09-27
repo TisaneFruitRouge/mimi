@@ -53,6 +53,65 @@ enum Command {
         /// `<provider>/<model>`, where provider is a name or id prefix.
         model: Option<String>,
     },
+    /// Run the assistant in the background, starting at login (systemd / launchd).
+    #[command(subcommand)]
+    Service(ServiceCommand),
+}
+
+#[derive(Subcommand)]
+enum ServiceCommand {
+    /// Start the assistant at login and keep it running. Starts it now too.
+    Install,
+    /// Stop the background service and remove it from login.
+    Uninstall,
+    /// Show whether the background service is set up and running.
+    Status,
+    /// Start the installed service now.
+    Start,
+}
+
+/// `mimi service …`: works without a running daemon.
+fn service(cmd: ServiceCommand) -> anyhow::Result<()> {
+    let binary = mimi_service::daemon_binary()
+        .context("couldn't find mimid next to this program or on PATH (set MIMI_DAEMON_BIN)")?;
+    let spec = mimi_service::Spec::current(binary)?;
+    let describe = |s: mimi_service::Status| {
+        let manager = match s.manager {
+            mimi_service::Manager::Systemd => format!("systemd user unit {}.service", spec.name),
+            mimi_service::Manager::Launchd => format!("launchd agent {}", spec.label),
+            mimi_service::Manager::Autostart => format!(
+                "autostart entry {}.desktop (no restart on crash)",
+                spec.name
+            ),
+        };
+        let running = match s.running {
+            Some(true) => "running",
+            Some(false) => "not running",
+            None => "unknown",
+        };
+        println!("{manager}");
+        println!("  installed  {}", if s.installed { "yes" } else { "no" });
+        println!("  state      {running}");
+        println!("  program    {}", spec.binary.display());
+        println!("  data       {}", spec.data_dir.display());
+    };
+    match cmd {
+        ServiceCommand::Install => {
+            let status = mimi_service::install(&spec)?;
+            println!("installed; Mimi now starts at login");
+            describe(status);
+        }
+        ServiceCommand::Uninstall => {
+            mimi_service::uninstall(&spec)?;
+            println!("removed; Mimi no longer runs in the background");
+        }
+        ServiceCommand::Status => describe(mimi_service::status(&spec)?),
+        ServiceCommand::Start => {
+            mimi_service::start(&spec)?;
+            println!("started");
+        }
+    }
+    Ok(())
 }
 
 #[derive(Subcommand)]
@@ -89,8 +148,13 @@ enum ProvidersCommand {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let command = Cli::parse().command;
+    if let Command::Service(cmd) = command {
+        return service(cmd);
+    }
     let client = Client::local()?;
-    match Cli::parse().command {
+    match command {
+        Command::Service(_) => unreachable!("handled above"),
         Command::Status => {
             let status = client.status().await?;
             println!("mimi {} running", status.version);

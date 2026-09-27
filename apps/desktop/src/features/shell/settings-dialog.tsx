@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { BookOpen, ChevronRight, ExternalLink, Lock, LogOut } from "lucide-react";
+import { useEffect, useState } from "react";
+import { BookOpen, ChevronRight, ExternalLink, Loader2, Lock, LogOut, Power } from "lucide-react";
 import { toast } from "sonner";
 
 import { LocalityBadge } from "@/components/locality-badge";
@@ -16,7 +16,15 @@ import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
 import { mod } from "@/lib/platform";
 import { useProviders, useSettings } from "@/lib/queries";
-import { isTauri, openInBrowser, request } from "@/lib/transport";
+import { Switch } from "@/components/ui/switch";
+import {
+  type BackgroundStatus,
+  backgroundStatus,
+  isTauri,
+  openInBrowser,
+  request,
+  setBackground,
+} from "@/lib/transport";
 
 const shortcuts = [
   ["New chat", `${mod}N`],
@@ -102,6 +110,8 @@ export function SettingsDialog({
             />
           </Group>
 
+          {isTauri && <BackgroundGroup open={open} />}
+
           <Group title="Privacy">
             <Row
               icon={
@@ -152,6 +162,63 @@ export function SettingsDialog({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Desktop only: keep the assistant running (and starting at login) with no window. */
+function BackgroundGroup({ open }: { open: boolean }) {
+  const [status, setStatus] = useState<BackgroundStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // Re-read each time Settings opens: the service can change outside the app.
+  useEffect(() => {
+    if (open) backgroundStatus().then(setStatus).catch(() => setStatus(null));
+  }, [open]);
+
+  const toggle = async (enabled: boolean) => {
+    setBusy(true);
+    try {
+      setStatus(await setBackground(enabled));
+      toast.success(enabled ? "Mimi will keep running in the background" : "Mimi now runs only while it's open");
+    } catch (e) {
+      toast.error((e as Error).message);
+      backgroundStatus().then(setStatus).catch(() => {});
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const detail = !status
+    ? "Checking…"
+    : !status.available
+      ? (status.unavailable_reason ?? "Not available on this computer.")
+      : status.enabled
+        ? status.no_restart
+          ? "Starts when you log in, so Telegram and reminders work with this window closed."
+          : "Starts when you log in and keeps going with this window closed, so Telegram and reminders always work."
+        : "Mimi only works while this window is open.";
+
+  return (
+    <Group title="Background">
+      <Row
+        icon={
+          <IconTile size="sm" className="bg-private-soft text-private">
+            {busy ? <Loader2 className="animate-spin" /> : <Power />}
+          </IconTile>
+        }
+        title="Keep Mimi running in the background"
+        detail={detail}
+        className="[&_.truncate]:whitespace-normal"
+        trailing={
+          <Switch
+            checked={!!status?.enabled}
+            disabled={!status?.available || busy}
+            onCheckedChange={toggle}
+            aria-label="Keep Mimi running in the background"
+          />
+        }
+      />
+    </Group>
   );
 }
 

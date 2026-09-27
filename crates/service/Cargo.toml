@@ -1,0 +1,19 @@
+[package]
+name = "mimi-service"
+description = "Runs the Mimi daemon in the background: login service management and binary discovery"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+mimi-protocol = { path = "../protocol" }
+serde_json = "1.0.151"
+thiserror = "2.0.21"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
