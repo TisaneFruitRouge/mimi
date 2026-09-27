@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+pub mod calendar;
 pub mod chat;
 pub mod connections;
 pub mod events;
@@ -21,6 +22,7 @@ pub mod providers;
 pub mod schedule;
 pub mod settings;
 
+pub use calendar::*;
 pub use chat::*;
 pub use connections::*;
 pub use events::Event;

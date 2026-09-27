@@ -137,23 +137,34 @@ export function ScheduleDialog({
   item,
   open,
   onClose,
+  title,
 }: {
   item: ScheduleItem | null;
   open: boolean;
   onClose: () => void;
+  /** For a new reminder: what it's about to start with, e.g. "Call Sam". */
+  title?: string;
 }) {
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="gap-5 sm:max-w-[480px]">
-        {open && <ScheduleForm key={item?.id ?? "new"} item={item} onDone={onClose} />}
+        {open && <ScheduleForm key={item?.id ?? "new"} item={item} initialTitle={title} onDone={onClose} />}
       </DialogContent>
     </Dialog>
   );
 }
 
-function ScheduleForm({ item, onDone }: { item: ScheduleItem | null; onDone: () => void }) {
+function ScheduleForm({
+  item,
+  initialTitle,
+  onDone,
+}: {
+  item: ScheduleItem | null;
+  initialTitle?: string;
+  onDone: () => void;
+}) {
   const [kind, setKind] = useState<ScheduleKind>(item?.kind ?? "reminder");
-  const [title, setTitle] = useState(item?.title ?? "");
+  const [title, setTitle] = useState(item?.title ?? initialTitle ?? "");
   const [instruction, setInstruction] = useState(item?.instruction ?? "");
   const [when, setWhen] = useState<When>(() => (item ? fromSchedule(item.schedule) : fresh()));
   const [busy, setBusy] = useState(false);

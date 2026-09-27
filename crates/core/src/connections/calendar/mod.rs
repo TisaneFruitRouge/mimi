@@ -33,11 +33,97 @@ pub struct CalDavConfig {
     pub calendars: Vec<RemoteCalendar>,
 }
 
-/// A calendar account, ready to read from.
+/// A calendar account, ready to read from. `id` is its connection's id.
 #[derive(Debug, Clone)]
 pub enum Account {
-    Google { name: String, config: GoogleConfig },
-    CalDav { config: CalDavConfig },
+    Google {
+        id: uuid::Uuid,
+        name: String,
+        config: GoogleConfig,
+    },
+    CalDav {
+        id: uuid::Uuid,
+        config: CalDavConfig,
+    },
+}
+
+/// One calendar the user can see, whatever account it comes from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CalendarRef {
+    /// Stable across restarts: the connection id, plus the collection for CalDAV.
+    pub id: String,
+    pub name: String,
+    /// `#rrggbb`.
+    pub color: String,
+    /// Events can be saved straight into it (CalDAV). Google calendars are read here and
+    /// written by the user through a pre-filled page.
+    pub writable: bool,
+    pub google: bool,
+}
+
+/// A Google calendar is a whole connection; a CalDAV one is a collection in an account.
+pub fn calendar_id(connection: uuid::Uuid, collection_url: Option<&str>) -> String {
+    match collection_url {
+        None => connection.to_string(),
+        Some(url) => format!("{connection}:{:08x}", fnv1a(url.as_bytes())),
+    }
+}
+
+/// Colours for calendars that don't bring their own, picked by id so they never change.
+/// Mid-tone so they read as dots on white and as tints behind dark text.
+const PALETTE: &[&str] = &[
+    "#0a84ff", "#34c759", "#ff9f0a", "#bf5af2", "#ff375f", "#30b0c7", "#ac8e68", "#5e5ce6",
+];
+
+/// The calendar's own colour when the server has one (`#rrggbb` or `#rrggbbaa`), else a
+/// stable pick from the palette.
+pub fn calendar_color(id: &str, own: Option<&str>) -> String {
+    if let Some(c) = own.map(str::trim)
+        && c.len() >= 7
+        && c.starts_with('#')
+        && c[1..7].chars().all(|ch| ch.is_ascii_hexdigit())
+    {
+        return c[..7].to_ascii_lowercase();
+    }
+    PALETTE[fnv1a(id.as_bytes()) as usize % PALETTE.len()].to_owned()
+}
+
+fn fnv1a(bytes: &[u8]) -> u32 {
+    bytes.iter().fold(0x811c_9dc5_u32, |h, b| {
+        (h ^ u32::from(*b)).wrapping_mul(0x0100_0193)
+    })
+}
+
+/// Every calendar of every account, Google first as the user connected them.
+pub fn calendars(accounts: &[Account]) -> Vec<CalendarRef> {
+    let mut out = Vec::new();
+    for account in accounts {
+        match account {
+            Account::Google { id, name, .. } => {
+                let cid = calendar_id(*id, None);
+                out.push(CalendarRef {
+                    color: calendar_color(&cid, None),
+                    id: cid,
+                    name: name.clone(),
+                    writable: false,
+                    google: true,
+                });
+            }
+            Account::CalDav { id, config } => {
+                for cal in &config.calendars {
+                    let cid = calendar_id(*id, Some(&cal.url));
+                    out.push(CalendarRef {
+                        color: calendar_color(&cid, cal.color.as_deref()),
+                        id: cid,
+                        name: cal.name.clone(),
+                        writable: true,
+                        google: false,
+                    });
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Normalizes and checks a secret iCal address as pasted by the user.
@@ -123,26 +209,36 @@ pub async fn events_between(
     let mut problems = Vec::new();
     for account in accounts {
         match account {
-            Account::Google { name, config } => match cache.fetch(http, &config.ics_url).await {
-                Ok(body) => match ics::events_between(&body, name, from, to, &Local) {
-                    Ok(found) => events.extend(found),
+            Account::Google { id, name, config } => {
+                let cid = calendar_id(*id, None);
+                match cache.fetch(http, &config.ics_url).await {
+                    Ok(body) => match ics::events_between(&body, name, from, to, &Local) {
+                        Ok(found) => events.extend(found.into_iter().map(|mut e| {
+                            e.calendar_id = cid.clone();
+                            e
+                        })),
+                        Err(e) => problems.push(format!("{name}: {e}")),
+                    },
                     Err(e) => problems.push(format!("{name}: {e}")),
-                },
-                Err(e) => problems.push(format!("{name}: {e}")),
-            },
-            Account::CalDav { config } => {
+                }
+            }
+            Account::CalDav { id, config } => {
                 let client = CalDav::new(&config.username, &config.password);
                 for cal in &config.calendars {
                     let Ok(url) = Url::parse(&cal.url) else {
                         continue;
                     };
+                    let cid = calendar_id(*id, Some(&cal.url));
                     match client.event_data(&url, from, to).await {
                         Ok(objects) => {
                             for data in objects {
                                 if let Ok(found) =
                                     ics::events_between(&data, &cal.name, from, to, &Local)
                                 {
-                                    events.extend(found);
+                                    events.extend(found.into_iter().map(|mut e| {
+                                        e.calendar_id = cid.clone();
+                                        e
+                                    }));
                                 }
                             }
                         }
@@ -187,11 +283,28 @@ impl Target {
     }
 }
 
+/// The calendar with this id (see [`calendar_id`]), as a place to add an event.
+pub fn target_by_id(accounts: &[Account], wanted: &str) -> Option<Target> {
+    accounts.iter().find_map(|account| match account {
+        Account::Google { id, name, .. } => {
+            (calendar_id(*id, None) == wanted).then(|| Target::Google { name: name.clone() })
+        }
+        Account::CalDav { id, config } => config
+            .calendars
+            .iter()
+            .find(|c| calendar_id(*id, Some(&c.url)) == wanted)
+            .map(|calendar| Target::CalDav {
+                config: config.clone(),
+                calendar: calendar.clone(),
+            }),
+    })
+}
+
 /// Every calendar an event could be added to, CalDAV (direct) first.
 pub fn targets(accounts: &[Account]) -> Vec<Target> {
     let mut out = Vec::new();
     for account in accounts {
-        if let Account::CalDav { config } = account {
+        if let Account::CalDav { config, .. } = account {
             for calendar in &config.calendars {
                 out.push(Target::CalDav {
                     config: config.clone(),
@@ -341,5 +454,110 @@ mod tests {
         assert_eq!(back.len(), 1);
         assert_eq!((back[0].start, back[0].end), (event.start, event.end));
         assert_eq!(back[0].notes.as_deref(), Some("Bring the insurance card"));
+    }
+
+    fn caldav(id: uuid::Uuid, cals: &[(&str, &str, Option<&str>)]) -> Account {
+        Account::CalDav {
+            id,
+            config: CalDavConfig {
+                server_url: "https://dav.example".into(),
+                username: "me".into(),
+                password: "pw".into(),
+                calendars: cals
+                    .iter()
+                    .map(|(url, name, color)| RemoteCalendar {
+                        url: (*url).into(),
+                        name: (*name).into(),
+                        color: color.map(str::to_owned),
+                    })
+                    .collect(),
+            },
+        }
+    }
+
+    #[test]
+    fn calendars_have_stable_ids_and_colours() {
+        let google_id = uuid::Uuid::from_u128(1);
+        let dav_id = uuid::Uuid::from_u128(2);
+        let accounts = vec![
+            Account::Google {
+                id: google_id,
+                name: "Holidays".into(),
+                config: GoogleConfig {
+                    ics_url: "https://example/basic.ics".into(),
+                },
+            },
+            caldav(
+                dav_id,
+                &[
+                    ("https://dav.example/me/home/", "Home", Some("#E8A33DFF")),
+                    ("https://dav.example/me/work/", "Work", None),
+                ],
+            ),
+        ];
+        let cals = calendars(&accounts);
+        let summary: Vec<(&str, bool)> =
+            cals.iter().map(|c| (c.name.as_str(), c.writable)).collect();
+        assert_eq!(
+            summary,
+            [("Holidays", false), ("Home", true), ("Work", true)]
+        );
+        // The server's colour wins (alpha dropped); others come from the palette, the same
+        // every time.
+        assert_eq!(cals[1].color, "#e8a33d");
+        assert!(PALETTE.contains(&cals[2].color.as_str()));
+        assert_eq!(calendars(&accounts), cals);
+        assert_eq!(cals[0].id, google_id.to_string());
+        assert_ne!(cals[1].id, cals[2].id);
+        // Ids lead back to the right place to add an event.
+        assert!(matches!(
+            target_by_id(&accounts, &cals[0].id),
+            Some(Target::Google { .. })
+        ));
+        assert_eq!(
+            target_by_id(&accounts, &cals[2].id)
+                .map(|t| t.name().to_owned())
+                .as_deref(),
+            Some("Work")
+        );
+        assert!(target_by_id(&accounts, "nope").is_none());
+    }
+
+    #[test]
+    fn attendees_and_organizers_are_read() {
+        let data = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:t\r\nBEGIN:VEVENT\r\nUID:x\r\n\
+DTSTART:20261002T170000Z\r\nDTEND:20261002T180000Z\r\nSUMMARY:Dinner\r\n\
+ORGANIZER;CN=Vincent:mailto:vincent@example.com\r\n\
+ATTENDEE;CN=\"Sam Carter\";PARTSTAT=ACCEPTED:mailto:Sam@Example.com\r\n\
+ATTENDEE;CUTYPE=INDIVIDUAL;EMAIL=lea@example.com:urn:uuid:123\r\n\
+ATTENDEE:mailto:nobody\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let events = ics::events_between(
+            data,
+            "Cal",
+            Utc.with_ymd_and_hms(2026, 10, 2, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2026, 10, 3, 0, 0, 0).unwrap(),
+            &Utc,
+        )
+        .unwrap();
+        let e = &events[0];
+        assert_eq!(
+            e.organizer,
+            Some(ics::Attendee {
+                name: Some("Vincent".into()),
+                email: "vincent@example.com".into()
+            })
+        );
+        let people: Vec<(Option<&str>, &str)> = e
+            .attendees
+            .iter()
+            .map(|a| (a.name.as_deref(), a.email.as_str()))
+            .collect();
+        assert_eq!(
+            people,
+            [
+                (Some("Sam Carter"), "sam@example.com"),
+                (None, "lea@example.com")
+            ]
+        );
     }
 }

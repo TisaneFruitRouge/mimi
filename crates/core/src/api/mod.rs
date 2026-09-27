@@ -13,6 +13,7 @@ use mimi_protocol::{API_PREFIX, Health, Status};
 use crate::{AppState, VERSION};
 
 mod actions;
+mod calendar;
 mod connections;
 mod conversations;
 pub mod error;
@@ -74,9 +75,19 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/people/{id}/handles/{handle}",
             axum::routing::delete(people::remove_handle),
         )
+        .route("/people/{id}/events", get(calendar::person_events))
+        .route(
+            "/people/{id}/conversations",
+            get(calendar::person_conversations),
+        )
         .route("/people/{id}/merge", post(people::merge))
         .route("/people/{id}/split", post(people::split))
         .route("/mentions", get(people::mentions))
+        .route("/calendars", get(calendar::calendars))
+        .route(
+            "/calendar/events",
+            get(calendar::events).post(calendar::create),
+        )
         .route("/hardware", get(hardware::get))
         .route("/recommendations", get(hardware::recommendations))
         .route(

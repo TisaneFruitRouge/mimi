@@ -21,6 +21,41 @@ pub struct CalEvent {
     pub notes: Option<String>,
     /// The calendar it came from, as the user named it.
     pub calendar: String,
+    /// Which calendar, as a stable id (see `calendar::calendar_id`). Empty until the
+    /// caller that knows the account fills it in.
+    pub calendar_id: String,
+    /// Invited people (ATTENDEE), in the order the calendar lists them.
+    pub attendees: Vec<Attendee>,
+    /// Who created the event (ORGANIZER), if the calendar says.
+    pub organizer: Option<Attendee>,
+}
+
+/// A person on an event, as the calendar describes them. Written by whoever sent the
+/// invitation: untrusted text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Attendee {
+    pub name: Option<String>,
+    pub email: String,
+}
+
+/// `mailto:sam@example.com` with its `CN` (and `EMAIL`) parameters → an attendee.
+fn attendee(p: &icalendar::Property) -> Option<Attendee> {
+    let param = |k: &str| {
+        p.params()
+            .get(k)
+            .map(|v| v.value().trim().trim_matches('"').to_owned())
+            .filter(|v| !v.is_empty())
+    };
+    let value = p.value().trim();
+    let email = value
+        .get(..7)
+        .filter(|scheme| scheme.eq_ignore_ascii_case("mailto:"))
+        .map(|_| value[7..].to_owned())
+        .or_else(|| param("EMAIL"))
+        .filter(|e| e.contains('@'))?
+        .to_lowercase();
+    let name = param("CN").filter(|n| !n.eq_ignore_ascii_case(&email));
+    Some(Attendee { name, email })
 }
 
 /// Hard cap on occurrences per recurring event, so a daily rule over a long range
@@ -92,6 +127,14 @@ pub fn events_between(
                 Duration::zero()
             });
         let uid = event.get_uid().unwrap_or_default().to_owned();
+        let organizer = event.properties().get("ORGANIZER").and_then(attendee);
+        let attendees: Vec<Attendee> = event
+            .multi_properties()
+            .get("ATTENDEE")
+            .into_iter()
+            .flatten()
+            .filter_map(attendee)
+            .collect();
 
         let make = |start: DateTime<Utc>| CalEvent {
             uid: uid.clone(),
@@ -112,6 +155,9 @@ pub fn events_between(
                 .map(str::to_owned)
                 .filter(|s| !s.is_empty()),
             calendar: calendar.to_owned(),
+            calendar_id: String::new(),
+            attendees: attendees.clone(),
+            organizer: organizer.clone(),
         };
         let overlaps = |s: DateTime<Utc>| {
             s < to && s + duration > from || (duration.is_zero() && s >= from && s < to)

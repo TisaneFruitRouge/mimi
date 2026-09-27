@@ -229,6 +229,9 @@ mod tests {
             location: None,
             notes: None,
             calendar: "Perso: Zoë".into(),
+            calendar_id: String::new(),
+            attendees: Vec::new(),
+            organizer: None,
         };
         let (start, calendar, uid) = parse_event_id(&event_id(&e)).unwrap();
         assert_eq!(

@@ -1,4 +1,17 @@
-import { Bell, Blocks, BookOpen, MessageSquare, SquarePen, Sparkles, Users } from "lucide-react";
+import {
+  Bell,
+  BellRing,
+  Blocks,
+  BookOpen,
+  CalendarDays,
+  Lock,
+  Mail,
+  MessageSquare,
+  Settings,
+  SquarePen,
+  Sparkles,
+  Users,
+} from "lucide-react";
 
 import {
   CommandDialog,
@@ -64,22 +77,41 @@ export function ConversationPalette({
             <SquarePen /> New chat
             <CommandShortcut>{mod}N</CommandShortcut>
           </CommandItem>
-          <CommandItem onSelect={run(() => onSection("connections"))}>
-            <Blocks /> Connections
+          <CommandItem keywords={["events", "agenda", "week"]} onSelect={run(() => onSection("calendar"))}>
+            <CalendarDays /> Calendar
             <CommandShortcut>{mod}2</CommandShortcut>
+          </CommandItem>
+          <CommandItem keywords={["email", "inbox"]} onSelect={run(() => onSection("mail"))}>
+            <Mail /> Mail
+            <CommandShortcut>{mod}3</CommandShortcut>
+          </CommandItem>
+          <CommandItem keywords={["contacts"]} onSelect={run(() => onSection("people"))}>
+            <Users /> People
+            <CommandShortcut>{mod}4</CommandShortcut>
+          </CommandItem>
+          <CommandItem keywords={["routines", "alarm", "schedule"]} onSelect={run(() => onSection("calendar"))}>
+            <Bell /> Reminders and routines
+          </CommandItem>
+        </CommandGroup>
+        <CommandGroup heading="Settings">
+          <CommandItem keywords={["name", "shortcuts", "background"]} onSelect={run(() => onSection("general"))}>
+            <Settings /> General
+            <CommandShortcut>{mod},</CommandShortcut>
+          </CommandItem>
+          <CommandItem keywords={["telegram", "google", "icloud", "apps"]} onSelect={run(() => onSection("connections"))}>
+            <Blocks /> Connections
           </CommandItem>
           <CommandItem onSelect={run(() => onSection("models"))}>
             <Sparkles /> Models
-            <CommandShortcut>{mod}3</CommandShortcut>
           </CommandItem>
           <CommandItem onSelect={run(() => onSection("memory"))}>
             <BookOpen /> Memory
           </CommandItem>
-          <CommandItem onSelect={run(() => onSection("people"))}>
-            <Users /> People
+          <CommandItem keywords={["alerts", "telegram"]} onSelect={run(() => onSection("notifications"))}>
+            <BellRing /> Reminders and notifications
           </CommandItem>
-          <CommandItem keywords={["routines", "alarm", "schedule"]} onSelect={run(() => onSection("reminders"))}>
-            <Bell /> Reminders and routines
+          <CommandItem onSelect={run(() => onSection("privacy"))}>
+            <Lock /> Privacy
           </CommandItem>
         </CommandGroup>
       </CommandList>

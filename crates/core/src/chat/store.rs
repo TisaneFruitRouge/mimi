@@ -74,6 +74,49 @@ pub async fn list_conversations(db: &Db) -> Result<Vec<Conversation>, DbError> {
     .await
 }
 
+/// Conversations where the user @-mentioned this person, most recent first.
+pub async fn conversations_mentioning(
+    db: &Db,
+    person: Uuid,
+    limit: usize,
+) -> Result<Vec<Conversation>, DbError> {
+    db.call(move |c| {
+        // Mentions are stored as JSON; a person's id is unique enough to find by text,
+        // and the parse below makes sure it really is a person mention.
+        let mut stmt = c.prepare(
+            "SELECT DISTINCT m.conversation_id, m.mentions FROM messages m
+             WHERE m.role = 'user' AND m.mentions LIKE ?1",
+        )?;
+        let pattern = format!("%{person}%");
+        let mut ids = std::collections::HashSet::new();
+        for row in stmt.query_map([pattern], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })? {
+            let (conversation, raw) = row?;
+            let mentions: Vec<mimi_protocol::Mention> =
+                serde_json::from_str(&raw).unwrap_or_default();
+            if mentions
+                .iter()
+                .any(|m| m.kind == mimi_protocol::MentionKind::Person && m.id == person.to_string())
+            {
+                ids.insert(conversation);
+            }
+        }
+        let mut stmt = c.prepare(
+            "SELECT id, title, created_at, updated_at FROM conversations ORDER BY updated_at DESC",
+        )?;
+        let all: Vec<Conversation> = stmt
+            .query_map([], conversation)?
+            .collect::<Result<_, _>>()?;
+        Ok(all
+            .into_iter()
+            .filter(|conv| ids.contains(&conv.id.to_string()))
+            .take(limit)
+            .collect())
+    })
+    .await
+}
+
 pub async fn get_conversation(db: &Db, id: Uuid) -> Result<Option<Conversation>, DbError> {
     db.call(move |c| {
         c.query_row(

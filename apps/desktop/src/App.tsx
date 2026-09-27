@@ -4,17 +4,17 @@ import { Loader2, Unplug } from "lucide-react";
 import { cn } from "cn";
 
 import { LogoMark } from "@/components/brand";
+import { CalendarView } from "@/features/calendar/calendar-view";
 import { ChatView } from "@/features/chat/chat-view";
-import { ConnectionsView } from "@/features/connections/connections-view";
-import { MemoryView } from "@/features/memory/memory-view";
+import { MailView } from "@/features/mail/mail-view";
 import { ModelsView } from "@/features/models/models-view";
 import { Onboarding } from "@/features/onboarding/onboarding";
 import { PeopleView } from "@/features/people/people-view";
-import { RemindersView } from "@/features/reminders/reminders-view";
 import { ConversationPalette } from "@/features/shell/conversation-palette";
-import { SettingsDialog } from "@/features/shell/settings-dialog";
-import { type Section, TopBar } from "@/features/shell/top-bar";
+import { SettingsView, settingsPages } from "@/features/shell/settings-view";
+import { type Section, type SettingsPage, TopBar, isTab, tabs } from "@/features/shell/top-bar";
 import type { DaemonError } from "@/lib/api";
+import { type Draft, setDraft } from "@/lib/draft";
 import { useConnected } from "@/lib/events";
 import { hasMod, macOverlayTitleBar } from "@/lib/platform";
 import { useSettings } from "@/lib/queries";
@@ -60,31 +60,46 @@ export default function App() {
   );
 }
 
-/** Where the app is, kept in the URL hash so the browser's back button and bookmarks work. */
-type Route = { section: Section; conversationId: string | null };
+/**
+ * Where the app is, kept in the URL hash so the browser's back button and bookmarks
+ * work: `#/chat/<id>`, `#/calendar`, `#/mail`, `#/people/<id>`, `#/settings/<page>`.
+ */
+type Route = { section: Section; conversationId: string | null; personId: string | null };
+
+const home: Route = { section: "chat", conversationId: null, personId: null };
 
 function parseHash(): Route {
   const [first, second] = location.hash.replace(/^#\/?/, "").split("/");
-  if (
-    first === "models" ||
-    first === "connections" ||
-    first === "memory" ||
-    first === "people" ||
-    first === "reminders"
-  )
-    return { section: first, conversationId: null };
-  return { section: "chat", conversationId: first === "chat" && second ? second : null };
+  const at = (section: Section): Route => ({ ...home, section });
+  if (first === "calendar" || first === "mail") return at(first);
+  if (first === "people") return { ...home, section: "people", personId: second || null };
+  if (first === "settings") {
+    const page = settingsPages.find((p) => p.id === second);
+    return at(page ? page.id : "general");
+  }
+  // Addresses from before Settings had its own window.
+  if (first === "models" || first === "connections" || first === "memory") return at(first);
+  if (first === "reminders") return at("calendar");
+  return { ...home, conversationId: first === "chat" && second ? second : null };
 }
 
 function hashOf(r: Route) {
-  if (r.section !== "chat") return `#/${r.section}`;
-  return r.conversationId ? `#/chat/${r.conversationId}` : "#/";
+  if (r.section === "chat") return r.conversationId ? `#/chat/${r.conversationId}` : "#/";
+  if (r.section === "people") return r.personId ? `#/people/${r.personId}` : "#/people";
+  if (isTab(r.section)) return `#/${r.section}`;
+  return `#/settings/${r.section}`;
 }
 
 function useRoute() {
   const [route, setRoute] = useState(parseHash);
   useEffect(() => {
-    const onHash = () => setRoute(parseHash());
+    const onHash = () => {
+      const next = parseHash();
+      // Old addresses (`#/models`, `#/reminders`) show their new one.
+      if (location.hash && hashOf(next) !== location.hash) history.replaceState(null, "", hashOf(next));
+      setRoute(next);
+    };
+    onHash();
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -95,18 +110,30 @@ function useRoute() {
   return [route, navigate] as const;
 }
 
-const sectionKeys: Record<string, Section> = { "1": "chat", "2": "connections", "3": "models" };
+const sectionKeys: Record<string, Section> = Object.fromEntries(tabs.map((t) => [t.key, t.id]));
 
 function Shell() {
-  const [{ section, conversationId }, navigate] = useRoute();
-  // Coming back to Chat returns to the conversation that was open.
-  const lastConversation = useRef(conversationId);
-  if (section === "chat") lastConversation.current = conversationId;
+  const [{ section, conversationId, personId }, navigate] = useRoute();
+  // Coming back to Chat, People or Settings returns to where it was.
+  const last = useRef({ conversationId, personId, settings: "general" as SettingsPage });
+  if (section === "chat") last.current.conversationId = conversationId;
+  if (section === "people") last.current.personId = personId;
+  if (!isTab(section)) last.current.settings = section;
   const setSection = (s: Section) =>
-    navigate({ section: s, conversationId: s === "chat" ? lastConversation.current : null });
-  const setConversationId = (id: string | null) => navigate({ section: "chat", conversationId: id });
+    navigate({
+      section: s,
+      conversationId: s === "chat" ? last.current.conversationId : null,
+      personId: s === "people" ? last.current.personId : null,
+    });
+  const setConversationId = (id: string | null) => navigate({ ...home, conversationId: id });
+  const openPerson = (id: string | null) => navigate({ ...home, section: "people", personId: id });
+  const openSettings = () => setSection(last.current.settings);
+  /** "Ask Mimi about this": a new chat with the thing already mentioned. */
+  const askMimi = (draft: Draft) => {
+    setDraft(draft);
+    setConversationId(null);
+  };
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
 
   // The chat view is remounted (and animated) when the user opens another conversation,
@@ -129,8 +156,8 @@ function Shell() {
   useEffect(() => setScrolled(false), [section, conversationId]);
 
   // Keep the latest navigation in a ref so the key handler is registered once.
-  const actions = useRef({ setSection, setConversationId });
-  actions.current = { setSection, setConversationId };
+  const actions = useRef({ setSection, setConversationId, openSettings });
+  actions.current = { setSection, setConversationId, openSettings };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!hasMod(e) || e.altKey) return;
@@ -143,7 +170,7 @@ function Shell() {
         actions.current.setConversationId(null);
       } else if (key === ",") {
         e.preventDefault();
-        setSettingsOpen(true);
+        actions.current.openSettings();
       } else if (sectionKeys[key]) {
         e.preventDefault();
         actions.current.setSection(sectionKeys[key]);
@@ -162,12 +189,12 @@ function Shell() {
           onSection={setSection}
           onNewChat={() => setConversationId(null)}
           onPalette={() => setPaletteOpen(true)}
-          onSettings={() => setSettingsOpen(true)}
-          onReminders={() => setSection("reminders")}
+          onSettings={openSettings}
         />
         <AnimatePresence mode="wait" initial={false}>
           <motion.main
-            key={section === "chat" ? `chat:${chatKey}` : section}
+            // Settings pages animate inside the Settings window, not as whole screens.
+            key={section === "chat" ? `chat:${chatKey}` : isTab(section) ? section : "settings"}
             className="h-full"
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
@@ -182,11 +209,27 @@ function Shell() {
                 onSection={setSection}
               />
             )}
-            {section === "connections" && <ConnectionsView onPeople={() => setSection("people")} />}
-            {section === "people" && <PeopleView onConnections={() => setSection("connections")} />}
-            {section === "models" && <ModelsView onChat={() => setSection("chat")} />}
-            {section === "memory" && <MemoryView />}
-            {section === "reminders" && <RemindersView onOpenConversation={setConversationId} />}
+            {section === "calendar" && (
+              <CalendarView
+                onAsk={askMimi}
+                onOpenPerson={openPerson}
+                onOpenConversation={setConversationId}
+                onSection={setSection}
+              />
+            )}
+            {section === "mail" && <MailView onSection={setSection} onAsk={askMimi} onOpenPerson={openPerson} />}
+            {section === "people" && (
+              <PeopleView
+                personId={personId}
+                onOpenPerson={openPerson}
+                onAsk={askMimi}
+                onOpenConversation={setConversationId}
+                onSection={setSection}
+              />
+            )}
+            {!isTab(section) && (
+              <SettingsView page={section} onSection={setSection} onOpenConversation={setConversationId} />
+            )}
           </motion.main>
         </AnimatePresence>
 
@@ -203,14 +246,6 @@ function Shell() {
           onOpenConversation={setConversationId}
           onNewConversation={() => setConversationId(null)}
           onSection={setSection}
-        />
-        <SettingsDialog
-          open={settingsOpen}
-          onOpenChange={setSettingsOpen}
-          onOpenMemory={() => {
-            setSettingsOpen(false);
-            setSection("memory");
-          }}
         />
       </div>
     </ScrollEdgeContext.Provider>

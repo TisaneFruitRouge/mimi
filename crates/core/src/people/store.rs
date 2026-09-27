@@ -456,6 +456,39 @@ pub fn get(c: &Connection, id: Uuid, names: &SourceNames) -> rusqlite::Result<Op
     }))
 }
 
+/// The person behind each of these match keys (the oldest, if several), with their name.
+pub fn by_match_keys(
+    c: &Connection,
+    keys: &[String],
+) -> rusqlite::Result<HashMap<String, (Uuid, String)>> {
+    let mut stmt = c.prepare(
+        "SELECT p.id, p.name FROM person_handles h JOIN people p ON p.id = h.person_id
+         WHERE h.match_key = ?1 ORDER BY p.created_at LIMIT 1",
+    )?;
+    let mut out = HashMap::new();
+    for key in keys {
+        if out.contains_key(key) {
+            continue;
+        }
+        if let Some(found) = stmt
+            .query_row([key], |r| Ok((parse_uuid(r, 0)?, r.get::<_, String>(1)?)))
+            .optional()?
+        {
+            out.insert(key.clone(), found);
+        }
+    }
+    Ok(out)
+}
+
+/// Every match key of this person's handles (emails, phones, usernames).
+pub fn match_keys_of(c: &Connection, person: Uuid) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = c.prepare(
+        "SELECT DISTINCT match_key FROM person_handles WHERE person_id = ?1 AND match_key IS NOT NULL",
+    )?;
+    stmt.query_map([person.to_string()], |r| r.get(0))?
+        .collect()
+}
+
 /// Everyone, with their channels and the text search matches against.
 pub struct Indexed {
     pub summary: PersonSummary,

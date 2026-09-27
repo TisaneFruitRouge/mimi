@@ -31,6 +31,7 @@ import { Composer, type ComposerHandle } from "@/features/chat/composer";
 import { MessageView } from "@/features/chat/message";
 import type { Section } from "@/features/shell/top-bar";
 import { DaemonError, api, keys } from "@/lib/api";
+import { takeDraft } from "@/lib/draft";
 import { greeting } from "@/lib/format";
 import { useActiveModel } from "@/lib/queries";
 import { useScrollEdge } from "@/lib/scroll-edge";
@@ -56,6 +57,13 @@ export function ChatView({
     enabled: !!conversationId,
   });
   const messages = detail.data?.messages ?? [];
+
+  // "Ask Mimi about this" from a panel: start with its @ mention in the box.
+  useEffect(() => {
+    const draft = takeDraft();
+    if (draft) composer.current?.setDraft(draft.text, draft.mentions);
+  }, []);
+
   const replying = messages.at(-1)?.status === "streaming";
 
   // The composer floats over the thread; keep the thread's bottom padding in step

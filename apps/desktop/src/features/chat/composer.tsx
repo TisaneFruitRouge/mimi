@@ -18,6 +18,8 @@ import { useActiveModel } from "@/lib/queries";
 
 export interface ComposerHandle {
   setText: (text: string) => void;
+  /** Text with its @ mentions already made into pills, e.g. from "Ask Mimi about this". */
+  setDraft: (text: string, mentions: Mention[]) => void;
 }
 
 /**
@@ -42,16 +44,18 @@ export const Composer = forwardRef<
   const active = useActiveModel();
   const mention = useMentions({ text, setText, area });
 
-  useImperativeHandle(ref, () => ({
-    setText: (t) => {
+  useImperativeHandle(ref, () => {
+    const fill = (t: string, mentions: Mention[]) => {
       mention.reset();
+      mention.restore(mentions);
       setText(t);
       requestAnimationFrame(() => {
         area.current?.focus();
         area.current?.setSelectionRange(t.length, t.length);
       });
-    },
-  }));
+    };
+    return { setText: (t) => fill(t, []), setDraft: fill };
+  });
 
   // Grow with the content, up to a limit.
   useLayoutEffect(() => {

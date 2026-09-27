@@ -5,7 +5,9 @@ import type { ModelRef } from "@/bindings/ModelRef";
 import { api, keys } from "@/lib/api";
 
 export const useSettings = () => useQuery({ queryKey: keys.settings, queryFn: api.settings });
-export const useProviders = () => useQuery({ queryKey: keys.providers, queryFn: api.providers });
+/** What the user calls their assistant, e.g. for "Ask Mimi about this". */
+export const useAssistantName = () => useSettings().data?.assistant_name || "Mimi";
+export const useProviders =() => useQuery({ queryKey: keys.providers, queryFn: api.providers });
 export const useConversations = () =>
   useQuery({ queryKey: keys.conversations, queryFn: api.conversations });
 export const useRecommendations = () =>

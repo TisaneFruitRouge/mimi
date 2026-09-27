@@ -79,14 +79,25 @@ features go in the daemon plus the protocol types. Frontends only render them.
 - Look and feel: see "Design system" below. Copy is plain language for non-technical
   people: "model source" not "provider", no URLs unless the user typed one, no model
   names outside the Models page, no tool names or technical labels in chat.
-- Navigation: three sections (Chat, Connections, Models) in a segmented control in the
-  translucent top bar; conversations behind the Search button (⌘/Ctrl K); settings in a
-  sheet (⌘/Ctrl ,). Shortcuts: ⌘/Ctrl N new chat, ⌘/Ctrl 1–3 sections. The URL hash
-  holds the route (`#/models`, `#/chat/<id>`). First run is the onboarding (see "Built-in
-  model runtime, onboarding and installers"), which may name models like the Models
-  page; the Models page in setup mode remains the fallback when a finished setup has
-  lost its model. Reminders (`#/reminders`) is reached from the bell in the top bar and
-  the ⌘K palette, not from the segmented control.
+- Navigation: the daily panels (Chat, Calendar, Mail, People) are a segmented control
+  in the translucent top bar, ⌘/Ctrl 1–4. Everything set up once lives in the Settings
+  window (gear button or ⌘/Ctrl ,): a System-Settings-style sidebar with General,
+  Connections, Models, Memory, Reminders & notifications, Privacy. Conversations are
+  behind Search (⌘/Ctrl K), which also jumps to every panel and settings page. ⌘/Ctrl N
+  is a new chat. The URL hash holds the route: `#/chat/<id>`, `#/calendar`, `#/mail`,
+  `#/people/<id>`, `#/settings/<page>` (types `Tab`, `SettingsPage` in `top-bar.tsx`);
+  old addresses (`#/models`, `#/reminders`, …) are rewritten to their new place. Chat
+  is home. Reminders and routines live in Calendar (side list, bells in the grid);
+  where they're delivered is Settings › Reminders & notifications. First run is the
+  onboarding (see "Built-in model runtime, onboarding and installers"), which may name
+  models like the Models page; the Models page in setup mode remains the fallback when
+  a finished setup has lost its model.
+- "Ask Mimi about this": every panel can open a new chat with the thing already
+  @-mentioned. Build a `Draft` with `mentionDraft(kind, id, label)` (`lib/draft.ts`) and
+  call the shell's `onAsk`; the chat takes it once on mount (`ComposerHandle.setDraft`).
+  The button says the user's assistant name (`useAssistantName`), not "Mimi".
+- The Mail panel is `features/mail/mail-view.tsx` with props `{ onSection, onAsk,
+  onOpenPerson }`; the email feature owns that file.
 - Integrations come from the daemon's catalog (`GET /v1/integrations`); list new ones
   there with status `coming_soon` until their connection flow exists, then add their id
   to `AVAILABLE` in `crates/core/src/integrations.rs`.
@@ -131,6 +142,17 @@ than inventing their own.
   `AlertDialog` (`AlertDialogAction variant="destructive"`).
 - **Spacing**: 4/8pt grid. Pages: max 880px wide, 24px side padding, 40px between
   sections, 10px between a section label and its content, 12px grid gaps.
+- **Panels**: full-height screens under the top bar. Master–detail screens (People,
+  Settings) use a left column on a translucent white (`bg-[rgb(255_255_255/0.45)]`,
+  hairline on the right, starting 68–76px down so it clears the bar) and the detail as a
+  normal `Page` beside it. Lists in a column are arrow-key navigable (`role="listbox"`
+  / sidebar `nav`), with the selection in grey fill, not lime. Calendar colours come from
+  the daemon (`CalendarInfo.color`: the server's own, else a stable palette pick); draw
+  events as a tint of that colour with a 3px left bar, and the "now" line and today's
+  date in red (#ff3b30), as calendar apps do. Anything read from a calendar (titles,
+  places, notes, attendees) is plain text: never linkified, never markdown.
+- **Per-viewer conveniences** (calendar view, hidden calendars) go in `localStorage`
+  wrapped in try/catch; the page must work without them.
 - **Motion** (`motion` library, `motion/react`): springs, not linear easing (typical
   stiffness 380–520, damping 30–38). Section changes fade and rise 6px; new messages and
   approval cards rise in; popovers and sheets scale in from 0.96–0.97. Don't wrap
@@ -161,6 +183,14 @@ than inventing their own.
   inbound connections). A one-time `/start <code>` pairs it with its owner; every other
   chat is ignored. Messages go into a "Telegram" conversation; approval cards are sent as
   inline Approve / Don't buttons. Bot messages aren't end-to-end encrypted: say so.
+- **Calendar panel APIs** (`api/calendar.rs`): `GET /v1/calendars` (id, name, colour,
+  writable), `GET /v1/calendar/events?from&to` (ms, at most ~a year; events of every
+  calendar merged, recurrence expanded, organizer/guests matched to People by email),
+  `POST /v1/calendar/events` (CalDAV: saved; Google: returns the pre-filled page to
+  open). Calendar ids are stable (`calendar::calendar_id`: connection id, plus a hash of
+  the collection for CalDAV); every `CalEvent` carries its `calendar_id`. Adding an event
+  from the panel is the user's own action, so it needs no approval card; the
+  assistant's `calendar_add_event` tool still does.
 - Never log feed URLs, tokens or passwords (reqwest errors include URLs: map them).
 - Tests fake the outside world: Radicale (`uvx radicale --auth-type=none`) for CalDAV by
   hand, `fake_telegram` in `api/tests.rs` for the bot, public Google holiday feeds for
@@ -333,8 +363,8 @@ than inventing their own.
   with an honest note) -> optional calendar/Telegram (the Connections dialogs) -> "about
   you" (appended to the memory profile) -> finish. A model chosen for download is saved as
   `settings.pending_model`; the daemon makes it the default when the download finishes
-  (`settings::adopt_pending`), even with no window open. Settings > "Show the welcome
-  again" reruns it. Migration 0010 marks existing setups as onboarded.
+  (`settings::adopt_pending`), even with no window open. Settings › General › "Show the
+  welcome again" reruns it. Migration 0010 marks existing setups as onboarded.
 - **Installers**: `pnpm bundle` = `scripts/prepare-bundle.sh` (frontend, release
   `mimid` for the target as `src-tauri/binaries/mimid-<triple>`, llama-server into
   `src-tauri/resources/llama/`) + `tauri build --config src-tauri/tauri.bundle.conf.json`.

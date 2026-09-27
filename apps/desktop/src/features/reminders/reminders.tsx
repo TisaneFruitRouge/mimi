@@ -3,7 +3,9 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Bell,
   BellRing,
+  CalendarDays,
   Check,
+  ChevronRight,
   CircleAlert,
   Clock,
   Monitor,
@@ -37,6 +39,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { ScheduleDialog } from "@/features/reminders/schedule-dialog";
 import { clock, when } from "@/features/reminders/time";
 import { api, keys } from "@/lib/api";
@@ -44,88 +47,176 @@ import { useSettings } from "@/lib/queries";
 
 const fail = (e: Error) => toast.error(e.message);
 
-/** Reminders the user set and routines the assistant runs for them, with what happened lately. */
-export function RemindersView({ onOpenConversation }: { onOpenConversation: (id: string) => void }) {
-  const items = useQuery({ queryKey: keys.schedule, queryFn: api.schedule });
-  const deliveries = useQuery({ queryKey: keys.deliveries, queryFn: api.deliveries }).data ?? [];
-  const [editing, setEditing] = useState<ScheduleItem | "new" | null>(null);
-  const [deleting, setDeleting] = useState<ScheduleItem | null>(null);
+export const useScheduleItems = () => useQuery({ queryKey: keys.schedule, queryFn: api.schedule });
 
+/** Won't happen again: a one-time reminder that went off, or one whose event was cancelled. */
+export const finished = (i: ScheduleItem) => i.ended !== null || (i.next_at === null && !i.paused);
+
+/**
+ * Reminders and routines, beside the calendar: what's coming, with edit, pause, run now
+ * and delete. `editing` lets the calendar open the same dialog from its grid.
+ */
+export function RemindersPanel({
+  onOpenConversation,
+  editing,
+  onEdit,
+}: {
+  onOpenConversation: (id: string) => void;
+  editing: ScheduleItem | "new" | null;
+  onEdit: (item: ScheduleItem | "new" | null) => void;
+}) {
+  const items = useScheduleItems();
+  const [deleting, setDeleting] = useState<ScheduleItem | null>(null);
+  const [showFinished, setShowFinished] = useState(false);
   const list = items.data ?? [];
   const upcoming = list.filter((i) => !finished(i));
   const done = list.filter(finished);
 
   return (
+    <div className="flex flex-col gap-2.5">
+      <div className="flex min-h-7 items-end justify-between gap-4">
+        <h2 className="section-label">Reminders and routines</h2>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="New reminder or routine"
+          className="rounded-full text-muted-foreground"
+          onClick={() => onEdit("new")}
+        >
+          <Plus />
+        </Button>
+      </div>
+      {items.isLoading ? (
+        <Grouped>
+          {[0, 1].map((i) => (
+            <div key={i} className="flex min-h-[60px] items-center gap-3.5 px-4">
+              <Skeleton className="size-9 rounded-[10px]" />
+              <Skeleton className="h-4 w-32" />
+            </div>
+          ))}
+        </Grouped>
+      ) : upcoming.length === 0 ? (
+        <div className="surface flex flex-col items-start gap-2 px-4 py-4">
+          <p className="type-callout font-medium">Nothing planned</p>
+          <p className="type-subhead text-muted-foreground">
+            Ask in a chat, like “remind me tomorrow at 9 to call Léa”, or add one here.
+          </p>
+          <Button size="sm" variant="secondary" className="mt-1" onClick={() => onEdit("new")}>
+            Add one
+          </Button>
+        </div>
+      ) : (
+        <Grouped>
+          {upcoming.map((i) => (
+            <ItemRow
+              key={i.id}
+              item={i}
+              onEdit={() => onEdit(i)}
+              onDelete={() => setDeleting(i)}
+              onOpenConversation={onOpenConversation}
+            />
+          ))}
+        </Grouped>
+      )}
+      {done.length > 0 && (
+        <>
+          <button
+            onClick={() => setShowFinished((s) => !s)}
+            aria-expanded={showFinished}
+            className="flex items-center gap-1 self-start rounded-md px-1 type-subhead text-muted-foreground hover:text-foreground"
+          >
+            <ChevronRight className={cn("size-3.5 transition-transform", showFinished && "rotate-90")} />
+            Finished ({done.length})
+          </button>
+          {showFinished && (
+            <Grouped>
+              {done.map((i) => (
+                <ItemRow
+                  key={i.id}
+                  item={i}
+                  onEdit={() => onEdit(i)}
+                  onDelete={() => setDeleting(i)}
+                  onOpenConversation={onOpenConversation}
+                />
+              ))}
+            </Grouped>
+          )}
+        </>
+      )}
+
+      <ScheduleDialog
+        item={editing === "new" ? null : editing}
+        open={editing !== null}
+        onClose={() => onEdit(null)}
+      />
+      <DeleteItemDialog item={deleting} onClose={() => setDeleting(null)} />
+    </div>
+  );
+}
+
+export function DeleteItemDialog({ item, onClose }: { item: ScheduleItem | null; onClose: () => void }) {
+  return (
+    <AlertDialog open={!!item} onOpenChange={(o) => !o && onClose()}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete “{item?.title}”?</AlertDialogTitle>
+          <AlertDialogDescription>
+            {item?.kind === "routine"
+              ? "It won't run again. Its past results stay in their conversation."
+              : "You won't be reminded of it again."}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            onClick={() => item && api.deleteSchedule(item.id).catch(fail)}
+          >
+            Delete
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+/** Settings › Reminders and notifications: where they reach the user, and what happened lately. */
+export function NotificationsSettings({
+  onOpenConversation,
+  onCalendar,
+}: {
+  onOpenConversation: (id: string) => void;
+  onCalendar: () => void;
+}) {
+  const deliveries = useQuery({ queryKey: keys.deliveries, queryFn: api.deliveries }).data ?? [];
+  return (
     <Page>
       <PageHeader
-        title="Reminders"
-        subtitle="Things to remind you of, and routines your assistant runs for you. You can also just ask in a chat."
-        action={
-          <Button size="sm" onClick={() => setEditing("new")}>
-            <Plus /> New
-          </Button>
-        }
+        title="Reminders and notifications"
+        subtitle="How reminders and routine results reach you, and what went off lately."
       />
+      <WhereTheyGo />
 
-      <Section title="Coming up">
-        {items.isLoading ? (
-          <Grouped>
-            {[0, 1].map((i) => (
-              <div key={i} className="flex min-h-[60px] items-center gap-3.5 px-4">
-                <Skeleton className="size-9 rounded-[10px]" />
-                <Skeleton className="h-4 w-48" />
-              </div>
-            ))}
-          </Grouped>
-        ) : upcoming.length === 0 ? (
-          <div className="surface flex flex-col items-center gap-3 px-6 py-10 text-center">
-            <IconTile size="lg" className="bg-fill text-muted-foreground">
-              <Bell />
-            </IconTile>
-            <p className="type-headline">Nothing planned</p>
-            <p className="max-w-sm type-callout text-muted-foreground">
-              Try asking “remind me tomorrow at 9 to call Léa”, or “every morning at 7, send me my
-              day”.
-            </p>
-            <Button size="sm" className="mt-1" onClick={() => setEditing("new")}>
-              Add one
-            </Button>
-          </div>
-        ) : (
-          <Grouped>
-            {upcoming.map((i) => (
-              <ItemRow
-                key={i.id}
-                item={i}
-                onEdit={() => setEditing(i)}
-                onDelete={() => setDeleting(i)}
-                onOpenConversation={onOpenConversation}
-              />
-            ))}
-          </Grouped>
-        )}
+      <Section title="Your reminders and routines">
+        <Grouped>
+          <Row
+            onClick={onCalendar}
+            icon={
+              <IconTile className="bg-event-soft text-event">
+                <CalendarDays />
+              </IconTile>
+            }
+            title="In Calendar"
+            detail="See, change, pause or run them next to your events"
+            trailing={<ChevronRight className="size-4 text-faint" />}
+          />
+        </Grouped>
       </Section>
-
-      {done.length > 0 && (
-        <Section title="Finished">
-          <Grouped>
-            {done.map((i) => (
-              <ItemRow
-                key={i.id}
-                item={i}
-                onEdit={() => setEditing(i)}
-                onDelete={() => setDeleting(i)}
-                onOpenConversation={onOpenConversation}
-              />
-            ))}
-          </Grouped>
-        </Section>
-      )}
 
       {deliveries.length > 0 && (
         <Section title="Recently">
           <Grouped>
-            {deliveries.slice(0, 12).map((d) => (
+            {deliveries.slice(0, 20).map((d) => (
               <DeliveryRow
                 key={d.id}
                 delivery={d}
@@ -136,43 +227,11 @@ export function RemindersView({ onOpenConversation }: { onOpenConversation: (id:
           </Grouped>
         </Section>
       )}
-
-      <WhereTheyGo />
-
-      <ScheduleDialog
-        item={editing === "new" ? null : editing}
-        open={editing !== null}
-        onClose={() => setEditing(null)}
-      />
-      <AlertDialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete “{deleting?.title}”?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {deleting?.kind === "routine"
-                ? "It won't run again. Its past results stay in their conversation."
-                : "You won't be reminded of it again."}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              onClick={() => deleting && api.deleteSchedule(deleting.id).catch(fail)}
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </Page>
   );
 }
 
-/** Won't happen again: a one-time reminder that went off, or one whose event was cancelled. */
-const finished = (i: ScheduleItem) => i.ended !== null || (i.next_at === null && !i.paused);
-
-function ItemRow({
+export function ItemRow({
   item: i,
   onEdit,
   onDelete,
@@ -349,26 +408,14 @@ function WhereTheyGo() {
             </IconTile>
           }
           title="Notifications on this computer"
-          detail={on ? "Shown even when the app is closed" : "Off. They still appear here and in the app."}
+          detail={on ? "Shown even when the app is closed" : "Off. They still appear in the app."}
           trailing={
-            <button
-              role="switch"
-              aria-checked={on}
-              aria-label="Notifications on this computer"
+            <Switch
+              checked={on}
               disabled={busy || !settings}
-              onClick={toggle}
-              className={cn(
-                "relative h-7 w-12 shrink-0 rounded-full transition-colors disabled:opacity-60",
-                on ? "bg-private" : "bg-input",
-              )}
-            >
-              <span
-                className={cn(
-                  "absolute top-1 left-1 size-5 rounded-full bg-white shadow-sm transition-transform",
-                  on && "translate-x-5",
-                )}
-              />
-            </button>
+              onCheckedChange={toggle}
+              aria-label="Notifications on this computer"
+            />
           }
         />
         <Row

@@ -1,5 +1,5 @@
 import { motion } from "motion/react";
-import { Bell, Search, Settings, SquarePen } from "lucide-react";
+import { Search, Settings, SquarePen } from "lucide-react";
 import { cn } from "cn";
 
 import { LogoMark } from "@/components/brand";
@@ -7,22 +7,23 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { macOverlayTitleBar, mod } from "@/lib/platform";
 import { useSettings } from "@/lib/queries";
 
-/**
- * Top-bar sections, plus pages reached from elsewhere: Memory (from Settings), People
- * (from Connections, whose tab stays selected) and Reminders (the bell).
- */
-export type Section = "chat" | "connections" | "models" | "memory" | "people" | "reminders";
+/** The panels used every day, in the top bar. */
+export type Tab = "chat" | "calendar" | "mail" | "people";
+/** Everything set up once, in the Settings window's sidebar. */
+export type SettingsPage = "general" | "connections" | "models" | "memory" | "notifications" | "privacy";
+/** Anywhere the app can go. */
+export type Section = Tab | SettingsPage;
 
-const sections: { id: Section; label: string; key: string }[] = [
+export const tabs: { id: Tab; label: string; key: string }[] = [
   { id: "chat", label: "Chat", key: "1" },
-  { id: "connections", label: "Connections", key: "2" },
-  { id: "models", label: "Models", key: "3" },
+  { id: "calendar", label: "Calendar", key: "2" },
+  { id: "mail", label: "Mail", key: "3" },
+  { id: "people", label: "People", key: "4" },
 ];
 
-export const paletteShortcut = `${mod}K`;
+export const isTab = (s: Section): s is Tab => tabs.some((t) => t.id === s);
 
-/** The tab a section is shown under. */
-const tabOf = (s: Section): Section => (s === "people" ? "connections" : s);
+export const paletteShortcut = `${mod}K`;
 
 /**
  * The translucent bar over every screen. Content scrolls under it; it gains its
@@ -35,7 +36,6 @@ export function TopBar({
   onNewChat,
   onPalette,
   onSettings,
-  onReminders,
 }: {
   section: Section;
   scrolled: boolean;
@@ -43,7 +43,6 @@ export function TopBar({
   onNewChat: () => void;
   onPalette: () => void;
   onSettings: () => void;
-  onReminders: () => void;
 }) {
   const name = useSettings().data?.assistant_name ?? "Mimi";
   return (
@@ -62,7 +61,7 @@ export function TopBar({
         </span>
       </div>
 
-      <SegmentedControl value={tabOf(section)} onChange={onSection} />
+      <SegmentedControl value={isTab(section) ? section : null} onChange={onSection} />
 
       <div data-tauri-drag-region className="flex items-center justify-end gap-1">
         <IconButton label="New chat" shortcut={`${mod}N`} onClick={onNewChat}>
@@ -80,10 +79,7 @@ export function TopBar({
           </TooltipTrigger>
           <TooltipContent>Find a conversation · {paletteShortcut}</TooltipContent>
         </Tooltip>
-        <IconButton label="Reminders and routines" onClick={onReminders} active={section === "reminders"}>
-          <Bell />
-        </IconButton>
-        <IconButton label="Settings" shortcut={`${mod},`} onClick={onSettings}>
+        <IconButton label="Settings" shortcut={`${mod},`} onClick={onSettings} active={!isTab(section)}>
           <Settings />
         </IconButton>
       </div>
@@ -92,10 +88,10 @@ export function TopBar({
 }
 
 /** macOS-style segmented control with a sliding selection. */
-function SegmentedControl({ value, onChange }: { value: Section; onChange: (s: Section) => void }) {
+function SegmentedControl({ value, onChange }: { value: Tab | null; onChange: (s: Tab) => void }) {
   return (
     <nav aria-label="Sections" className="flex rounded-[10px] bg-fill p-[3px]">
-      {sections.map((s) => {
+      {tabs.map((s) => {
         const active = value === s.id;
         return (
           <Tooltip key={s.id}>

@@ -248,8 +248,43 @@ at 7, send me my day").
 - **Assistant tools:** `people_search` and `person_details`, reads without approval.
 - **UI:** the composer is still a textarea. Typing `@` opens the picker
   (`features/chat/mentions/`), picked items become `@label` text tracked as tokens and
-  drawn as pills behind the text, and a token deletes as a whole. People live at
-  `#/people`, reached from Connections.
+  drawn as pills behind the text, and a token deletes as a whole. People is a top-bar
+  panel (`#/people/<id>`); see below.
+
+## Panels and navigation
+
+The top bar holds the panels used every day: **Chat** (home), **Calendar**, **Mail**
+and **People** (⌘/Ctrl 1–4). What is set up once is in the **Settings** window
+(`#/settings/<page>`: General, Connections, Models, Memory, Reminders & notifications,
+Privacy), a sidebar like the system's own settings. Every panel can hand something to
+Chat with "Ask … about this": `lib/draft.ts` holds a pending draft (text plus its
+`Mention`s), the shell opens a new chat, and the composer takes the draft on mount, so
+the thing arrives as an @ pill the engine resolves like any other mention.
+
+- **Calendar** (`features/calendar/`): a week grid (all-day row, overlapping events side
+  by side, the "now" line) or a four-week list, every calendar merged and coloured, with
+  calendars shown or hidden per viewer. Reminders and routines sit beside it (edit,
+  pause, run now, delete) and inside it: timed ones as chips at their time,
+  event-relative ones as a bell on their event. An event's sheet shows when, where, who
+  (matched to People), the invitation's notes as plain text, "Remind me before…"
+  (a `before_event` reminder on that occurrence) and "Ask … about this". New events go
+  straight into CalDAV calendars; for Google ones the pre-filled Google page opens.
+  - `GET /v1/calendars` → `CalendarInfo` (stable id, name, colour, writable). Ids are
+    the connection id (Google) or connection id + hash of the collection URL (CalDAV).
+    Colours are the server's `calendar-color` when it has one, else picked from a fixed
+    palette by id, so they never change between runs.
+  - `GET /v1/calendar/events?from&to` → `CalendarEvents` (events plus the calendars that
+    couldn't be read). ICS `ORGANIZER`/`ATTENDEE` are read (`mailto:` or the `EMAIL`
+    parameter, `CN` as the name) and matched to People through email match keys.
+  - `POST /v1/calendar/events` (`NewCalendarEvent`) → `CreatedEvent { saved, open_url }`.
+- **People** (`features/people/`): master–detail. The list (search, possible
+  duplicates) on the left; a person's page shows how to reach them, what memory holds
+  about them (`GET /v1/people/{id}/memory`), what's coming up with them
+  (`GET /v1/people/{id}/events`: events they're invited to by email, or whose title names
+  them; recurring ones once), recent email (`GET /v1/mail/threads?person=<id>`), and
+  chats where they were @-mentioned (`GET /v1/people/{id}/conversations`). Sections
+  whose API isn't there (older daemon, no mailbox) say so quietly or stay hidden.
+- **Mail** (`features/mail/mail-view.tsx`): owned by the email feature.
 
 ## Running the daemon
 

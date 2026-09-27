@@ -299,13 +299,14 @@ pub async fn calendar_accounts(state: &AppState) -> Vec<Account> {
                 serde_json::from_value(row.config)
                     .ok()
                     .map(|config| Account::Google {
+                        id: row.id,
                         name: row.name,
                         config,
                     })
             }
             calendar::CALDAV => serde_json::from_value(row.config)
                 .ok()
-                .map(|config| Account::CalDav { config }),
+                .map(|config| Account::CalDav { id: row.id, config }),
             _ => None,
         })
         .collect()

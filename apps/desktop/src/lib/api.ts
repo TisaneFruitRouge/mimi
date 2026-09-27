@@ -31,7 +31,23 @@ import type { ScheduleItem } from "@/bindings/ScheduleItem";
 import type { ScheduleUpdate } from "@/bindings/ScheduleUpdate";
 import type { Settings } from "@/bindings/Settings";
 import type { Status } from "@/bindings/Status";
+import type { CalendarEvent } from "@/bindings/CalendarEvent";
+import type { CalendarEvents } from "@/bindings/CalendarEvents";
+import type { CalendarInfo } from "@/bindings/CalendarInfo";
+import type { CreatedEvent } from "@/bindings/CreatedEvent";
+import type { NewCalendarEvent } from "@/bindings/NewCalendarEvent";
+import type { PersonConversation } from "@/bindings/PersonConversation";
 import { type TransportError, request } from "@/lib/transport";
+
+/** The parts of an email conversation a person's page shows. */
+export interface PersonMailThread {
+  id: number;
+  subject: string;
+  last_at: number;
+  snippet: string;
+  unread: boolean;
+  summary?: string | null;
+}
 
 export class DaemonError extends Error {
   readonly kind: TransportError["kind"];
@@ -103,6 +119,20 @@ export const api = {
   dismissDuplicate: (a: string, b: string) =>
     call<null>("POST", "/people/duplicates/dismiss", { a, b }),
   syncPeople: () => call<null>("POST", "/people/sync"),
+  personEvents: (id: string, from: number, to: number) =>
+    call<CalendarEvent[]>("GET", `/people/${id}/events?from=${from}&to=${to}`),
+  personConversations: (id: string) =>
+    call<PersonConversation[]>("GET", `/people/${id}/conversations`),
+  /** What memory holds about someone. Answered by newer daemons only: callers handle 404. */
+  personMemory: (id: string) => call<MemoryNote[]>("GET", `/people/${id}/memory`),
+  /** Recent email conversations with someone. Needs a connected mailbox: callers handle errors. */
+  personMail: (id: string) =>
+    call<PersonMailThread[]>("GET", `/mail/threads?person=${encodeURIComponent(id)}&limit=5`),
+
+  calendars: () => call<CalendarInfo[]>("GET", "/calendars"),
+  events: (from: number, to: number) =>
+    call<CalendarEvents>("GET", `/calendar/events?from=${from}&to=${to}`),
+  addEvent: (e: NewCalendarEvent) => call<CreatedEvent>("POST", "/calendar/events", e),
   mentions: (q: string) => call<MentionCandidate[]>("GET", `/mentions?q=${encodeURIComponent(q)}`),
 
   hardware: () => call<HardwareInfo>("GET", "/hardware"),
@@ -175,6 +205,9 @@ export const keys = {
   people: ["people"] as const,
   peopleList: (q: string) => ["people", "list", q] as const,
   person: (id: string) => ["people", "person", id] as const,
+  /** Events, conversations, notes and mail about someone. */
+  personExtra: (id: string, what: "events" | "conversations" | "memory" | "mail") =>
+    ["people", "person", id, what] as const,
   duplicates: ["people", "duplicates"] as const,
   mentions: (q: string) => ["people", "mentions", q] as const,
   conversations: ["conversations"] as const,
@@ -184,4 +217,8 @@ export const keys = {
   /** Reminders and routines, and their recent deliveries. */
   schedule: ["schedule"] as const,
   deliveries: ["schedule", "deliveries"] as const,
+  /** Every calendar and event read. */
+  calendar: ["calendar"] as const,
+  calendars: ["calendar", "list"] as const,
+  events: (from: number, to: number) => ["calendar", "events", from, to] as const,
 };

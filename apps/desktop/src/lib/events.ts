@@ -96,6 +96,7 @@ function apply(qc: QueryClient, event: Event) {
     case "connections_changed":
       qc.setQueryData(keys.connections, event.connections);
       qc.invalidateQueries({ queryKey: keys.integrations });
+      qc.invalidateQueries({ queryKey: keys.calendar });
       break;
     case "people_changed":
       qc.invalidateQueries({ queryKey: keys.people });

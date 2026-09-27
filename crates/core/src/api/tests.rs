@@ -1549,6 +1549,177 @@ mod tool_use {
             (400, Some("That doesn't look like an email address."))
         );
     }
+
+    /// Serves `body` as an iCal feed; returns its address.
+    async fn ics_feed(body: &'static str) -> String {
+        let app = axum::Router::new().route(
+            "/basic.ics",
+            axum::routing::get(move || async move { body }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        format!("http://127.0.0.1:{port}/basic.ics")
+    }
+
+    const FEED: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:test\r\nX-WR-CALNAME:Family\r\n\
+BEGIN:VEVENT\r\nUID:standup@test\r\nDTSTART:20260105T090000Z\r\nDTEND:20260105T093000Z\r\n\
+RRULE:FREQ=WEEKLY\r\nSUMMARY:Standup\r\nORGANIZER;CN=Boss:mailto:boss@example.com\r\n\
+ATTENDEE;CN=Sam:mailto:SAM@example.com\r\nEND:VEVENT\r\n\
+BEGIN:VEVENT\r\nUID:lunch@test\r\nDTSTART:20261007T110000Z\r\nDTEND:20261007T120000Z\r\n\
+SUMMARY:Lunch with Sammy\r\nLOCATION:Café du Lac\r\nEND:VEVENT\r\n\
+BEGIN:VEVENT\r\nUID:dentist@test\r\nDTSTART:20261008T080000Z\r\nDTEND:20261008T084500Z\r\n\
+SUMMARY:Dentist\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+
+    #[tokio::test]
+    async fn calendar_panel_lists_events_and_links_them_to_people() {
+        let llm = scripted_llm(|_, _| Reply::Text("ok")).await;
+        let (mut h, _, _) = setup(&llm).await;
+        // Saved directly: the connection flow only accepts https feeds.
+        let connection = uuid::Uuid::now_v7();
+        crate::connections::store::upsert(
+            &h.state.db,
+            crate::connections::store::ConnectionRow {
+                id: connection,
+                integration: crate::connections::calendar::GOOGLE.to_owned(),
+                name: "Family".to_owned(),
+                config: json!({"ics_url": ics_feed(FEED).await}),
+                created_at: 0,
+            },
+        )
+        .await
+        .unwrap();
+
+        let (_, cals) = h
+            .call(reqwest::Method::GET, "/calendars", Value::Null)
+            .await;
+        assert_eq!(cals[0]["id"], connection.to_string());
+        assert_eq!(cals[0]["name"], "Family");
+        assert_eq!(cals[0]["writable"], false);
+        assert!(cals[0]["color"].as_str().unwrap().starts_with('#'));
+
+        let (_, sam) = h
+            .call(
+                reqwest::Method::POST,
+                "/people",
+                json!({"name": "Sam Carter", "nickname": "Sammy", "handles": [
+                    {"channel": "email", "value": "sam@example.com"}
+                ]}),
+            )
+            .await;
+        let sam_id = sam["id"].as_str().unwrap().to_owned();
+
+        // Two weeks: the weekly standup twice, lunch and the dentist once.
+        use chrono::TimeZone;
+        let from = chrono::Utc
+            .with_ymd_and_hms(2026, 10, 5, 0, 0, 0)
+            .unwrap()
+            .timestamp_millis();
+        let to = chrono::Utc
+            .with_ymd_and_hms(2026, 10, 19, 0, 0, 0)
+            .unwrap()
+            .timestamp_millis();
+        let (status, week) = h
+            .call(
+                reqwest::Method::GET,
+                &format!("/calendar/events?from={from}&to={to}"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(status, 200, "{week}");
+        let titles: Vec<&str> = week["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["title"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            titles,
+            ["Standup", "Lunch with Sammy", "Dentist", "Standup"]
+        );
+        let standup = &week["events"][0];
+        assert_eq!(standup["calendar_id"], connection.to_string());
+        assert_eq!(standup["organizer"]["name"], "Boss");
+        assert_eq!(standup["organizer"]["person_id"], Value::Null);
+        // The guest's address belongs to Sam, whatever its case.
+        assert_eq!(standup["attendees"][0]["person_id"], sam["id"]);
+        assert_eq!(standup["attendees"][0]["person_name"], "Sam Carter");
+        assert!(standup["id"].as_str().unwrap().starts_with("ev:"));
+        assert_ne!(week["events"][0]["id"], week["events"][3]["id"]);
+
+        // Sam's page: invited by email, or named in the title. Not the dentist.
+        let (_, with_sam) = h
+            .call(
+                reqwest::Method::GET,
+                &format!("/people/{sam_id}/events?from={from}&to={to}"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(with_sam.as_array().unwrap().len(), 3, "{with_sam}");
+
+        // Ranges are checked.
+        let (status, _) = h
+            .call(
+                reqwest::Method::GET,
+                &format!("/calendar/events?from={to}&to={from}"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(status, 400);
+
+        // Google calendars can't be written here: a new event opens pre-filled.
+        let (status, created) = h
+            .call(
+                reqwest::Method::POST,
+                "/calendar/events",
+                json!({"calendar_id": connection.to_string(), "title": "Picnic",
+                       "start": from, "end": from + 3_600_000}),
+            )
+            .await;
+        assert_eq!(status, 200, "{created}");
+        assert_eq!(created["saved"], false);
+        assert!(
+            created["open_url"]
+                .as_str()
+                .unwrap()
+                .contains("text=Picnic")
+        );
+
+        // Conversations where Sam was mentioned.
+        let (_, none) = h
+            .call(
+                reqwest::Method::GET,
+                &format!("/people/{sam_id}/conversations"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(none, json!([]));
+        let (_, conv) = h
+            .call(reqwest::Method::POST, "/conversations", json!({}))
+            .await;
+        let conv_id = conv["id"].as_str().unwrap().to_owned();
+        let (_, sent) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/conversations/{conv_id}/messages"),
+                json!({"content": "Call @Sam Carter", "mentions": [
+                    {"kind": "person", "id": sam_id, "label": "Sam Carter"}
+                ]}),
+            )
+            .await;
+        let reply = sent["assistant_message"]["id"].as_str().unwrap().to_owned();
+        h.wait_for_reply(&reply).await;
+        h.start("Nothing about anyone").await;
+        let (_, found) = h
+            .call(
+                reqwest::Method::GET,
+                &format!("/people/{sam_id}/conversations"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(found.as_array().unwrap().len(), 1, "{found}");
+        assert_eq!(found[0]["id"], conv_id);
+    }
 }
 
 /// A fake Telegram Bot API: queued updates go out through getUpdates, and everything
