@@ -22,6 +22,7 @@ use crate::connections::store as connection_store;
 
 pub mod contacts;
 pub mod discover;
+pub mod jev;
 pub mod mentions;
 pub mod model;
 pub mod net;
@@ -86,6 +87,8 @@ pub struct Account {
 /// Live mail state: wake-ups for the sync loops and the sorting queue.
 #[derive(Default)]
 pub struct Mail {
+    /// Where Jev requests go when not TypeSafe's endpoint (tests).
+    pub jev_api: std::sync::Mutex<Option<String>>,
     pokes: Mutex<HashMap<Uuid, Arc<Notify>>>,
     /// Wakes the sorting queue when new mail arrives.
     pub triage_wake: Notify,
@@ -471,6 +474,12 @@ pub async fn overview(state: &AppState, scope: store::Scope) -> Result<MailOverv
         unread,
         sorting: settings.mail_sorting,
         model_locality: model::locality(state).await,
+        sorter: settings.mail_sorter,
+        sorter_locality: match settings.mail_sorter {
+            mimi_protocol::MailSorter::Model => model::locality(state).await,
+            mimi_protocol::MailSorter::Jev => Some(mimi_protocol::Locality::Cloud),
+        },
+        jev_connected: jev::key(&state.db).await.is_some(),
     })
 }
 

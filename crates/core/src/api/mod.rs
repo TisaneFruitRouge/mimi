@@ -140,6 +140,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/mail/send", post(mail::send))
         .route("/mail/refresh", post(mail::refresh))
         .route(
+            "/mail/jev",
+            axum::routing::put(mail::jev_connect).delete(mail::jev_disconnect),
+        )
+        .route(
             "/mail/messages/{id}/attachments/{index}",
             get(mail::attachment),
         )

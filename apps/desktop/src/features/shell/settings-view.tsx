@@ -25,18 +25,29 @@ import { Grouped, IconTile, Page, PageHeader, Row, Section } from "@/components/
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { useQuery } from "@tanstack/react-query";
+import type { MailSorter } from "@/bindings/MailSorter";
 import { ConnectionsView } from "@/features/connections/connections-view";
 import { MemoryView } from "@/features/memory/memory-view";
 import { ModelsView } from "@/features/models/models-view";
 import { NotificationsSettings } from "@/features/reminders/reminders";
 import type { Section as Place, SettingsPage } from "@/features/shell/top-bar";
-import { api } from "@/lib/api";
+import { api, keys } from "@/lib/api";
 import { mod } from "@/lib/platform";
 import { useConnections, useProviders, useSettings } from "@/lib/queries";
 import {
   type BackgroundStatus,
   backgroundStatus,
   isTauri,
+  openExternal,
   openInBrowser,
   request,
   setBackground,
@@ -327,15 +338,34 @@ function PrivacySettings({ onSection }: { onSection: (s: Place) => void }) {
   );
 }
 
-/** Whether the model reads new mail in the background to sort and summarise it. */
+/**
+ * Whether new mail is sorted in the background, and by what: the user's own model (the
+ * default), or Jev, a cloud decision model, with their TypeSafe key.
+ */
 function MailSortingGroup() {
   const settings = useSettings().data;
   const providers = useProviders().data ?? [];
+  const overview = useQuery({ queryKey: keys.mailOverview(), queryFn: () => api.mailOverview() }).data;
+  const [askingKey, setAskingKey] = useState(false);
   const model = providers.find((p) => p.id === settings?.default_model?.provider_id);
+  const sorter = settings?.mail_sorter ?? "model";
   const toggle = (on: boolean) => {
     if (!settings) return;
     api.putSettings({ ...settings, mail_sorting: on }).catch((e) => toast.error((e as Error).message));
   };
+  const choose = (next: MailSorter) => {
+    if (!settings || next === sorter) return;
+    if (next === "jev" && !overview?.jev_connected) {
+      setAskingKey(true);
+      return;
+    }
+    api.putSettings({ ...settings, mail_sorter: next }).catch((e) => toast.error((e as Error).message));
+  };
+  const removeKey = () =>
+    api
+      .jevDisconnect()
+      .then(() => toast.success("TypeSafe key removed. Your model sorts your mail again."))
+      .catch((e) => toast.error((e as Error).message));
   return (
     <Section title="Email">
       <Grouped>
@@ -346,11 +376,10 @@ function MailSortingGroup() {
             </IconTile>
           }
           title="Sort new mail in the background"
-          detail="Your model reads each new email to tell what needs a reply and to write a one-line summary. Newsletters are recognised without it."
+          detail="Files each new email under what needs a reply, what's important and everything else. Newsletters are recognised without a model."
           className="[&_.truncate]:whitespace-normal"
           trailing={
             <>
-              {model && <LocalityBadge locality={model.locality} />}
               <Switch
                 checked={!!settings?.mail_sorting}
                 disabled={!settings}
@@ -360,8 +389,153 @@ function MailSortingGroup() {
             </>
           }
         />
+        {settings?.mail_sorting && (
+          <Row
+            icon={
+              <IconTile size="sm" className="bg-fill text-muted-foreground">
+                <Sparkles />
+              </IconTile>
+            }
+            title="Sorted by"
+            detail={
+              sorter === "jev"
+                ? "Jev by TypeSafe, in the cloud: the sender, subject and text of new mail are sent to TypeSafe to be sorted. Newsletters and suspicious mail aren't. No summaries."
+                : "Your model. Or choose Jev, a fast cloud service that only sorts (your own TypeSafe key)."
+            }
+            className="[&_.truncate]:whitespace-normal"
+            trailing={
+              <div className="flex items-center gap-2">
+                <div role="radiogroup" aria-label="Sorted by" className="flex rounded-[9px] bg-fill p-[2px]">
+                  {(["model", "jev"] as const).map((s) => (
+                    <button
+                      key={s}
+                      role="radio"
+                      aria-checked={sorter === s}
+                      onClick={() => choose(s)}
+                      className={cn(
+                        "h-7 rounded-[7px] px-3 text-[13px] font-medium whitespace-nowrap transition-colors",
+                        sorter === s
+                          ? "bg-background text-foreground shadow-[0_0_0_0.5px_rgb(0_0_0/0.06),0_1px_3px_rgb(0_0_0/0.12)]"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {s === "model" ? "Your model" : "Jev"}
+                    </button>
+                  ))}
+                </div>
+                {sorter === "jev" ? (
+                  <LocalityBadge locality="cloud" />
+                ) : (
+                  model && <LocalityBadge locality={model.locality} />
+                )}
+              </div>
+            }
+          />
+        )}
+        {overview?.jev_connected && (
+          <Row
+            icon={
+              <IconTile size="sm" className="bg-cloud-soft text-cloud">
+                <Lock />
+              </IconTile>
+            }
+            title="TypeSafe key saved"
+            detail="Stored encrypted on this computer, and only sent to TypeSafe."
+            trailing={
+              <Button variant="secondary" size="sm" onClick={removeKey}>
+                Remove
+              </Button>
+            }
+          />
+        )}
       </Grouped>
+      <JevKeyDialog
+        open={askingKey}
+        onClose={() => setAskingKey(false)}
+        onSaved={() => {
+          setAskingKey(false);
+          if (settings)
+            api
+              .putSettings({ ...settings, mail_sorter: "jev" })
+              .then(() => toast.success("Jev now sorts your new mail"))
+              .catch((e) => toast.error((e as Error).message));
+        }}
+      />
     </Section>
+  );
+}
+
+/** Asks for the user's TypeSafe key, checked with TypeSafe before it's saved. */
+function JevKeyDialog({ open, onClose, onSaved }: { open: boolean; onClose: () => void; onSaved: () => void }) {
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.jevConnect(key);
+      setKey("");
+      onSaved();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-[460px]">
+        <DialogHeader>
+          <DialogTitle>Sort mail with Jev</DialogTitle>
+          <DialogDescription>
+            Jev is a cloud service by TypeSafe that only sorts: it answers in a fraction of a second but
+            writes nothing, so there are no summaries. Each new email it sorts (sender, subject and text)
+            is sent to TypeSafe; newsletters and suspicious mail are sorted here and never sent.
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          className="flex flex-col gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (key.trim()) void save();
+          }}
+        >
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="jev-key" className="type-subhead font-medium">
+              Your TypeSafe API key
+            </label>
+            <Input
+              id="jev-key"
+              type="password"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              autoComplete="off"
+              autoFocus
+            />
+            <p className="type-subhead text-muted-foreground">
+              TypeSafe charges for use.{" "}
+              <button
+                type="button"
+                className="font-medium text-foreground underline underline-offset-2"
+                onClick={() => openExternal("https://docs.typesafe.ai/introduction/quickstart")}
+              >
+                Get a key
+              </button>
+            </p>
+          </div>
+          {error && <p className="type-subhead text-destructive">{error}</p>}
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={busy || !key.trim()}>
+              {busy && <Loader2 className="animate-spin" />} {busy ? "Checking…" : "Use Jev"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

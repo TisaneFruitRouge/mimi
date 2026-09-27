@@ -6,12 +6,13 @@
 //! The rest goes to the active model one conversation at a time, only while the user
 //! isn't waiting on it for a chat reply, and only for recent mail. The model gets no
 //! tools and its answer is parsed into a fixed shape, so an email can't make it do
-//! anything; the worst a hostile email can do is mislabel itself.
+//! anything; the worst a hostile email can do is mislabel itself. If the user chose Jev
+//! (`Settings.mail_sorter`), it sorts instead, in the cloud, without summaries (`jev`).
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use mimi_protocol::{MailCategory, MailThreadDetail};
+use mimi_protocol::{MailCategory, MailSorter, MailThreadDetail};
 use serde::Deserialize;
 
 use super::{model, store};
@@ -55,7 +56,11 @@ pub async fn drain(state: &AppState) -> usize {
         let Ok(settings) = crate::settings::load(&state.db).await else {
             break;
         };
-        if !settings.mail_sorting || settings.default_model.is_none() {
+        let ready = match settings.mail_sorter {
+            MailSorter::Model => settings.default_model.is_some(),
+            MailSorter::Jev => super::jev::key(&state.db).await.is_some(),
+        };
+        if !settings.mail_sorting || !ready {
             break;
         }
         // The user comes first: wait while a chat reply is being written.
@@ -102,8 +107,14 @@ pub async fn sort_one(state: &AppState, id: i64) -> Result<(), String> {
     };
     // Mail that tries to instruct the assistant is never given to the model to sort:
     // it would only label and summarise itself the way it wants.
+    let sorter = crate::settings::load(&state.db)
+        .await
+        .map(|s| s.mail_sorter)
+        .unwrap_or_default();
     let (category, summary) = if detail.thread.automated || detail.thread.suspicious {
         (MailCategory::Other, None)
+    } else if sorter == MailSorter::Jev {
+        (super::jev::sort(state, &detail).await?, None)
     } else {
         let reply = model::ask(state, INSTRUCTIONS, prompt(&detail)).await?;
         let verdict = parse_verdict(&reply).ok_or("the model's answer wasn't usable")?;

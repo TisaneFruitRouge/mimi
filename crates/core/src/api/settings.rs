@@ -34,7 +34,20 @@ pub async fn put(
             ));
         }
     }
+    if new.mail_sorter == mimi_protocol::MailSorter::Jev
+        && crate::mail::jev::key(&state.db).await.is_none()
+    {
+        return Err(AppError::bad_request(
+            "Add your TypeSafe API key before sorting mail with Jev.",
+        ));
+    }
+    let sorter_changed = settings::load(&state.db).await?.mail_sorter != new.mail_sorter;
     settings::save(&state.db, &new).await?;
+    if sorter_changed {
+        // Where mail is sorted shows in the Mail panel.
+        crate::mail::changed(&state);
+        state.mail.triage_wake.notify_one();
+    }
     state.events.publish(Event::SettingsChanged {
         settings: new.clone(),
     });

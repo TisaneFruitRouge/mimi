@@ -215,6 +215,35 @@ pub async fn attachment(
         .map_err(AppError::internal)
 }
 
+/// Saves the user's TypeSafe key, after checking it with TypeSafe, so Jev can sort mail.
+pub async fn jev_connect(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<mimi_protocol::JevKey>,
+) -> ApiResult<()> {
+    mail::jev::save_key(&state, &body.api_key)
+        .await
+        .map_err(AppError::bad_request)?;
+    mail::changed(&state);
+    Ok(Json(()))
+}
+
+/// Forgets the TypeSafe key; sorting goes back to the user's own model.
+pub async fn jev_disconnect(State(state): State<Arc<AppState>>) -> ApiResult<()> {
+    mail::jev::remove_key(&state.db)
+        .await
+        .map_err(AppError::internal)?;
+    let mut settings = crate::settings::load(&state.db).await?;
+    if settings.mail_sorter == mimi_protocol::MailSorter::Jev {
+        settings.mail_sorter = mimi_protocol::MailSorter::Model;
+        crate::settings::save(&state.db, &settings).await?;
+        state
+            .events
+            .publish(mimi_protocol::Event::SettingsChanged { settings });
+    }
+    mail::changed(&state);
+    Ok(Json(()))
+}
+
 /// Checks every account for new mail now.
 pub async fn refresh(State(state): State<Arc<AppState>>) -> ApiResult<()> {
     for account in mail::accounts(&state).await {

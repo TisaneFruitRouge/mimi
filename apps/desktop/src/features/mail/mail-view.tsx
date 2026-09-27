@@ -476,9 +476,10 @@ function Mailboxes({
       )}
       <div className="mt-auto flex flex-col gap-2 px-2.5 type-footnote text-faint">
         {o.sorting ? (
-          o.model_locality && (
+          o.sorter_locality && (
             <span className="flex flex-wrap items-center gap-1.5">
-              Sorted by your model <LocalityBadge locality={o.model_locality} />
+              {o.sorter === "jev" ? "Sorted by Jev" : "Sorted by your model"}{" "}
+              <LocalityBadge locality={o.sorter_locality} />
             </span>
           )
         ) : (

@@ -2475,6 +2475,50 @@ mod mail_flow {
             .collect()
     }
 
+    /// Jev can only be chosen with a key, and removing the key goes back to the user's
+    /// own model.
+    #[tokio::test]
+    async fn jev_needs_a_key_and_removing_it_goes_back_to_the_model() {
+        let h = Harness::new().await;
+        let (_, settings) = h.call(reqwest::Method::GET, "/settings", Value::Null).await;
+        let mut jev = settings.clone();
+        jev["mail_sorter"] = json!("jev");
+        let (status, err) = h.call(reqwest::Method::PUT, "/settings", jev.clone()).await;
+        assert_eq!(status, 400, "{err}");
+        assert!(
+            err["message"]
+                .as_str()
+                .unwrap()
+                .contains("TypeSafe API key")
+        );
+
+        // With a key (saved directly: checking it would call TypeSafe), Jev can be chosen.
+        h.state
+            .db
+            .call(|c| {
+                c.execute(
+                    "INSERT INTO settings (key, value) VALUES ('jev', '{\"api_key\": \"k\"}')",
+                    [],
+                )
+            })
+            .await
+            .unwrap();
+        let (status, saved) = h.call(reqwest::Method::PUT, "/settings", jev).await;
+        assert_eq!(status, 200, "{saved}");
+        assert_eq!(saved["mail_sorter"], "jev");
+        let (_, overview) = h.call(reqwest::Method::GET, "/mail", Value::Null).await;
+        assert_eq!(overview["sorter_locality"], "cloud");
+
+        let (status, _) = h
+            .call(reqwest::Method::DELETE, "/mail/jev", Value::Null)
+            .await;
+        assert_eq!(status, 200);
+        let (_, settings) = h.call(reqwest::Method::GET, "/settings", Value::Null).await;
+        assert_eq!(settings["mail_sorter"], "model");
+        let (_, overview) = h.call(reqwest::Method::GET, "/mail", Value::Null).await;
+        assert_eq!(overview["jev_connected"], false);
+    }
+
     /// A # mention puts the email in front of the model, quoted as data, through the
     /// real chat path (which keeps only mentions still written in the message).
     #[tokio::test]

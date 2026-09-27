@@ -178,6 +178,9 @@ export const api = {
   /** Sends a message the user wrote or checked: their click is the approval. */
   sendMail: (draft: MailDraft) => call<null>("POST", "/mail/send", draft),
   refreshMail: () => call<null>("POST", "/mail/refresh"),
+  /** Checks the TypeSafe key with TypeSafe, then saves it (Jev as the mail sorter). */
+  jevConnect: (api_key: string) => call<null>("PUT", "/mail/jev", { api_key }),
+  jevDisconnect: () => call<null>("DELETE", "/mail/jev"),
 
   calendars: () => call<CalendarInfo[]>("GET", "/calendars"),
   events: (from: number, to: number) =>

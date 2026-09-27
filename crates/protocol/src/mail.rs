@@ -147,6 +147,18 @@ pub struct MailOverview {
     pub sorting: bool,
     /// Where the model that sorts, summarises and drafts runs; `None` without one.
     pub model_locality: Option<crate::Locality>,
+    /// What sorts new mail (`Settings.mail_sorter`), and where that runs.
+    pub sorter: crate::MailSorter,
+    pub sorter_locality: Option<crate::Locality>,
+    /// Whether a TypeSafe key is saved, so Jev can be chosen.
+    pub jev_connected: bool,
+}
+
+/// Body of `PUT /v1/mail/jev`: the user's TypeSafe API key.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct JevKey {
+    pub api_key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

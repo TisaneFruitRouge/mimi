@@ -248,6 +248,16 @@ than inventing their own.
   `/mail/threads?view&q&person&before&limit`, `/mail/threads/{id}`, `POST
   /mail/threads/{id}/read|archive|summarize|draft`, `/mail/send` (the user's own click
   in the panel or a draft card is the approval), `/mail/refresh`. `MailChanged` events.
+- **Jev as the sorter** (`jev.rs`, `Settings.mail_sorter`): the user's own model sorts
+  by default; they may choose Jev (TypeSafe's cloud decision model, `POST
+  https://api.typesafe.ai/v1/systemone`, their own key) in Settings › Privacy, shown with
+  the cloud badge there and in the Mail panel. The key is checked with TypeSafe before
+  it's saved, kept in the `settings` table row `jev` (never in `Settings`, which clients
+  read), and removed with `DELETE /mail/jev` (which puts the sorter back to the model).
+  Automatic and suspicious mail is still filed locally, never sent. Jev writes no text:
+  no summaries. Tests point `state.mail.jev_api` at a fake. Local "System One" models
+  (Laya, GLiNER2.5-Decide) were tried on a labelled set of 180 emails and scored well
+  below the chat model for these categories (about 40–50% vs 66%), so none ships yet.
 - **Suspicious mail** (`suspicious.rs`, migration 0015): instructions addressed to an
   AI assistant (English and French phrasings, in visible or hidden HTML text) flag a
   message. Flagged conversations are never sorted or summarised by the model (filed as
