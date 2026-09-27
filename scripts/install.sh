@@ -10,23 +10,28 @@
 #
 # MIMI_VERSION=v0.2.0 picks a release (default: the latest). Nothing is sent anywhere
 # but GitHub, and Mimi itself never checks for updates: run this again to update.
+# --file PATH installs a package you already have (e.g. a local `pnpm bundle` build)
+# instead of downloading one; its kind comes from the file name.
 set -eu
 
 REPO=${MIMI_REPO:-TisaneFruitRouge/mimi}
 VERSION=${MIMI_VERSION:-latest}
 MODE=auto
-for arg in "$@"; do
-  case "$arg" in
+LOCAL=""
+while [ $# -gt 0 ]; do
+  case "$1" in
     --appimage) MODE=appimage ;;
-    -h | --help) sed -n '2,13p' "$0" 2>/dev/null || true; exit 0 ;;
-    *) echo "Unknown option: $arg" >&2; exit 1 ;;
+    --file) shift; LOCAL=${1:-} ;;
+    -h | --help) sed -n '2,15p' "$0" 2>/dev/null || true; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
+  shift
 done
 
 say() { printf '%s\n' "$*"; }
 fail() { printf 'Mimi install: %s\n' "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || fail "this needs '$1', which isn't installed."; }
-need curl
+[ -n "$LOCAL" ] || need curl
 need uname
 
 OS=$(uname -s)
@@ -51,6 +56,21 @@ case "$OS" in
   *) fail "Mimi runs on Linux and macOS only." ;;
 esac
 
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+if [ -n "$LOCAL" ]; then
+  [ -f "$LOCAL" ] || fail "there's no file at $LOCAL."
+  case "$LOCAL" in
+    *.AppImage) KIND=appimage ;;
+    *.deb) KIND=deb ;;
+    *.rpm) KIND=rpm ;;
+    *.dmg) KIND=dmg ;;
+    *) fail "$LOCAL isn't an AppImage, .deb, .rpm or .dmg." ;;
+  esac
+  FILE="$TMP/$(basename "$LOCAL")"
+  cp "$LOCAL" "$FILE"
+else
 if [ "$VERSION" = latest ]; then API="https://api.github.com/repos/$REPO/releases/latest"
 else API="https://api.github.com/repos/$REPO/releases/tags/$VERSION"; fi
 RELEASE=$(curl -fsSL -H "Accept: application/vnd.github+json" "$API") ||
@@ -69,8 +89,6 @@ SHA=${PICK#* }
 [ -n "$URL" ] || fail "the release has no $SUFFIX file."
 [ "$SHA" != "$URL" ] || SHA=""
 
-TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
 FILE="$TMP/$(basename "$URL")"
 say "Downloading $(basename "$URL")…"
 curl -fL --progress-bar -o "$FILE" "$URL" || fail "the download failed."
@@ -78,6 +96,7 @@ if [ -n "$SHA" ]; then
   if command -v sha256sum >/dev/null 2>&1; then GOT=$(sha256sum "$FILE" | cut -d' ' -f1)
   else GOT=$(shasum -a 256 "$FILE" | cut -d' ' -f1); fi
   [ "$GOT" = "$SHA" ] || fail "the download is damaged (checksum mismatch). Please try again."
+fi
 fi
 
 case "$KIND" in

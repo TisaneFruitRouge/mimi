@@ -136,6 +136,39 @@ async fn set_background(
     Ok(status)
 }
 
+/// How the window is framed, for the top bar. On Linux the app draws no system title
+/// bar (it would only say "Mimi" above our own bar); the top bar then brings its own
+/// window buttons, except under tiling window managers, which manage windows
+/// themselves.
+#[derive(serde::Serialize)]
+struct WindowChrome {
+    controls: bool,
+}
+
+#[tauri::command]
+fn window_chrome() -> WindowChrome {
+    WindowChrome {
+        controls: cfg!(target_os = "linux") && !tiling_window_manager(),
+    }
+}
+
+fn tiling_window_manager() -> bool {
+    const SOCKETS: [&str; 4] = [
+        "HYPRLAND_INSTANCE_SIGNATURE",
+        "SWAYSOCK",
+        "I3SOCK",
+        "NIRI_SOCKET",
+    ];
+    const DESKTOPS: [&str; 10] = [
+        "hyprland", "sway", "i3", "niri", "river", "bspwm", "awesome", "qtile", "dwm", "xmonad",
+    ];
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP")
+        .unwrap_or_default()
+        .to_lowercase();
+    SOCKETS.iter().any(|v| std::env::var_os(v).is_some())
+        || desktop.split(':').any(|d| DESKTOPS.contains(&d.trim()))
+}
+
 fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -158,6 +191,10 @@ pub fn run() {
         .manage(Connection::default())
         .manage(Arc::new(DaemonProcess::default()))
         .setup(|app| {
+            #[cfg(target_os = "linux")]
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_decorations(false);
+            }
             let connected = app.state::<Connection>().0.clone();
             spawn_event_relay(app.handle().clone(), connected);
 
@@ -188,7 +225,8 @@ pub fn run() {
             daemon_connected,
             open_in_browser,
             background_status,
-            set_background
+            set_background,
+            window_chrome
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

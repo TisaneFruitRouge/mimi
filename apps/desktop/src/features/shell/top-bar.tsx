@@ -1,11 +1,13 @@
+import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { Search, Settings, SquarePen } from "lucide-react";
+import { Minus, Search, Settings, Square, SquarePen, X } from "lucide-react";
 import { cn } from "cn";
 
 import { LogoMark } from "@/components/brand";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { macOverlayTitleBar, mod } from "@/lib/platform";
 import { useSettings } from "@/lib/queries";
+import { windowAction, windowChrome } from "@/lib/transport";
 
 /** The panels used every day, in the top bar. */
 export type Tab = "chat" | "calendar" | "mail" | "people";
@@ -82,8 +84,37 @@ export function TopBar({
         <IconButton label="Settings" shortcut={`${mod},`} onClick={onSettings} active={!isTab(section)}>
           <Settings />
         </IconButton>
+        <WindowControls />
       </div>
     </header>
+  );
+}
+
+/**
+ * Minimize, maximize and close, for Linux desktops where the app draws no system
+ * title bar and the window manager doesn't provide them (not under tiling WMs).
+ */
+function WindowControls() {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    windowChrome().then((c) => setShown(c.controls));
+  }, []);
+  if (!shown) return null;
+  const button = (action: "minimize" | "maximize" | "close", label: string, icon: React.ReactNode) => (
+    <button
+      onClick={() => windowAction(action)}
+      aria-label={label}
+      className="pressable flex size-6 items-center justify-center rounded-full bg-fill text-muted-foreground hover:bg-[rgb(118_118_128/0.2)] hover:text-foreground [&_svg]:size-3"
+    >
+      {icon}
+    </button>
+  );
+  return (
+    <div className="ml-2 flex items-center gap-2">
+      {button("minimize", "Minimize", <Minus strokeWidth={2.4} />)}
+      {button("maximize", "Maximize", <Square strokeWidth={2.4} />)}
+      {button("close", "Close", <X strokeWidth={2.4} />)}
+    </div>
   );
 }
 

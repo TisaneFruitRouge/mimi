@@ -7,6 +7,7 @@
  *   authenticated by the session cookie set when a login link was opened.
  */
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
@@ -114,6 +115,23 @@ function subscribeBrowser(onEvent: (e: Event) => void, onConnection: (c: boolean
 }
 
 /** Opens an external link in the user's browser, never inside the app's own view. */
+/** Whether the top bar must draw window buttons (Linux desktops without a tiling WM). */
+export async function windowChrome(): Promise<{ controls: boolean }> {
+  if (!isTauri) return { controls: false };
+  try {
+    return await invoke<{ controls: boolean }>("window_chrome");
+  } catch {
+    return { controls: false };
+  }
+}
+
+/** Desktop only: the window buttons the top bar draws where the system doesn't. */
+export function windowAction(action: "minimize" | "maximize" | "close") {
+  if (!isTauri) return;
+  const w = getCurrentWindow();
+  void (action === "minimize" ? w.minimize() : action === "maximize" ? w.toggleMaximize() : w.close());
+}
+
 export function openExternal(url: string) {
   if (!/^(https?|mailto):/i.test(url)) return;
   if (isTauri) openUrl(url);
