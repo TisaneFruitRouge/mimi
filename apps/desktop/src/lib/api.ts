@@ -8,6 +8,7 @@ import type { DuplicateSuggestion } from "@/bindings/DuplicateSuggestion";
 import type { Integration } from "@/bindings/Integration";
 import type { MemoryNote } from "@/bindings/MemoryNote";
 import type { MemoryOverview } from "@/bindings/MemoryOverview";
+import type { MemorySemantic } from "@/bindings/MemorySemantic";
 import type { MentionCandidate } from "@/bindings/MentionCandidate";
 import type { NewHandle } from "@/bindings/NewHandle";
 import type { NewPerson } from "@/bindings/NewPerson";
@@ -163,6 +164,9 @@ export const api = {
     call<null>("DELETE", `/memory/note?path=${encodeURIComponent(path)}`),
   saveMemoryProfile: (text: string) => call<null>("PUT", "/memory/profile", { text }),
   setMemoryLearning: (learning: boolean) => call<null>("PUT", "/memory/learning", { learning }),
+  /** Finding memories by meaning; turning it on downloads what it needs. */
+  setMemorySemantic: (enabled: boolean) =>
+    call<MemorySemantic>("PUT", "/memory/semantic", { enabled }),
   undoMemory: (revision: number) => call<null>("POST", `/memory/undo/${revision}`),
   forgetEverything: () => call<null>("POST", "/memory/forget-all"),
 

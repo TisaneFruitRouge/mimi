@@ -5,7 +5,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use mimi_protocol::{
     Event, MemoryLearning, MemoryNote, MemoryNoteEdit, MemoryOverview, MemoryProfileEdit,
-    MemorySource,
+    MemorySemantic, MemorySemanticEdit, MemorySource,
 };
 use serde::Deserialize;
 
@@ -35,12 +35,26 @@ fn no_secrets(text: &str) -> Result<(), AppError> {
 
 pub async fn overview(State(state): State<Arc<AppState>>) -> ApiResult<MemoryOverview> {
     let settings = settings::load(&state.db).await?;
+    let names = memory::link::names(&state).await;
+    let mut notes = store::list(&state.db).await?;
+    for n in &mut notes {
+        n.subject_name = n.subject.as_ref().and_then(|s| names.get(s).cloned());
+    }
     Ok(Json(MemoryOverview {
         profile: store::profile(&state.db).await?,
         profile_limit: PROFILE_LIMIT as u32,
-        notes: store::list(&state.db).await?,
+        notes,
         learning: settings.memory_learning,
+        semantic: memory::semantic::status(&state).await,
     }))
+}
+
+/// A note with the name of the person it's linked to.
+async fn with_name(state: &AppState, mut note: MemoryNote) -> MemoryNote {
+    if let Some(subject) = &note.subject {
+        note.subject_name = memory::link::names(state).await.remove(subject);
+    }
+    note
 }
 
 pub async fn get_note(
@@ -48,10 +62,40 @@ pub async fn get_note(
     Query(q): Query<PathQuery>,
 ) -> ApiResult<MemoryNote> {
     let path = note_path(&q.path)?;
-    store::get(&state.db, &path)
+    let note = store::get(&state.db, &path)
         .await?
+        .ok_or_else(|| AppError::not_found("Note"))?;
+    Ok(Json(with_name(&state, note).await))
+}
+
+/// Everything remembered about one person: the notes linked to them.
+pub async fn person_notes(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<uuid::Uuid>,
+) -> ApiResult<Vec<MemoryNote>> {
+    let name = crate::people::get(&state, id)
+        .await?
+        .ok_or_else(|| AppError::not_found("Person"))?
+        .name;
+    let mut notes = Vec::new();
+    for hit in store::about(&state.db, vec![id.to_string()]).await? {
+        if let Some(mut note) = store::get(&state.db, &hit.path).await? {
+            note.subject_name = Some(name.clone());
+            notes.push(note);
+        }
+    }
+    Ok(Json(notes))
+}
+
+/// Turns finding memories by meaning on (downloading what it needs) or off.
+pub async fn put_semantic(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<MemorySemanticEdit>,
+) -> ApiResult<MemorySemantic> {
+    memory::semantic::set_enabled(&state, req.enabled)
+        .await
         .map(Json)
-        .ok_or_else(|| AppError::not_found("Note"))
+        .map_err(AppError::bad_request)
 }
 
 pub async fn put_note(
@@ -81,11 +125,15 @@ pub async fn put_note(
         None,
     )
     .await?;
+    // A note about someone links to them right away when it's clear who.
+    if let Err(e) = memory::link::relink(&state, &[]).await {
+        tracing::warn!("linking notes to people failed: {e}");
+    }
     state.events.publish(Event::MemoryChanged);
-    store::get(&state.db, &path)
+    let note = store::get(&state.db, &path)
         .await?
-        .map(Json)
-        .ok_or_else(|| AppError::not_found("Note"))
+        .ok_or_else(|| AppError::not_found("Note"))?;
+    Ok(Json(with_name(&state, note).await))
 }
 
 pub async fn delete_note(

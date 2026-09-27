@@ -34,4 +34,9 @@ onboarding_step: number,
 /**
  * Whether reminders and routine results also show as notifications on this computer.
  */
-desktop_notifications: boolean, };
+desktop_notifications: boolean, 
+/**
+ * Whether memories are also found by meaning, not only by their words ("my sibling"
+ * finds the note about a sister). Needs a small language file on this computer.
+ */
+memory_semantic: boolean, };

@@ -1371,6 +1371,12 @@ mod tool_use {
             .into_iter()
             .find(|r| system_prompt(r).contains("maintain a private memory"))
             .unwrap();
+        // Background work doesn't wait for a reasoning model to think.
+        assert_eq!(learning_request["reasoning_effort"], "none");
+        assert_eq!(
+            learning_request["chat_template_kwargs"]["enable_thinking"],
+            false
+        );
         let shown = learning_request["messages"][1]["content"]
             .as_str()
             .unwrap()
@@ -1395,6 +1401,129 @@ mod tool_use {
             0
         );
         assert_eq!(llm.requests().len(), before);
+    }
+
+    #[tokio::test]
+    async fn notes_link_to_people_and_come_back_when_they_are_mentioned() {
+        const PLAN: &str = r#"{"profile": {"add": []}, "notes": [
+            {"path": "people/loulou.md", "add": ["Loulou is the user's sister", "Loulou is a nurse in Geneva"]},
+            {"path": "people/léa.md", "add": ["Léa's birthday is on 12 March"]}]}"#;
+        let llm = scripted_llm(|req, _| {
+            if system_prompt(req).contains("maintain a private memory") {
+                Reply::Text(PLAN)
+            } else {
+                Reply::Text("Noted.")
+            }
+        })
+        .await;
+        let mut h = Harness::new().await;
+        h.use_mock(llm.port).await;
+        let person = async |body: Value| {
+            let (status, p) = h.call(reqwest::Method::POST, "/people", body).await;
+            assert_eq!(status, 200, "{p}");
+            p["id"].as_str().unwrap().to_owned()
+        };
+        let martin = person(json!({"name": "Léa Martin", "nickname": "Loulou"})).await;
+        let dubois = person(json!({"name": "Léa Dubois"})).await;
+
+        // The user @-mentions their sister while telling about her.
+        let (_, conv) = h
+            .call(reqwest::Method::POST, "/conversations", json!({}))
+            .await;
+        let conv_id = conv["id"].as_str().unwrap().to_owned();
+        let (_, sent) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/conversations/{conv_id}/messages"),
+                json!({
+                    "content": "My sister @Léa Martin is a nurse in Geneva, we call her Loulou. Her birthday is on 12 March.",
+                    "mentions": [{"kind": "person", "id": martin, "label": "Léa Martin"}]
+                }),
+            )
+            .await;
+        h.wait_for_reply(sent["assistant_message"]["id"].as_str().unwrap())
+            .await;
+        let changed = crate::memory::learn::learn_from(&h.state, conv_id.parse().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(changed, 2);
+
+        // "Loulou" is her nickname; "Léa" alone could be either Léa, and the mention
+        // says which.
+        let (status, notes) = h
+            .call(
+                reqwest::Method::GET,
+                &format!("/people/{martin}/memory"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(status, 200, "{notes}");
+        let paths: Vec<&str> = notes
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n["path"].as_str().unwrap())
+            .collect();
+        assert_eq!(paths, ["people/loulou.md", "people/léa.md"]);
+        assert_eq!(notes[0]["subject_name"], "Léa Martin");
+        let (_, none) = h
+            .call(
+                reqwest::Method::GET,
+                &format!("/people/{dubois}/memory"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(none, json!([]));
+        let (_, overview) = h.call(reqwest::Method::GET, "/memory", Value::Null).await;
+        assert_eq!(overview["notes"][0]["subject"], martin.as_str());
+        assert_eq!(overview["notes"][0]["subject_name"], "Léa Martin");
+        assert_eq!(overview["semantic"]["enabled"], false);
+
+        // Later, mentioning her brings in what's known about her, although no word of
+        // the message appears in the note.
+        let recalled = |needle: &'static str| {
+            let requests = llm.requests();
+            let last = requests
+                .iter()
+                .rev()
+                .find(|r| !system_prompt(r).contains("maintain a private memory"))
+                .unwrap();
+            system_prompt(last).contains(needle)
+        };
+        async fn ask(h: &Harness, content: &str, mentions: Value) -> String {
+            let (_, conv) = h
+                .call(reqwest::Method::POST, "/conversations", json!({}))
+                .await;
+            let (status, sent) = h
+                .call(
+                    reqwest::Method::POST,
+                    &format!("/conversations/{}/messages", conv["id"].as_str().unwrap()),
+                    json!({"content": content, "mentions": mentions}),
+                )
+                .await;
+            assert_eq!(status, 200, "{sent}");
+            sent["assistant_message"]["id"].as_str().unwrap().to_owned()
+        }
+        let id = ask(
+            &h,
+            "Gift ideas for @Léa Dubois?",
+            json!([{"kind": "person", "id": dubois, "label": "Léa Dubois"}]),
+        )
+        .await;
+        h.wait_for_reply(&id).await;
+        assert!(!recalled("nurse in Geneva"), "the other Léa's notes leaked");
+        let id = ask(
+            &h,
+            "Gift ideas for @Léa Martin?",
+            json!([{"kind": "person", "id": martin, "label": "Léa Martin"}]),
+        )
+        .await;
+        h.wait_for_reply(&id).await;
+        assert!(recalled("nurse in Geneva"));
+        // Named without an @ works too.
+        let id = ask(&h, "What could I cook when Léa Martin visits?", json!([])).await;
+        h.wait_for_reply(&id).await;
+        assert!(recalled("nurse in Geneva"));
     }
 
     fn user_messages(req: &Value) -> Vec<String> {

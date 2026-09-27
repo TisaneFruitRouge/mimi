@@ -17,6 +17,7 @@ fn note(row: &Row) -> rusqlite::Result<MemoryNote> {
         title: row.get(1)?,
         body: row.get(2)?,
         subject: row.get(3)?,
+        subject_name: None,
         source: parse_enum(row, 4)?,
         created_at: row.get(5)?,
         updated_at: row.get(6)?,
@@ -58,6 +59,8 @@ pub async fn list(db: &Db) -> Result<Vec<MemoryNoteSummary>, DbError> {
                     preview: preview(&n.body),
                     path: n.path,
                     title: n.title,
+                    subject: n.subject,
+                    subject_name: None,
                     source: n.source,
                     updated_at: n.updated_at,
                 })
@@ -235,6 +238,57 @@ pub async fn forget_all(db: &Db) -> Result<(), DbError> {
             "DELETE FROM memory_notes; DELETE FROM memory_revisions;
              INSERT INTO memory_fts (memory_fts) VALUES ('rebuild');",
         )
+    })
+    .await
+}
+
+/// Links a note to the person it's about (or unlinks it). Not an edit of the note
+/// itself: no revision, and `updated_at` stays. Returns whether anything changed.
+pub async fn set_subject(db: &Db, path: &str, subject: Option<String>) -> Result<bool, DbError> {
+    let path = path.to_owned();
+    db.call(move |c| {
+        c.execute(
+            "UPDATE memory_notes SET subject = ?2 WHERE path = ?1 AND subject IS NOT ?2",
+            params![path, subject],
+        )
+        .map(|n| n > 0)
+    })
+    .await
+}
+
+/// Notes about any of these people, by path.
+pub async fn about(db: &Db, subjects: Vec<String>) -> Result<Vec<Hit>, DbError> {
+    if subjects.is_empty() {
+        return Ok(Vec::new());
+    }
+    db.call(move |c| {
+        let mut stmt = c.prepare(
+            "SELECT path, title, body FROM memory_notes WHERE subject = ?1 AND path != ?2 ORDER BY path",
+        )?;
+        let mut out = Vec::new();
+        for subject in subjects {
+            for hit in stmt.query_map(params![subject, PROFILE_PATH], |r| {
+                Ok(Hit {
+                    path: r.get(0)?,
+                    title: r.get(1)?,
+                    body: r.get(2)?,
+                })
+            })? {
+                out.push(hit?);
+            }
+        }
+        Ok(out)
+    })
+    .await
+}
+
+/// Every note in the people folder, with its current link.
+pub async fn people_notes(db: &Db) -> Result<Vec<MemoryNote>, DbError> {
+    db.call(|c| {
+        let mut stmt = c.prepare(&format!(
+            "SELECT {COLUMNS} FROM memory_notes WHERE path LIKE 'people/%' ORDER BY path"
+        ))?;
+        stmt.query_map([], note)?.collect()
     })
     .await
 }

@@ -174,7 +174,13 @@ pub async fn send_with_context(
         .rev()
         .find(|m| m.role == MessageRole::User)
         .map(|m| m.content.as_str());
-    let recall = crate::memory::recall::recall(&state.db, &content, previous)
+    let query = crate::memory::recall::Query {
+        message: &content,
+        context: previous,
+        people: crate::memory::link::people_in(&state, &content, &mentions).await,
+        meaning: None,
+    };
+    let recall = crate::memory::recall::recall(&state, query)
         .await
         .unwrap_or_else(|e| {
             tracing::warn!("recalling memories failed: {e}");

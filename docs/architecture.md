@@ -116,11 +116,35 @@ small in the prompt however much accumulates. It works like a tiny file system:
   (`memory_fts`, `unicode61 remove_diacritics`) kept in step by triggers. Every change
   first records the note's previous state in `memory_revisions`, so any change can be
   undone.
-- **Recall, every message:** the user's message (plus their previous one, for
-  follow-ups) becomes an FTS query (stopwords dropped, longer words matched as
-  prefixes). The profile and up to 4 matching notes, 1,600 characters at most, go into
-  the system prompt inside a delimited `<memory>` block that's labelled as data, not
-  instructions.
+- **Recall, every message** (`recall.rs`): notes come from three places, merged
+  best first:
+  1. **People:** notes linked to anyone the message @-mentions or names (full name,
+     nickname, or a first name only one person has) come first.
+  2. **Words:** the user's message (plus their previous one, for follow-ups) becomes an
+     FTS query (stopwords dropped, longer words matched as prefixes).
+  3. **Meaning** (when the user turned it on): the message's embedding against every
+     note's, by cosine similarity; a note counts at 0.6 or more and within 0.08 of the
+     best match.
+
+  Words and meaning are merged by reciprocal rank fusion (`1/(60 + rank)` per list), so a
+  note found both ways ranks highest. The profile and up to 4 notes, 1,600 characters at
+  most, go into the system prompt inside a delimited `<memory>` block that's labelled as
+  data, not instructions.
+- **Finding by meaning** (`semantic.rs`, optional, off by default,
+  `Settings.memory_semantic`): a small multilingual embedding model (IBM Granite
+  Embedding 278M, Q6_K GGUF, 236 MB, 768 dimensions, Apache-2.0; English, French,
+  German, Spanish and eight more languages) is pinned in `catalog.json` under
+  `embeddings` and downloaded like chat models. It runs as a second `llama-server
+  --embedding` on the CPU (loopback, random port, its own key file), started on demand
+  and stopped after 20 idle minutes; with no built-in runtime, the user's Ollama
+  (`granite-embedding:278m`, never a cloud source) serves `/v1/embeddings` instead.
+  Vectors are little-endian f32 blobs in `memory_vectors` (one per note, with the model
+  and a hash of the embedded text), compared by brute force. A background task
+  (`semantic::run`) embeds new and changed notes on `memory_changed` (backfill included)
+  and re-embeds everything if the model changes; deleted notes take their vector along
+  (foreign key). If the model is off, missing or slow (6 s for a message, start
+  included), recall carries on with words alone. The Memory screen shows it as
+  "Understands meaning" with the download size and progress.
 - **Tools:** `memory_search`, `memory_read` and `memory_list` for anything not already
   recalled, and `memory_write` (add facts, de-duplicated), `memory_update` (rewrite a
   note) and `memory_forget` (remove facts or a note). None needs approval, since memory is
@@ -132,6 +156,10 @@ small in the prompt however much accumulates. It works like a tiny file system:
     notes related to the conversation, and the new messages since the last pass
     (`memory_learned`). It replies with a JSON plan of facts to add or remove per note,
     which is applied with de-duplication and the profile cap.
+  - **No thinking:** the pass asks with `ChatOptions::QUICK` (see Models), and the plan
+    starts with a short `facts` list, which keeps non-thinking models from skipping
+    people or details. With Qwen3 8B through Ollama a pass takes 15-25 s instead of
+    40 s to over 2 minutes.
   - **Sources:** only the user's own messages count as sources; the assistant's replies
     are context.
   - **Exclusions:** a message where the user asks not to remember something is left out
@@ -148,12 +176,20 @@ small in the prompt however much accumulates. It works like a tiny file system:
   - "Forget everything" deletes it all.
   - When a cloud model is active, the screen says that relevant memories are sent with
     messages.
-- **People:** knowledge about people lives in `people/<name>.md`. Notes have an optional
-  `subject` column, unused for now, as the seam for linking them to contact ids from the
-  contacts directory.
+- **People** (`link.rs`): knowledge about people lives in `people/<name>.md`. A note is
+  linked to someone in the people directory (`subject` = their id) when it's clear who:
+  the file name or title matches their full name or nickname, or only one person has
+  that first name, or the user @-mentioned them in the conversation the note was learned
+  from (which settles two Léas), or the note spells out the full name. Ambiguous notes
+  stay unlinked rather than guess. Links are made after each learning pass and on every
+  memory or people change, and redone when a person is deleted or merged away.
+  `GET /v1/people/{id}/memory` lists a person's notes; the Memory screen shows the
+  linked person on each note.
 - **API:** `GET /v1/memory`, `GET|PUT|DELETE /v1/memory/note?path=`,
-  `PUT /v1/memory/profile`, `PUT /v1/memory/learning`, `POST /v1/memory/undo/{revision}`,
-  `POST /v1/memory/forget-all`. Changes publish `memory_changed`.
+  `PUT /v1/memory/profile`, `PUT /v1/memory/learning`, `PUT /v1/memory/semantic`
+  (turning it on starts the download), `POST /v1/memory/undo/{revision}`,
+  `POST /v1/memory/forget-all`, `GET /v1/people/{id}/memory`. Changes publish
+  `memory_changed`.
 
 ## Reminders and routines
 
@@ -343,6 +379,14 @@ model runner.
                                   └► http://127.0.0.1:<port>/v1
 ```
 
+- **Internal jobs don't think.** `OpenAiCompatible::complete(model, messages,
+  ChatOptions::QUICK)` returns a whole answer without the model's reasoning, for
+  background work (memory learning, mail triage); `stream_chat_with` takes the same
+  `ChatOptions { thinking }` for streaming. With thinking off, local sources (built-in,
+  device or network) get `reasoning_effort: "none"` (what Ollama's OpenAI endpoint
+  honours; `think` is ignored there) and `chat_template_kwargs.enable_thinking: false`
+  (llama.cpp with Qwen3-style templates); a server that rejects them gets the request
+  again without. Cloud sources never get the fields. Chats keep thinking.
 - **One model at a time.** `ensure` reuses the running server when it serves the same
   model and is alive, else stops it and starts a new one, then waits for `/health`
   (large models can take a while to load; the chat shows the reply as pending). It's

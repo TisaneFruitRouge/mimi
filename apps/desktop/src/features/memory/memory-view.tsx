@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, Cloud, Loader2, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { BookOpen, Cloud, Loader2, Plus, ShieldCheck, Sparkles, Trash2, UserRound } from "lucide-react";
 import { cn } from "cn";
 import { toast } from "sonner";
 
 import type { MemoryNoteSummary } from "@/bindings/MemoryNoteSummary";
+import type { MemorySemantic } from "@/bindings/MemorySemantic";
 import type { MemorySource } from "@/bindings/MemorySource";
 import {
   AlertDialog,
@@ -16,7 +17,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Page, PageHeader } from "@/components/page";
+import { Page, PageHeader, Pill } from "@/components/page";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -27,6 +28,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -38,6 +40,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { api, keys } from "@/lib/api";
+import { formatBytes } from "@/lib/format";
 import { useActiveModel } from "@/lib/queries";
 
 /** The library's folders, as the user sees them. Mirrors `memory::FOLDERS` in the daemon. */
@@ -104,6 +107,7 @@ export function MemoryView() {
           memory.data && (
             <>
               <LearningCard learning={memory.data.learning} />
+              <MeaningCard semantic={memory.data.semantic} />
               <ProfileCard profile={memory.data.profile} limit={memory.data.profile_limit} />
             </>
           )
@@ -236,24 +240,106 @@ function LearningCard({ learning }: { learning: boolean }) {
             : "Paused. Nothing new is remembered, but your assistant still uses what it already knows."}
         </p>
       </div>
-      <button
-        role="switch"
-        aria-checked={learning}
-        aria-label="Learn from conversations"
-        disabled={busy}
-        onClick={toggle}
+      <Switch checked={learning} label="Learn from conversations" disabled={busy} onClick={toggle} />
+    </div>
+  );
+}
+
+function Switch({
+  checked,
+  label,
+  disabled,
+  onClick,
+}: {
+  checked: boolean;
+  label: string;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        "relative h-7 w-12 shrink-0 rounded-full transition-colors disabled:opacity-60",
+        checked ? "bg-private" : "bg-input",
+      )}
+    >
+      <span
         className={cn(
-          "relative h-7 w-12 shrink-0 rounded-full transition-colors disabled:opacity-60",
-          learning ? "bg-private" : "bg-input",
+          "absolute top-1 left-1 size-5 rounded-full bg-white shadow-sm transition-transform",
+          checked && "translate-x-5",
         )}
-      >
-        <span
-          className={cn(
-            "absolute top-1 left-1 size-5 rounded-full bg-white shadow-sm transition-transform",
-            learning && "translate-x-5",
-          )}
+      />
+    </button>
+  );
+}
+
+/** "Understands meaning": finding notes by what they're about, with a small local model. */
+function MeaningCard({ semantic }: { semantic: MemorySemantic }) {
+  const [busy, setBusy] = useState(false);
+  const pulls = useQuery({ queryKey: keys.pulls, queryFn: api.pulls });
+  const pull = pulls.data?.find(
+    (p) => p.provider_id === semantic.provider_id && p.model === semantic.model && p.state === "running",
+  );
+  const set = async (enabled: boolean) => {
+    setBusy(true);
+    try {
+      await api.setMemorySemantic(enabled);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const size = formatBytes(Number(semantic.download_bytes));
+  const on = semantic.enabled;
+  const pct =
+    pull?.completed_bytes != null && pull.total_bytes
+      ? Math.round((Number(pull.completed_bytes) / Number(pull.total_bytes)) * 100)
+      : null;
+
+  let detail: React.ReactNode;
+  if (!semantic.available) {
+    detail = "Needs Mimi's built-in model runtime or Ollama on this computer.";
+  } else if (!on) {
+    detail = `Finds notes by what they're about, not only their words: “my sibling” finds your sister's note, in any language. A one-time ${size} download, kept on your own devices.`;
+  } else if (pull) {
+    detail = `Downloading… ${pct ?? 0}% of ${size}. It stays on your own devices.`;
+  } else if (!semantic.installed) {
+    detail = "The download stopped before it finished.";
+  } else if (semantic.error) {
+    detail = semantic.error;
+  } else if (semantic.indexed < semantic.total) {
+    detail = `Reading your notes… ${semantic.indexed} of ${semantic.total}.`;
+  } else {
+    detail = "On. Your assistant finds notes by their meaning, in any language. Nothing leaves your devices.";
+  }
+
+  return (
+    <div className="flex flex-col gap-3 surface px-5 py-4">
+      <div className="flex items-center gap-4">
+        <Sparkles className="size-5 shrink-0 text-private" />
+        <div className="min-w-0 flex-1">
+          <p className="text-[14.5px] font-medium">Understands meaning</p>
+          <p className="text-[13px] leading-relaxed text-muted-foreground">{detail}</p>
+        </div>
+        {on && semantic.available && !semantic.installed && !pull && (
+          <Button variant="secondary" size="sm" disabled={busy} onClick={() => set(true)}>
+            Try again
+          </Button>
+        )}
+        <Switch
+          checked={on}
+          label="Understands meaning"
+          disabled={busy || !semantic.available}
+          onClick={() => set(!on)}
         />
-      </button>
+      </div>
+      {on && pull && <Progress value={pct ?? 0} aria-label="Download progress" />}
     </div>
   );
 }
@@ -327,7 +413,12 @@ function NoteButton({
         active ? "bg-background shadow-xs" : "hover:bg-background/70",
       )}
     >
-      <span className="truncate text-[13.5px] font-medium">{note.title}</span>
+      <span className="flex items-center gap-1 truncate text-[13.5px] font-medium">
+        <span className="truncate">{note.title}</span>
+        {note.subject_name && (
+          <UserRound aria-label={`About ${note.subject_name}`} className="size-3 shrink-0 text-faint" />
+        )}
+      </span>
       {note.preview && <span className="truncate text-[12px] text-faint">{forYou(note.preview)}</span>}
     </button>
   );
@@ -366,8 +457,15 @@ function NoteEditor({ path }: { path: string }) {
         aria-label="Title"
         className="h-auto border-0 px-0 text-[18px] font-semibold shadow-none focus-visible:ring-0"
       />
-      <p className="text-[12.5px] text-faint">
-        {sourceLabel[n.source]} · {relativeDay(n.updated_at)}
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-faint">
+        {n.subject_name && (
+          <Pill>
+            <UserRound className="size-3" /> About {n.subject_name}
+          </Pill>
+        )}
+        <span>
+          {sourceLabel[n.source]} · {relativeDay(n.updated_at)}
+        </span>
       </p>
       <Textarea
         value={body ?? n.body}

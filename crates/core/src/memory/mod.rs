@@ -4,16 +4,19 @@
 //! - the **profile** (`profile.md`): a short summary that goes with every message,
 //!   hard-capped at [`PROFILE_LIMIT`] characters;
 //! - the **library**: short markdown notes addressed by path (`people/sam.md`,
-//!   `habits/mornings.md`…), found on demand through a full-text index. A few notes
-//!   relevant to each message are added to the prompt ([`recall`]), and the model can
-//!   search and read more with tools ([`tools`]).
+//!   `habits/mornings.md`…), found on demand through a full-text index and, when the
+//!   user turns it on, by meaning ([`semantic`]). A few notes relevant to each message
+//!   are added to the prompt ([`recall`]), including notes about the people it mentions
+//!   ([`link`]), and the model can search and read more with tools ([`tools`]).
 //!
 //! Memories are written by the assistant during a conversation (visible in the chat and
 //! undoable), learned in the background from finished conversations ([`learn`]), or
 //! edited by the user in the Memory screen. Everything lives in the encrypted database.
 
 pub mod learn;
+pub mod link;
 pub mod recall;
+pub mod semantic;
 pub mod store;
 pub mod tools;
 

@@ -121,6 +121,10 @@ function apply(qc: QueryClient, event: Event) {
       break;
     case "memory_changed":
       qc.invalidateQueries({ queryKey: keys.memory });
+      // What each person's page shows as remembered about them.
+      qc.invalidateQueries({
+        predicate: (q) => q.queryKey[0] === "people" && q.queryKey[3] === "memory",
+      });
       break;
     case "schedule_changed":
       qc.invalidateQueries({ queryKey: keys.schedule });

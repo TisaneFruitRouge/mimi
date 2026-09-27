@@ -79,6 +79,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         approvals: Default::default(),
         connections: Default::default(),
         learner: Default::default(),
+        semantic: Default::default(),
         people: Default::default(),
         runtime: Default::default(),
         downloads: Default::default(),
@@ -101,6 +102,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .add(Arc::new(crate::memory::tools::MemoryTools));
     crate::connections::start_all(&state).await;
     tokio::spawn(crate::memory::learn::run(state.clone()));
+    tokio::spawn(crate::memory::semantic::run(state.clone()));
     crate::people::install(&state);
     crate::schedule::install(&state);
 
@@ -116,6 +118,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
             loop {
                 tick.tick().await;
                 state.runtime.unload_if_idle(&state).await;
+                state.semantic.unload_if_idle().await;
             }
         });
     }
@@ -125,6 +128,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         .await;
     // The runtime is a child process: take it down with the daemon.
     state.runtime.stop(&state).await;
+    state.semantic.stop().await;
     let _ = fs::remove_file(&discovery_file);
     served?;
     Ok(())

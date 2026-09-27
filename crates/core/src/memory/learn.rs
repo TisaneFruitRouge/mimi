@@ -10,7 +10,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use futures::StreamExt;
 use mimi_protocol::{Event, MemorySource, MessageRole, MessageStatus};
 use serde::Deserialize;
 use uuid::Uuid;
@@ -21,7 +20,7 @@ use super::{
     remove_facts, store,
 };
 use crate::AppState;
-use crate::providers::{self, ChatChunk, ChatMessage, Role};
+use crate::providers::{self, ChatMessage, ChatOptions, Role};
 
 /// How long a conversation must be quiet before it's learned from.
 pub const QUIET_ENV: &str = "MIMI_MEMORY_QUIET_SECS";
@@ -191,8 +190,8 @@ pub async fn learn_from(state: &Arc<AppState>, conversation_id: Uuid) -> Result<
     if known.is_empty() {
         context.push_str("(none)\n");
     }
-    for n in known.iter().take(80) {
-        context.push_str(&format!("- {} ({})\n", n.path, n.title));
+    for n in known.iter().take(60) {
+        context.push_str(&format!("- {}\n", n.path));
     }
     for n in &related {
         context.push_str(&format!("\n## {}\n{}\n", n.path, n.body.trim()));
@@ -204,14 +203,28 @@ pub async fn learn_from(state: &Arc<AppState>, conversation_id: Uuid) -> Result<
         ChatMessage::text(Role::System, INSTRUCTIONS),
         ChatMessage::text(Role::User, context),
     ];
+    // No thinking: a learning pass is bookkeeping, and reasoning models otherwise spend
+    // minutes deliberating before a small JSON answer.
     let reply = tokio::time::timeout(
         Duration::from_secs(300),
-        collect(&client, &model.model, &prompt),
+        client.complete(&model.model, &prompt, ChatOptions::QUICK),
     )
     .await
-    .map_err(|_| "the model took too long".to_owned())??;
+    .map_err(|_| "the model took too long".to_owned())?
+    .map_err(|e| e.to_string())?;
     let plan = parse_plan(&reply).ok_or("the model's answer wasn't a usable plan")?;
     let changes = apply(state, conversation_id, plan).await?;
+    if changes > 0 {
+        // People the user @-mentioned settle who a note is about ("Léa" when there
+        // are two).
+        let hints: Vec<Uuid> = fresh
+            .iter()
+            .flat_map(|m| super::link::mentioned(&m.mentions))
+            .collect();
+        if let Err(e) = super::link::relink(state, &hints).await {
+            tracing::warn!("linking notes to people failed: {e}");
+        }
+    }
     mark_read().await.map_err(|e| e.to_string())?;
     if changes > 0 {
         state.events.publish(Event::MemoryChanged);
@@ -219,23 +232,34 @@ pub async fn learn_from(state: &Arc<AppState>, conversation_id: Uuid) -> Result<
     Ok(changes)
 }
 
+/// The learning pass runs without the model's thinking (much faster), so the answer
+/// starts with a short `facts` list instead: writing the facts down first stops models
+/// like Qwen3 8B from skipping people or details. `facts` itself isn't used.
 const INSTRUCTIONS: &str = "You maintain a private memory about the user of a personal assistant. \
 Read the new conversation and decide what lasting facts to remember.\n\
 Rules:\n\
 - Only facts the USER stated themselves, in their own messages. The assistant's replies are context only.\n\
-- Only things still true in a few weeks: who they are, family, friends, colleagues, relationships, birthdays, \
-where they live or work, routines, likes and dislikes, health they chose to share. \
-Not one-off tasks, questions, today's plans or small talk.\n\
+- Only things still true in a few weeks: family, friends, colleagues, birthdays, where they live or work, \
+routines, likes and dislikes, health they chose to share. Not one-off tasks, questions, today's plans or small talk.\n\
 - Never passwords, codes, account or card numbers.\n\
-- If the user corrects something, remove the old fact and add the new one.\n\
-- Write short facts: \"The user ...\" or \"<Name> ...\".\n\
-- profile: only the few key facts about the user (name, city, language, job, household). Keep it short.\n\
-- notes: one note per person (people/<first-name>.md) or per broad topic, such as preferences/food.md, \
-preferences/drinks.md, habits/mornings.md, habits/commute.md, places/home.md, work/job.md, interests/music.md, health/health.md. \
-One fact per list item. Reuse existing paths.\n\
+- Short facts: \"The user ...\" or \"<Name> ...\".\n\
+- First list in \"facts\" every lasting fact the user stated in the new conversation (not what is already \
+known), then file each one:\n\
+  - profile: only the few key facts about the user (name, city, language, job, household).\n\
+  - notes: one note per other person, people/<first-name>.md (never one named after the user), and one per \
+topic for the user's own details: preferences/food.md, preferences/drinks.md, habits/mornings.md, \
+habits/commute.md, places/home.md, work/job.md, interests/music.md, health/health.md. Reuse existing paths.\n\
+  - If a new fact contradicts a known one, put the known one, word for word, in \"remove\". Keep known facts \
+that are still true.\n\
 - If there is nothing worth remembering, return empty lists.\n\
-Reply with JSON only, exactly this shape:\n\
-{\"profile\": {\"add\": [], \"remove\": []}, \"notes\": [{\"path\": \"people/sam.md\", \"add\": [], \"remove\": []}]}";
+Example: \"I'm Ana, a teacher in Porto. My brother Rui loves chess and moved to Lisbon. I cycle to school.\" gives\n\
+{\"facts\": [\"The user's name is Ana\", \"The user is a teacher in Porto\", \"Rui is the user's brother\", \
+\"Rui loves chess\", \"Rui lives in Lisbon\", \"The user cycles to school\"], \
+\"profile\": {\"add\": [\"The user's name is Ana\", \"The user is a teacher in Porto\"], \"remove\": []}, \
+\"notes\": [{\"path\": \"people/rui.md\", \"add\": [\"Rui is the user's brother\", \"Rui loves chess\", \
+\"Rui lives in Lisbon\"], \"remove\": [\"Rui lives in Porto\"]}, \
+{\"path\": \"habits/commute.md\", \"add\": [\"The user cycles to school\"], \"remove\": []}]}\n\
+Reply with JSON only, in that shape.";
 
 /// The conversation as the learning pass sees it, or `None` if nothing is left once
 /// messages the user asked not to be remembered are dropped.
@@ -253,7 +277,7 @@ fn excerpt(messages: &[&mimi_protocol::Message]) -> Option<String> {
             MessageRole::Assistant if !skip_reply && !m.content.is_empty() => {
                 parts.push(format!(
                     "ASSISTANT (context only): {}",
-                    clip(&m.content, 300)
+                    clip(&m.content, 200)
                 ));
             }
             _ => {}
@@ -303,24 +327,6 @@ fn clip(s: &str, max: usize) -> String {
     } else {
         s.chars().take(max).collect::<String>() + "…"
     }
-}
-
-async fn collect(
-    client: &providers::OpenAiCompatible,
-    model: &str,
-    prompt: &[ChatMessage],
-) -> Result<String, String> {
-    let mut stream = client
-        .stream_chat(model, prompt, &[])
-        .await
-        .map_err(|e| e.to_string())?;
-    let mut out = String::new();
-    while let Some(chunk) = stream.next().await {
-        if let ChatChunk::Content(c) = chunk.map_err(|e| e.to_string())? {
-            out.push_str(&c);
-        }
-    }
-    Ok(out)
 }
 
 /// The first JSON object in the reply, tolerating code fences and chatter around it.

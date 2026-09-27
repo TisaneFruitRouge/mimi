@@ -84,6 +84,11 @@ impl Runtime {
         self.binary.is_some()
     }
 
+    /// The `llama-server` executable, if Mimi has one.
+    pub fn binary(&self) -> Option<&Path> {
+        self.binary.as_deref()
+    }
+
     pub fn status(&self, state: &AppState) -> RuntimeStatus {
         let mut s = self
             .status
@@ -245,7 +250,7 @@ impl Runtime {
     }
 }
 
-fn api_url(port: u16) -> Url {
+pub(crate) fn api_url(port: u16) -> Url {
     Url::parse(&format!("http://127.0.0.1:{port}/v1")).expect("valid URL")
 }
 
@@ -256,7 +261,11 @@ async fn shut_down(mut r: Running) {
     let _ = r.child.wait().await;
 }
 
-async fn wait_ready(http: &reqwest::Client, port: u16, child: &mut Child) -> Result<(), String> {
+pub(crate) async fn wait_ready(
+    http: &reqwest::Client,
+    port: u16,
+    child: &mut Child,
+) -> Result<(), String> {
     let health = format!("http://127.0.0.1:{port}/health");
     let deadline = Instant::now() + START_TIMEOUT;
     while Instant::now() < deadline {
@@ -310,7 +319,7 @@ async fn context_size() -> u32 {
     }
 }
 
-fn free_port() -> std::io::Result<u16> {
+pub(crate) fn free_port() -> std::io::Result<u16> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
     Ok(listener.local_addr()?.port())
 }
@@ -320,7 +329,7 @@ fn log_path(paths: &mimi_protocol::Paths) -> PathBuf {
 }
 
 /// The runtime's log, started afresh when it grows past a few megabytes.
-fn open_log(paths: &mimi_protocol::Paths) -> std::io::Result<fs::File> {
+pub(crate) fn open_log(paths: &mimi_protocol::Paths) -> std::io::Result<fs::File> {
     let path = log_path(paths);
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
@@ -335,7 +344,7 @@ fn open_log(paths: &mimi_protocol::Paths) -> std::io::Result<fs::File> {
 }
 
 /// The last lines of the runtime's log, for diagnostics.
-fn log_tail(paths: &mimi_protocol::Paths) -> String {
+pub(crate) fn log_tail(paths: &mimi_protocol::Paths) -> String {
     let text = fs::read_to_string(log_path(paths)).unwrap_or_default();
     let lines: Vec<&str> = text.lines().collect();
     lines[lines.len().saturating_sub(20)..].join("\n")

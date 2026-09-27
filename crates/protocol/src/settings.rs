@@ -23,6 +23,9 @@ pub struct Settings {
     pub onboarding_step: u8,
     /// Whether reminders and routine results also show as notifications on this computer.
     pub desktop_notifications: bool,
+    /// Whether memories are also found by meaning, not only by their words ("my sibling"
+    /// finds the note about a sister). Needs a small language file on this computer.
+    pub memory_semantic: bool,
 }
 
 impl Default for Settings {
@@ -35,6 +38,7 @@ impl Default for Settings {
             onboarding_done: false,
             onboarding_step: 0,
             desktop_notifications: true,
+            memory_semantic: false,
         }
     }
 }

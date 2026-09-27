@@ -8,4 +8,8 @@ export type MemoryNoteSummary = { path: string, title: string,
 /**
  * The first line or so of the body.
  */
-preview: string, source: MemorySource, updated_at: number, };
+preview: string, 
+/**
+ * The person this note is about, if it's linked to one.
+ */
+subject: string | null, subject_name: string | null, source: MemorySource, updated_at: number, };

@@ -14,6 +14,10 @@ path: string, title: string,
  */
 body: string, 
 /**
- * Optional link to something the note is about, e.g. a contact's id. Unused for now.
+ * The person in the people directory this note is about, by id, if known.
  */
-subject: string | null, source: MemorySource, created_at: number, updated_at: number, };
+subject: string | null, 
+/**
+ * That person's name, for showing the link.
+ */
+subject_name: string | null, source: MemorySource, created_at: number, updated_at: number, };

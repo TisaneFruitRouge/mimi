@@ -47,6 +47,8 @@ pub struct AppState {
     pub connections: connections::Connections,
     /// Conversations waiting to be learned from once they go quiet.
     pub learner: memory::learn::Learner,
+    /// Finding memories by meaning: the embedding model and the indexer's trigger.
+    pub semantic: memory::semantic::Semantic,
     /// The people directory: contact sources and the sync trigger.
     pub people: people::People,
     /// The built-in model runtime (llama.cpp) and its model downloads.
@@ -83,6 +85,7 @@ impl AppState {
             approvals: Default::default(),
             connections: Default::default(),
             learner: Default::default(),
+            semantic: Default::default(),
             people: Default::default(),
             runtime: runtime::Runtime::with_binary(None),
             downloads: Default::default(),

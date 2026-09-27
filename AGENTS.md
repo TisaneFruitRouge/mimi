@@ -246,17 +246,31 @@ than inventing their own.
 - `crates/core/src/memory/`; full design in `docs/architecture.md` › Memory. Two tiers:
   a capped **profile** (`profile.md`, 1,200 chars, always in the prompt) and a
   **library** of short notes by path (`people/sam.md`, `habits/…`, `preferences/…`,
-  `places/…`, `work/…`, `interests/…`, `health/…`, `notes/…`), found through FTS5 and
-  recalled into the prompt within a strict budget (`memory/recall.rs`). Keep the prompt
-  small: local models have ~8k-token contexts.
+  `places/…`, `work/…`, `interests/…`, `health/…`, `notes/…`), found through FTS5 and,
+  when the user turns on "Understands meaning", by embeddings, then recalled into the
+  prompt within a strict budget (`memory/recall.rs`). Keep the prompt small: local
+  models have ~8k-token contexts.
+- **Recall by meaning** (`memory/semantic.rs`) is optional and must stay so: words-only
+  recall is the fallback whenever the embedding model is off, missing or slow. The
+  model is the catalog's `embeddings` entry (downloaded like chat models), served by a
+  second `llama-server --embedding` on the CPU or, without the built-in runtime, the
+  user's Ollama; never a cloud source. Vectors live in `memory_vectors`; the background
+  `semantic::run` keeps them current, so writers only publish `MemoryChanged`. Test with
+  `semantic::tests::FakeEmbedder`, not a real model.
+- **Notes about people** link to the people directory through `subject` (person id),
+  only when it's unambiguous (`memory/link.rs`; never guess between two Léas). Recall
+  puts notes about people the message @-mentions or names first.
+- **Internal model calls** (learning, mail triage, anything the user doesn't read as it
+  streams) use `OpenAiCompatible::complete(model, messages, ChatOptions::QUICK)`: thinking
+  off on local sources, a harmless no-op elsewhere. Chats keep `stream_chat`.
 - Memory tools don't need approval (memory is local), but writes must stay visible in the
   chat and undoable: return `revision` from every write so the UI can offer Undo.
 - Only the user's own statements become memories. Never weaken `looks_secret`, the
   "don't remember this" opt-out (`learn.rs`), or the rule that external content (tool
   output, calendars, other people's messages) is context, not a source of facts.
 - Schema: `memory_notes` + `memory_fts` (triggers keep them in step), `memory_revisions`
-  (undo), `memory_learned` (learning progress per conversation). `subject` on notes is
-  the seam for linking a note to a contact id.
+  (undo), `memory_learned` (learning progress per conversation), `memory_vectors`
+  (embeddings), and `subject` on notes (the linked person's id).
 - Try it for real with `MIMI_MEMORY_QUIET_SECS=15` so the background learning pass
   runs soon after a chat; it logs `learning pass done … notes_changed=N`.
 

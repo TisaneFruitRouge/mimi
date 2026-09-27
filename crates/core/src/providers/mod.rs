@@ -10,7 +10,8 @@ pub mod pull;
 pub mod store;
 
 pub use openai::{
-    ChatChunk, ChatMessage, FunctionSpec, OpenAiCompatible, ProviderError, Role, ToolCall, ToolSpec,
+    ChatChunk, ChatMessage, ChatOptions, FunctionSpec, OpenAiCompatible, ProviderError, Role,
+    ToolCall, ToolSpec,
 };
 
 /// A client for chatting with `model` from a stored source. The built-in runtime starts
@@ -22,11 +23,9 @@ pub async fn chat_client(
 ) -> Result<OpenAiCompatible, String> {
     if record.provider.kind == mimi_protocol::ProviderKind::Builtin {
         let endpoint = state.runtime.ensure(state, model).await?;
-        return Ok(OpenAiCompatible::new(
-            state.http.clone(),
-            endpoint.url,
-            Some(endpoint.key),
-        ));
+        return Ok(
+            OpenAiCompatible::new(state.http.clone(), endpoint.url, Some(endpoint.key)).local(true),
+        );
     }
     connect(&state.http, record)
 }
@@ -50,11 +49,10 @@ pub fn connect(
     record: &store::ProviderRecord,
 ) -> Result<OpenAiCompatible, String> {
     let url = parse_base_url(&record.provider.base_url)?;
-    Ok(OpenAiCompatible::new(
-        http.clone(),
-        url,
-        record.api_key.clone(),
-    ))
+    Ok(
+        OpenAiCompatible::new(http.clone(), url, record.api_key.clone())
+            .local(record.provider.locality != Locality::Cloud),
+    )
 }
 
 /// Normalized form for storage: no trailing slash.

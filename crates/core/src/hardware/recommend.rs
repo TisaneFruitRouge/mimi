@@ -11,6 +11,16 @@ use super::GIB;
 #[derive(Deserialize)]
 struct Catalog {
     models: Vec<CatalogEntry>,
+    /// Embedding models, for finding memories by meaning. Not chat models: the built-in
+    /// source doesn't list them.
+    #[serde(default)]
+    embeddings: Vec<EmbeddingEntry>,
+}
+
+#[derive(Deserialize)]
+struct EmbeddingEntry {
+    id: String,
+    gguf: GgufSource,
 }
 
 #[derive(Deserialize)]
@@ -34,13 +44,31 @@ pub struct GgufSource {
     pub quant: String,
 }
 
-/// The GGUF download for a catalog model, if the built-in runtime can run it.
+/// The GGUF download for a catalog model (chat or embedding), if the built-in runtime
+/// can run it.
 pub fn gguf_source(id: &str) -> Option<GgufSource> {
     CATALOG
         .models
         .iter()
         .find(|m| m.id == id)
         .and_then(|m| m.gguf.clone())
+        .or_else(|| {
+            CATALOG
+                .embeddings
+                .iter()
+                .find(|m| m.id == id)
+                .map(|m| m.gguf.clone())
+        })
+}
+
+/// The embedding model used to find memories by meaning: its id (also its Ollama tag)
+/// and download.
+pub fn embedding_model() -> (String, GgufSource) {
+    let m = CATALOG
+        .embeddings
+        .first()
+        .expect("catalog.json lists an embedding model");
+    (m.id.clone(), m.gguf.clone())
 }
 
 /// Every catalog model the built-in runtime can download, with its source.

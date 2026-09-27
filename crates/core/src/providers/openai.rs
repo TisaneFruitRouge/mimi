@@ -130,10 +130,34 @@ pub enum ChatChunk {
     ToolCalls(Vec<ToolCall>),
 }
 
+/// How one request should be answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChatOptions {
+    /// Let a reasoning model think before answering. Off for internal jobs (learning,
+    /// sorting mail…) where speed matters more than depth: reasoning models like Qwen3
+    /// otherwise spend most of their time thinking.
+    pub thinking: bool,
+}
+
+impl Default for ChatOptions {
+    fn default() -> Self {
+        Self { thinking: true }
+    }
+}
+
+impl ChatOptions {
+    /// For background work: answer directly, without thinking first.
+    pub const QUICK: Self = Self { thinking: false };
+}
+
 pub struct OpenAiCompatible {
     http: reqwest::Client,
     base_url: Url,
     api_key: Option<String>,
+    /// Runs on the user's own machines (Ollama, llama.cpp, LM Studio…), which accept
+    /// the extra request fields that switch thinking off. Cloud APIs may reject unknown
+    /// fields, so they never get them.
+    local: bool,
 }
 
 impl OpenAiCompatible {
@@ -142,7 +166,14 @@ impl OpenAiCompatible {
             http,
             base_url,
             api_key,
+            local: false,
         }
+    }
+
+    /// Marks the source as running on the user's own machines; see [`ChatOptions`].
+    pub fn local(mut self, local: bool) -> Self {
+        self.local = local;
+        self
     }
 
     fn url(&self, path: &str) -> String {
@@ -270,23 +301,40 @@ impl OpenAiCompatible {
         messages: &[ChatMessage],
         tools: &[ToolSpec],
     ) -> Result<BoxStream<'static, Result<ChatChunk, ProviderError>>, ProviderError> {
-        #[derive(Serialize)]
-        struct Request<'a> {
-            model: &'a str,
-            messages: &'a [ChatMessage],
-            stream: bool,
-            #[serde(skip_serializing_if = "<[ToolSpec]>::is_empty")]
-            tools: &'a [ToolSpec],
-        }
+        self.stream_chat_with(model, messages, tools, ChatOptions::default())
+            .await
+    }
 
+    /// [`Self::stream_chat`] with [`ChatOptions`]. Switching thinking off is best
+    /// effort: it only applies to local sources, and a server that rejects the extra
+    /// fields gets the request again without them.
+    pub async fn stream_chat_with(
+        &self,
+        model: &str,
+        messages: &[ChatMessage],
+        tools: &[ToolSpec],
+        options: ChatOptions,
+    ) -> Result<BoxStream<'static, Result<ChatChunk, ProviderError>>, ProviderError> {
+        let quick = !options.thinking && self.local;
+        match self.send_chat(model, messages, tools, quick).await {
+            Err(ProviderError::Status(reason)) if quick => {
+                tracing::debug!(%reason, "retrying without the no-thinking fields");
+                self.send_chat(model, messages, tools, false).await
+            }
+            other => other,
+        }
+    }
+
+    async fn send_chat(
+        &self,
+        model: &str,
+        messages: &[ChatMessage],
+        tools: &[ToolSpec],
+        quick: bool,
+    ) -> Result<BoxStream<'static, Result<ChatChunk, ProviderError>>, ProviderError> {
         let res = self
             .request(reqwest::Method::POST, self.url("chat/completions"))
-            .json(&Request {
-                model,
-                messages,
-                stream: true,
-                tools,
-            })
+            .json(&chat_request(model, messages, tools, quick))
             .send()
             .await
             .map_err(|e| self.send_error(e))?;
@@ -295,6 +343,73 @@ impl OpenAiCompatible {
             .bytes_stream()
             .map_err(|e| ProviderError::Decode(e.to_string()));
         Ok(parse_sse(bytes).boxed())
+    }
+
+    /// The whole answer to `messages`, without tools; reasoning is dropped. For
+    /// internal jobs such as learning or sorting mail, usually with [`ChatOptions::QUICK`].
+    pub async fn complete(
+        &self,
+        model: &str,
+        messages: &[ChatMessage],
+        options: ChatOptions,
+    ) -> Result<String, ProviderError> {
+        let mut stream = self.stream_chat_with(model, messages, &[], options).await?;
+        let mut out = String::new();
+        while let Some(chunk) = stream.next().await {
+            if let ChatChunk::Content(text) = chunk? {
+                out.push_str(&text);
+            }
+        }
+        Ok(out)
+    }
+
+    /// One embedding vector per input, in order (OpenAI `/embeddings`, which both
+    /// llama-server and Ollama serve).
+    pub async fn embed(
+        &self,
+        model: &str,
+        inputs: &[String],
+    ) -> Result<Vec<Vec<f32>>, ProviderError> {
+        #[derive(Serialize)]
+        struct Request<'a> {
+            model: &'a str,
+            input: &'a [String],
+        }
+        #[derive(Deserialize)]
+        struct Response {
+            data: Vec<Item>,
+        }
+        #[derive(Deserialize)]
+        struct Item {
+            index: usize,
+            embedding: Vec<f32>,
+        }
+
+        let res = self
+            .request(reqwest::Method::POST, self.url("embeddings"))
+            .timeout(Duration::from_secs(120))
+            .json(&Request {
+                model,
+                input: inputs,
+            })
+            .send()
+            .await
+            .map_err(|e| self.send_error(e))?;
+        let mut data = check(res)
+            .await?
+            .json::<Response>()
+            .await
+            .map_err(|e| ProviderError::Decode(e.to_string()))?
+            .data;
+        if data.len() != inputs.len() {
+            return Err(ProviderError::Decode(format!(
+                "{} embeddings for {} inputs",
+                data.len(),
+                inputs.len()
+            )));
+        }
+        data.sort_by_key(|item| item.index);
+        Ok(data.into_iter().map(|item| item.embedding).collect())
     }
 
     fn send_error(&self, err: reqwest::Error) -> ProviderError {
@@ -309,6 +424,31 @@ impl OpenAiCompatible {
             ProviderError::Status(err.to_string())
         }
     }
+}
+
+/// The chat request body. `quick` adds the fields that switch thinking off:
+/// `reasoning_effort: "none"` (Ollama's OpenAI endpoint; `think` is ignored there) and
+/// `chat_template_kwargs.enable_thinking` (llama.cpp with Qwen3-style templates). Servers
+/// that don't know them ignore them.
+fn chat_request(
+    model: &str,
+    messages: &[ChatMessage],
+    tools: &[ToolSpec],
+    quick: bool,
+) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "model": model,
+        "messages": messages,
+        "stream": true,
+    });
+    if !tools.is_empty() {
+        body["tools"] = serde_json::json!(tools);
+    }
+    if quick {
+        body["reasoning_effort"] = "none".into();
+        body["chat_template_kwargs"] = serde_json::json!({ "enable_thinking": false });
+    }
+    body
 }
 
 async fn check(res: reqwest::Response) -> Result<reqwest::Response, ProviderError> {
@@ -661,5 +801,133 @@ mod tests {
         let bytes = futures::stream::iter(vec![Ok(bytes::Bytes::from(body))]);
         let chunks: Vec<_> = parse_sse(bytes).collect().await;
         assert!(matches!(&chunks[..], [Err(ProviderError::Status(m))] if m == "model not found"));
+    }
+
+    #[test]
+    fn quick_requests_ask_ollama_and_llama_cpp_not_to_think() {
+        let messages = [ChatMessage::text(Role::User, "hi")];
+        let quick = chat_request("qwen3:8b", &messages, &[], true);
+        // Ollama's OpenAI endpoint only honours `reasoning_effort`; llama.cpp reads the
+        // chat template switch. Each ignores the other's field.
+        assert_eq!(quick["reasoning_effort"], "none");
+        assert_eq!(quick["chat_template_kwargs"]["enable_thinking"], false);
+        assert_eq!(quick["stream"], true);
+        assert!(quick.get("tools").is_none());
+        let normal = chat_request("qwen3:8b", &messages, &[], false);
+        assert!(normal.get("reasoning_effort").is_none());
+        assert!(normal.get("chat_template_kwargs").is_none());
+    }
+
+    /// A fake server that records chat requests, answers "OK", and (when `strict`)
+    /// rejects fields it doesn't know, like some cloud APIs do.
+    async fn fake_server(
+        strict: bool,
+    ) -> (
+        Url,
+        std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
+    ) {
+        use axum::Json;
+        use axum::response::IntoResponse;
+        use axum::routing::post;
+
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> = Default::default();
+        let recorded = seen.clone();
+        let app = axum::Router::new()
+            .route(
+                "/v1/chat/completions",
+                post(move |Json(body): Json<serde_json::Value>| {
+                    let recorded = recorded.clone();
+                    async move {
+                        let unknown = body.get("chat_template_kwargs").is_some();
+                        recorded.lock().unwrap().push(body);
+                        if strict && unknown {
+                            return (
+                                axum::http::StatusCode::BAD_REQUEST,
+                                "{\"error\":{\"message\":\"Unrecognized request argument\"}}",
+                            )
+                                .into_response();
+                        }
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"OK\"}}]}\n\ndata: [DONE]\n\n"
+                            .into_response()
+                    }
+                }),
+            )
+            .route(
+                "/v1/embeddings",
+                post(|| async {
+                    // Out of order on purpose: results are matched by index.
+                    Json(serde_json::json!({"data": [
+                        {"index": 1, "embedding": [0.0, 1.0]},
+                        {"index": 0, "embedding": [1.0, 0.0]},
+                    ]}))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = Url::parse(&format!("http://{}/v1", listener.local_addr().unwrap())).unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (url, seen)
+    }
+
+    #[tokio::test]
+    async fn thinking_is_switched_off_only_where_it_is_safe() {
+        let messages = [ChatMessage::text(Role::User, "hi")];
+
+        // A local server gets the fields.
+        let (url, seen) = fake_server(false).await;
+        let local = OpenAiCompatible::new(reqwest::Client::new(), url.clone(), None).local(true);
+        let answer = local
+            .complete("m", &messages, ChatOptions::QUICK)
+            .await
+            .unwrap();
+        assert_eq!(answer, "OK");
+        assert_eq!(seen.lock().unwrap()[0]["reasoning_effort"], "none");
+        // Ordinary chats keep thinking.
+        local
+            .complete("m", &messages, ChatOptions::default())
+            .await
+            .unwrap();
+        assert!(seen.lock().unwrap()[1].get("reasoning_effort").is_none());
+
+        // A cloud service never gets them: they're a harmless no-op.
+        let cloud = OpenAiCompatible::new(reqwest::Client::new(), url, None);
+        cloud
+            .complete("m", &messages, ChatOptions::QUICK)
+            .await
+            .unwrap();
+        assert!(
+            seen.lock().unwrap()[2]
+                .get("chat_template_kwargs")
+                .is_none()
+        );
+
+        // A local server that rejects them gets the request again without.
+        let (url, seen) = fake_server(true).await;
+        let picky = OpenAiCompatible::new(reqwest::Client::new(), url, None).local(true);
+        assert_eq!(
+            picky
+                .complete("m", &messages, ChatOptions::QUICK)
+                .await
+                .unwrap(),
+            "OK"
+        );
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert!(seen[1].get("chat_template_kwargs").is_none());
+    }
+
+    #[tokio::test]
+    async fn embeddings_come_back_in_input_order() {
+        let (url, _) = fake_server(false).await;
+        let client = OpenAiCompatible::new(reqwest::Client::new(), url, None);
+        let vectors = client
+            .embed("e", &["first".to_owned(), "second".to_owned()])
+            .await
+            .unwrap();
+        assert_eq!(vectors, [vec![1.0, 0.0], vec![0.0, 1.0]]);
+        let err = client
+            .embed("e", &["only one".to_owned()])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ProviderError::Decode(_)));
     }
 }

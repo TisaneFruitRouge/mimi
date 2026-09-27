@@ -82,6 +82,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/people/{id}/merge", post(people::merge))
         .route("/people/{id}/split", post(people::split))
+        .route("/people/{id}/memory", get(memory::person_notes))
         .route("/mentions", get(people::mentions))
         .route("/calendars", get(calendar::calendars))
         .route(
@@ -113,6 +114,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/memory/profile", axum::routing::put(memory::put_profile))
         .route("/memory/learning", axum::routing::put(memory::put_learning))
+        .route("/memory/semantic", axum::routing::put(memory::put_semantic))
         .route("/memory/undo/{revision}", post(memory::undo))
         .route("/memory/forget-all", post(memory::forget_all))
         .route("/schedule", get(schedule::list).post(schedule::create))
