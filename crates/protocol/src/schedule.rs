@@ -165,3 +165,24 @@ pub struct ScheduleUpdate {
 pub struct Snooze {
     pub minutes: u32,
 }
+
+/// One time a reminder or routine goes off (or went off), for showing it in a calendar.
+/// Items that repeat every few minutes come once per day, standing for `count` times
+/// from `at` to `until`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ScheduleOccurrence {
+    pub item_id: Uuid,
+    /// When it's due (the first of them, when several are folded into one).
+    #[ts(type = "number")]
+    pub at: i64,
+    /// The last of them; the same as `at` for a single one.
+    #[ts(type = "number")]
+    pub until: i64,
+    pub count: u32,
+    /// What happened, for one that already came due (from the history); empty for one
+    /// still to come.
+    pub status: Option<DeliveryStatus>,
+    /// When a snoozed reminder comes back, rather than a time from its schedule.
+    pub snoozed: bool,
+}

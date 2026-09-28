@@ -320,8 +320,17 @@ at 7, send me my day").
 - **API:** `GET|POST /v1/schedule`, `PATCH|DELETE /v1/schedule/{id}`,
   `POST /v1/schedule/{id}/run`, `GET /v1/schedule/deliveries`,
   `POST /v1/schedule/deliveries/{id}/done`, `POST /v1/schedule/deliveries/{id}/snooze`,
-  `POST /v1/schedule/undo/{revision}`. Changes publish `schedule_changed`; deliveries
-  publish `schedule_delivered`.
+  `POST /v1/schedule/undo/{revision}`, `GET /v1/schedule/occurrences?from&to`. Changes
+  publish `schedule_changed`; deliveries publish `schedule_delivered`.
+- **In a calendar.** `GET /v1/schedule/occurrences` gives every time items go off in a
+  range (ms, at most 400 days, a week from now by default), sorted by time: what already
+  happened comes from the history (`due_at` in range, with its delivery status), what's
+  to come is expanded by `rules::occurrences` (repeated `next_after`, so the same DST and
+  short-month rules) from the item's `next_at` onwards, so nothing before it (created
+  later, paused meanwhile) is invented. Paused and ended items have nothing to come; a
+  pending snooze is one more entry (`snoozed`). Intervals under two hours are folded to
+  one entry per local day (`at`, `until`, `count`), and each item gives at most 500
+  entries, so "every minute" over a year is 365 entries, not half a million.
 
 ## Email
 
@@ -544,8 +553,9 @@ the thing arrives as an @ pill the engine resolves like any other mention.
 - **Calendar** (`features/calendar/`): a week grid (all-day row, overlapping events side
   by side, the "now" line) or a four-week list, every calendar merged and coloured, with
   calendars shown or hidden per viewer. Reminders and routines sit beside it (edit,
-  pause, run now, delete) and inside it: timed ones as chips at their time,
-  event-relative ones as a bell on their event. An event's sheet shows when, where, who
+  pause, run now, delete) and inside it: timed ones as a chip at every time they go off
+  in view (`GET /v1/schedule/occurrences`; past ones greyed, missed ones struck
+  through, frequent ones once a day), event-relative ones as a bell on their event. An event's sheet shows when, where, who
   (matched to People), the invitation's notes as plain text, "Remind me before…"
   (a `before_event` reminder on that occurrence) and "Ask … about this". New events go
   straight into CalDAV calendars and Google calendars signed in with Google; for Google

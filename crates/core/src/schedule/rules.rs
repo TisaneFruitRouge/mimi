@@ -186,6 +186,104 @@ pub fn next_after(
     }
 }
 
+/// Schedules that go off more often than this are listed once per day in a calendar
+/// (with how many times), instead of dozens of separate entries.
+pub const FOLD_UNDER_MINUTES: u32 = 120;
+
+/// One time a schedule goes off, or several in the same local day folded into one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Span {
+    pub first: Timestamp,
+    pub last: Timestamp,
+    pub count: u32,
+}
+
+/// Whether `schedule` is listed as one [`Span`] per day by [`occurrences`].
+pub fn folds(schedule: &Schedule) -> bool {
+    matches!(schedule, Schedule::Interval { minutes } if *minutes < FOLD_UNDER_MINUTES)
+}
+
+/// The local calendar day an instant falls on.
+pub fn local_date(t: Timestamp, tz: &TimeZone) -> Date {
+    t.to_zoned(tz.clone()).date()
+}
+
+/// Every time `schedule` goes off in `[from, to)`, in order, at most `limit` entries: the
+/// rule's own occurrences, as [`next_after`] finds them one after another (so the same
+/// daylight-saving and short-month behaviour). Schedules that [`folds`] come as one span
+/// per local day.
+pub fn occurrences(
+    schedule: &Schedule,
+    from: Timestamp,
+    to: Timestamp,
+    anchor: Timestamp,
+    tz: &TimeZone,
+    event_start: Option<Timestamp>,
+    limit: usize,
+) -> Vec<Span> {
+    let mut out = Vec::new();
+    // `next_after` is strictly after: start just before `from` so it's included.
+    let just_before = |t: Timestamp| Timestamp::from_millisecond(t.as_millisecond() - 1).ok();
+    if from >= to {
+        return out;
+    }
+    if let Schedule::Interval { minutes } = schedule
+        && folds(schedule)
+    {
+        let step = *minutes as i64 * 60_000;
+        let a = anchor.as_millisecond();
+        let mut day = local_date(from, tz);
+        while out.len() < limit {
+            let Some(next_day) = day.tomorrow().ok() else {
+                break;
+            };
+            let (Some(start), Some(end)) = (
+                instant(tz, day.to_datetime(Time::midnight())),
+                instant(tz, next_day.to_datetime(Time::midnight())),
+            ) else {
+                break;
+            };
+            let (lo, hi) = (start.max(from), end.min(to));
+            if lo >= to {
+                break;
+            }
+            if let Some(first) =
+                just_before(lo).and_then(|b| next_after(schedule, b, anchor, tz, None))
+                && first < hi
+            {
+                // The last one before the end of the day (or of the range).
+                let last = a + (hi.as_millisecond() - 1 - a).div_euclid(step) * step;
+                let count = (last - first.as_millisecond()) / step + 1;
+                if let Ok(last) = Timestamp::from_millisecond(last) {
+                    out.push(Span {
+                        first,
+                        last,
+                        count: count.clamp(1, u32::MAX as i64) as u32,
+                    });
+                }
+            }
+            day = next_day;
+        }
+        return out;
+    }
+    let mut after = just_before(from);
+    while out.len() < limit {
+        let Some(t) = after.and_then(|b| next_after(schedule, b, anchor, tz, event_start)) else {
+            break;
+        };
+        if t >= to {
+            break;
+        }
+        out.push(Span {
+            first: t,
+            last: t,
+            count: 1,
+        });
+        after = Some(t);
+    }
+    out
+}
+
 fn day_name(w: Weekday) -> &'static str {
     match w {
         Weekday::Mon => "Monday",
@@ -485,6 +583,260 @@ mod tests {
             next_after(&s, at("2026-10-01T12:00"), anchor, &zurich(), None),
             None
         );
+    }
+
+    /// Occurrences in a range, as Zurich wall-clock text ("first – last ×count" when folded).
+    fn between(s: &Schedule, from: &str, to: &str) -> Vec<String> {
+        between_limited(s, from, to, 1000)
+    }
+
+    fn between_limited(s: &Schedule, from: &str, to: &str, limit: usize) -> Vec<String> {
+        occurrences(
+            s,
+            at(from),
+            at(to),
+            at("2026-01-01T00:00"),
+            &zurich(),
+            None,
+            limit,
+        )
+        .into_iter()
+        .map(|o| {
+            if o.count == 1 {
+                assert_eq!(o.first, o.last);
+                local(o.first)
+            } else {
+                format!("{} – {} ×{}", local(o.first), local(o.last), o.count)
+            }
+        })
+        .collect()
+    }
+
+    #[test]
+    fn occurrences_of_daily_weekday_and_weekly_rules() {
+        let daily = Schedule::Daily {
+            time: time("07:00"),
+        };
+        // One exactly at the start counts; one exactly at the end doesn't.
+        assert_eq!(
+            between(&daily, "2026-10-05T07:00", "2026-10-09T07:00"),
+            [
+                "2026-10-05 Mon 07:00",
+                "2026-10-06 Tue 07:00",
+                "2026-10-07 Wed 07:00",
+                "2026-10-08 Thu 07:00",
+            ]
+        );
+        let weekdays = Schedule::Weekdays {
+            time: time("08:30"),
+        };
+        assert_eq!(
+            between(&weekdays, "2026-10-02T09:00", "2026-10-10T00:00"),
+            [
+                "2026-10-05 Mon 08:30",
+                "2026-10-06 Tue 08:30",
+                "2026-10-07 Wed 08:30",
+                "2026-10-08 Thu 08:30",
+                "2026-10-09 Fri 08:30",
+            ]
+        );
+        let bins = Schedule::Weekly {
+            days: vec![Weekday::Thu, Weekday::Mon],
+            time: time("20:00"),
+        };
+        assert_eq!(
+            between(&bins, "2026-10-05T00:00", "2026-10-19T00:00"),
+            [
+                "2026-10-05 Mon 20:00",
+                "2026-10-08 Thu 20:00",
+                "2026-10-12 Mon 20:00",
+                "2026-10-15 Thu 20:00",
+            ]
+        );
+    }
+
+    #[test]
+    fn occurrences_clamp_short_months_and_leap_days() {
+        let rent = Schedule::Monthly {
+            day: 31,
+            time: time("09:00"),
+        };
+        assert_eq!(
+            between(&rent, "2026-01-01T00:00", "2026-07-01T00:00"),
+            [
+                "2026-01-31 Sat 09:00",
+                "2026-02-28 Sat 09:00",
+                "2026-03-31 Tue 09:00",
+                "2026-04-30 Thu 09:00",
+                "2026-05-31 Sun 09:00",
+                "2026-06-30 Tue 09:00",
+            ]
+        );
+        let leap = Schedule::Yearly {
+            month: 2,
+            day: 29,
+            time: time("08:00"),
+        };
+        assert_eq!(
+            between(&leap, "2026-01-01T00:00", "2029-01-01T00:00"),
+            [
+                "2026-02-28 Sat 08:00",
+                "2027-02-28 Sun 08:00",
+                "2028-02-29 Tue 08:00",
+            ]
+        );
+    }
+
+    #[test]
+    fn occurrences_keep_wall_clock_times_across_daylight_saving() {
+        let daily = Schedule::Daily {
+            time: time("07:00"),
+        };
+        assert_eq!(
+            between(&daily, "2026-03-28T00:00", "2026-03-31T00:00"),
+            [
+                "2026-03-28 Sat 07:00",
+                "2026-03-29 Sun 07:00",
+                "2026-03-30 Mon 07:00",
+            ]
+        );
+        // Skipped in spring: moved forward by the gap. Repeated in autumn: once.
+        let night = Schedule::Daily {
+            time: time("02:30"),
+        };
+        assert_eq!(
+            between(&night, "2026-03-28T00:00", "2026-03-31T00:00"),
+            [
+                "2026-03-28 Sat 02:30",
+                "2026-03-29 Sun 03:30",
+                "2026-03-30 Mon 02:30",
+            ]
+        );
+        assert_eq!(
+            between(&night, "2026-10-24T12:00", "2026-10-27T00:00"),
+            ["2026-10-25 Sun 02:30", "2026-10-26 Mon 02:30"]
+        );
+    }
+
+    #[test]
+    fn frequent_intervals_fold_to_one_entry_a_day() {
+        // Every three hours: each one separately.
+        let s = Schedule::Interval { minutes: 180 };
+        let anchor = at("2026-10-01T09:10");
+        let list: Vec<String> = occurrences(
+            &s,
+            at("2026-10-01T00:00"),
+            at("2026-10-02T00:00"),
+            anchor,
+            &zurich(),
+            None,
+            100,
+        )
+        .into_iter()
+        .map(|o| local(o.first))
+        .collect();
+        assert_eq!(
+            list,
+            [
+                "2026-10-01 Thu 09:10",
+                "2026-10-01 Thu 12:10",
+                "2026-10-01 Thu 15:10",
+                "2026-10-01 Thu 18:10",
+                "2026-10-01 Thu 21:10",
+            ]
+        );
+
+        // Every half hour: one entry per day, with how many.
+        let s = Schedule::Interval { minutes: 30 };
+        let folded: Vec<(String, String, u32)> = occurrences(
+            &s,
+            at("2026-10-01T12:00"),
+            at("2026-10-03T06:00"),
+            anchor,
+            &zurich(),
+            None,
+            100,
+        )
+        .into_iter()
+        .map(|o| (local(o.first), local(o.last), o.count))
+        .collect();
+        assert_eq!(
+            folded,
+            [
+                (
+                    "2026-10-01 Thu 12:10".into(),
+                    "2026-10-01 Thu 23:40".into(),
+                    24
+                ),
+                (
+                    "2026-10-02 Fri 00:10".into(),
+                    "2026-10-02 Fri 23:40".into(),
+                    48
+                ),
+                (
+                    "2026-10-03 Sat 00:10".into(),
+                    "2026-10-03 Sat 05:40".into(),
+                    12
+                ),
+            ]
+        );
+
+        // Hourly through the days the clocks change: 23 and 25 hours long.
+        let hourly = Schedule::Interval { minutes: 60 };
+        assert_eq!(
+            between(&hourly, "2026-03-29T00:00", "2026-03-30T00:00"),
+            ["2026-03-29 Sun 00:00 – 2026-03-29 Sun 23:00 ×23"]
+        );
+        assert_eq!(
+            between(&hourly, "2026-10-25T00:00", "2026-10-26T00:00"),
+            ["2026-10-25 Sun 00:00 – 2026-10-25 Sun 23:00 ×25"]
+        );
+    }
+
+    #[test]
+    fn occurrences_are_capped() {
+        let daily = Schedule::Daily {
+            time: time("07:00"),
+        };
+        assert_eq!(
+            between_limited(&daily, "2026-01-01T00:00", "2027-02-01T00:00", 10).len(),
+            10
+        );
+        // Every minute for a year is a year of daily entries, never half a million.
+        let busy = Schedule::Interval { minutes: 1 };
+        let year = between(&busy, "2026-01-01T00:00", "2027-01-01T00:00");
+        assert_eq!(year.len(), 365);
+        assert_eq!(year[0], "2026-01-01 Thu 00:00 – 2026-01-01 Thu 23:59 ×1440");
+        assert!(between(&daily, "2026-10-05T00:00", "2026-10-05T00:00").is_empty());
+    }
+
+    #[test]
+    fn one_time_and_event_relative_occur_once() {
+        let once = Schedule::Once {
+            at: "2026-10-01T09:00".into(),
+        };
+        assert_eq!(
+            between(&once, "2026-09-28T00:00", "2026-10-05T00:00"),
+            ["2026-10-01 Thu 09:00"]
+        );
+        assert!(between(&once, "2026-10-05T00:00", "2026-10-12T00:00").is_empty());
+
+        let dentist = Schedule::BeforeEvent {
+            event_id: "ev:x".into(),
+            event_title: "Dentist".into(),
+            minutes_before: 60,
+        };
+        let found = occurrences(
+            &dentist,
+            at("2026-10-01T00:00"),
+            at("2026-10-08T00:00"),
+            at("2026-01-01T00:00"),
+            &zurich(),
+            Some(at("2026-10-02T10:00")),
+            100,
+        );
+        assert_eq!(found.len(), 1);
+        assert_eq!(local(found[0].first), "2026-10-02 Fri 09:00");
     }
 
     #[test]

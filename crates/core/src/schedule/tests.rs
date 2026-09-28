@@ -209,6 +209,120 @@ async fn one_time_reminders_finish_and_past_times_are_refused() {
     assert!(done.wake_at().is_none());
 }
 
+/// An item's entries in the calendar between two local times: (when, what happened).
+async fn in_calendar(
+    s: &AppState,
+    item: uuid::Uuid,
+    from: &str,
+    to: &str,
+) -> Vec<(String, Option<DeliveryStatus>, u32)> {
+    super::occurrences(s, at(from).as_millisecond(), at(to).as_millisecond())
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|o| o.item_id == item)
+        .map(|o| {
+            let when = if o.snoozed {
+                format!("{} (snoozed)", local(o.at))
+            } else {
+                local(o.at)
+            };
+            (when, o.status, o.count)
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn the_calendar_shows_every_occurrence_with_its_history() {
+    let s = state();
+    let item = daily_due(&s, "Stretch", "2026-10-05T07:00").await;
+    super::tick(&s, at("2026-10-05T07:00")).await;
+    deliveries(&s, 1).await;
+    let (from, to) = ("2026-10-05T00:00", "2026-10-09T00:00");
+    let delivered = Some(DeliveryStatus::Delivered);
+    assert_eq!(
+        in_calendar(&s, item.id, from, to).await,
+        [
+            ("2026-10-05 07:00".to_owned(), delivered, 1),
+            ("2026-10-06 07:00".to_owned(), None, 1),
+            ("2026-10-07 07:00".to_owned(), None, 1),
+            ("2026-10-08 07:00".to_owned(), None, 1),
+        ]
+    );
+
+    // A snooze shows when it comes back.
+    let mut snoozed = store::get(&s.db, item.id).await.unwrap().unwrap();
+    snoozed.snoozed_until = Some(at("2026-10-05T07:10").as_millisecond());
+    store::upsert(&s.db, snoozed).await.unwrap();
+    let list = in_calendar(&s, item.id, from, "2026-10-06T00:00").await;
+    assert_eq!(
+        list,
+        [
+            ("2026-10-05 07:00".to_owned(), delivered, 1),
+            ("2026-10-05 07:10 (snoozed)".to_owned(), None, 1),
+        ]
+    );
+
+    // Paused: what happened stays, nothing is to come.
+    super::update(
+        &s,
+        item.id,
+        ScheduleUpdate {
+            paused: Some(true),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        in_calendar(&s, item.id, from, to).await,
+        [("2026-10-05 07:00".to_owned(), delivered, 1)]
+    );
+
+    // A one-time reminder that went off, and one that ended, have only their history.
+    let mut once = daily_due(&s, "Papers", "2026-10-06T09:00").await;
+    once.schedule = Schedule::Once {
+        at: "2026-10-06T09:00".into(),
+    };
+    store::upsert(&s.db, once.clone()).await.unwrap();
+    super::tick(&s, at("2026-10-06T09:00")).await;
+    deliveries(&s, 2).await;
+    assert_eq!(
+        in_calendar(&s, once.id, from, to).await,
+        [("2026-10-06 09:00".to_owned(), delivered, 1)]
+    );
+    let mut ended = daily_due(&s, "Gone", "2026-10-07T10:00").await;
+    ended.ended = Some("The event was cancelled or removed.".into());
+    store::upsert(&s.db, ended.clone()).await.unwrap();
+    assert!(in_calendar(&s, ended.id, from, to).await.is_empty());
+}
+
+#[tokio::test]
+async fn frequent_items_show_once_a_day_in_the_calendar() {
+    let s = state();
+    let mut item = daily_due(&s, "Drink water", "2026-10-05T09:00").await;
+    item.schedule = Schedule::Interval { minutes: 30 };
+    store::upsert(&s.db, item.clone()).await.unwrap();
+    for t in ["09:00", "09:30", "10:00"] {
+        super::tick(&s, at(&format!("2026-10-05T{t}"))).await;
+    }
+    deliveries(&s, 3).await;
+    // Three that went off, then every half hour until midnight, then every day after.
+    let list = in_calendar(&s, item.id, "2026-10-05T00:00", "2026-10-07T00:00").await;
+    assert_eq!(
+        list,
+        [
+            (
+                "2026-10-05 09:00".to_owned(),
+                Some(DeliveryStatus::Delivered),
+                3
+            ),
+            ("2026-10-05 10:30".to_owned(), None, 27),
+            ("2026-10-06 00:00".to_owned(), None, 48),
+        ]
+    );
+}
+
 #[tokio::test]
 async fn undo_restores_the_previous_version() {
     let s = state();

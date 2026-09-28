@@ -9,6 +9,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleAlert,
+  Clock,
   Copy,
   Eye,
   EyeOff,
@@ -24,6 +25,7 @@ import { toast } from "sonner";
 import type { CalendarEvent } from "@/bindings/CalendarEvent";
 import type { CalendarInfo } from "@/bindings/CalendarInfo";
 import type { ScheduleItem } from "@/bindings/ScheduleItem";
+import type { ScheduleOccurrence } from "@/bindings/ScheduleOccurrence";
 import { Grouped, IconTile } from "@/components/page";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -45,7 +47,14 @@ import {
 } from "@/features/calendar/dates";
 import { EventSheet, before, remindBefore, remindersFor } from "@/features/calendar/event-sheet";
 import { NewEventDialog } from "@/features/calendar/new-event-dialog";
-import { DeleteItemDialog, ItemMenu, RemindersPanel, finished, useScheduleItems } from "@/features/reminders/reminders";
+import {
+  DeleteItemDialog,
+  ItemMenu,
+  RemindersPanel,
+  finished,
+  statusText,
+  useScheduleItems,
+} from "@/features/reminders/reminders";
 import { clock } from "@/features/reminders/time";
 import type { Section } from "@/features/shell/top-bar";
 import { api, keys } from "@/lib/api";
@@ -70,6 +79,8 @@ import { useScrollEdge } from "@/lib/scroll-edge";
 
 /** Height of one hour in the week grid. */
 const HOUR = 44;
+/** Height of a reminder chip in the week grid. */
+const CHIP = 20;
 const AGENDA_DAYS = 28;
 const GREY = "#8e8e93";
 
@@ -115,6 +126,47 @@ function slotAt(target: EventTarget | null, clientY: number): number | null {
 /** "on Tue 14:30" for a slot's New event. */
 function slotLabel(at: number) {
   return `on ${new Date(at).toLocaleDateString([], { weekday: "short" })} ${clock(at)}`;
+}
+
+/** A reminder or routine at one of its times. */
+interface Timed {
+  item: ScheduleItem;
+  o: ScheduleOccurrence;
+}
+
+const upcoming = (item_id: string, at: number): ScheduleOccurrence => ({
+  item_id,
+  at,
+  until: at,
+  count: 1,
+  status: null,
+  snoozed: false,
+});
+
+/** "7:00", or "9:00–23:30" for a day of something that repeats every few minutes. */
+const timedClock = ({ o }: Timed) => (o.count > 1 ? `${clock(o.at)}–${clock(o.until)}` : clock(o.at));
+
+/** What happened to it, or will: "Sent", "Missed", "Snoozed", nothing for one to come. */
+function timedState({ o }: Timed) {
+  if (o.snoozed) return "Snoozed";
+  return o.status ? statusText[o.status] : null;
+}
+
+/** The tooltip: "Water the plants · 18:00 · Sent", "Drink water · 9:00–23:30 · Every 30 minutes". */
+function timedLabel(t: Timed) {
+  const repeats = t.o.count > 1 ? t.item.description : null;
+  return [t.item.title, timedClock(t), repeats, timedState(t)].filter(Boolean).join(" · ");
+}
+
+/** Didn't happen: missed while Mimi wasn't running, or a routine run that was skipped. */
+const notHappened = ({ o }: Timed) => o.status === "missed" || o.status === "skipped";
+
+function TimedIcon({ t, className }: { t: Timed; className: string }) {
+  const past = t.o.status !== null;
+  if (t.o.snoozed) return <Clock className={cn(className, "text-muted-foreground")} />;
+  if (t.item.kind === "routine")
+    return <Sparkles className={cn(className, past ? "text-muted-foreground" : "text-lime-deep")} />;
+  return <Bell className={cn(className, "text-muted-foreground")} />;
 }
 
 /** What the right-click menus in every view can do, provided by the panel. */
@@ -253,6 +305,11 @@ export function CalendarView({
     enabled: (calendars.data?.length ?? 0) > 0,
   });
   const items = useScheduleItems().data ?? [];
+  const occurrences = useQuery({
+    queryKey: keys.occurrences(from, to),
+    queryFn: () => api.scheduleOccurrences(from, to),
+    placeholderData: keepPreviousData,
+  });
 
   const colors = useMemo(
     () => new Map((calendars.data ?? []).map((c) => [c.id, c.color])),
@@ -260,10 +317,22 @@ export function CalendarView({
   );
   const colorOf = (e: CalendarEvent) => colors.get(e.calendar_id) ?? GREY;
   const visible = (events.data?.events ?? []).filter((e) => !hidden.includes(e.calendar_id));
-  // Reminders at a time of their own (not tied to an event), shown in the grid too.
-  const timed = items.filter(
-    (i) => !finished(i) && !i.paused && i.next_at !== null && i.schedule.type !== "before_event",
-  );
+  // Reminders at times of their own, every one in range, shown in the grid too.
+  // Event-relative ones show as a bell on their event instead.
+  const timed = useMemo(() => {
+    const own = (i: ScheduleItem) => i.schedule.type !== "before_event";
+    if (occurrences.isError) {
+      // An older daemon: only each item's next time.
+      return items
+        .filter((i) => own(i) && !finished(i) && !i.paused && i.next_at !== null)
+        .map((item) => ({ item, o: upcoming(item.id, item.next_at!) }));
+    }
+    const byId = new Map(items.map((i) => [i.id, i]));
+    return (occurrences.data ?? []).flatMap((o) => {
+      const item = byId.get(o.item_id);
+      return item && own(item) ? [{ item, o }] : [];
+    });
+  }, [items, occurrences.data, occurrences.isError]);
 
   const setViewSaved = (v: View) => {
     setView(v);
@@ -574,7 +643,7 @@ function WeekGrid({
   weekStart: number;
   now: number;
   events: CalendarEvent[];
-  reminders: ScheduleItem[];
+  reminders: Timed[];
   items: ScheduleItem[];
   loading: boolean;
   colorOf: (e: CalendarEvent) => string;
@@ -597,7 +666,7 @@ function WeekGrid({
     const first = Math.min(
       8,
       ...events.filter((e) => !e.all_day && e.start >= weekStart).map((e) => new Date(e.start).getHours()),
-      ...reminders.map((r) => new Date(r.next_at!).getHours()),
+      ...reminders.map((r) => new Date(r.o.at).getHours()),
     );
     const hour = thisWeek ? new Date().getHours() - 1.5 : first - 0.5;
     el.scrollTop = Math.max(0, hour) * HOUR;
@@ -679,7 +748,7 @@ function WeekGrid({
               day={d}
               now={now}
               placed={layoutDay(events, d)}
-              reminders={reminders.filter((r) => r.next_at! >= d && r.next_at! < addDays(d, 1))}
+              reminders={reminders.filter((r) => r.o.at >= d && r.o.at < addDays(d, 1))}
               items={items}
               colorOf={colorOf}
               onOpen={onOpen}
@@ -712,7 +781,7 @@ function DayColumn({
   day: number;
   now: number;
   placed: Placed[];
-  reminders: ScheduleItem[];
+  reminders: Timed[];
   items: ScheduleItem[];
   colorOf: (e: CalendarEvent) => string;
   onOpen: (e: CalendarEvent) => void;
@@ -721,6 +790,14 @@ function DayColumn({
 }) {
   const today = sameDay(day, now);
   const weekend = [0, 6].includes(new Date(day).getDay());
+  // Each chip centred on its time, kept inside the day and below the one before it, so
+  // reminders a few minutes apart don't hide each other.
+  const chipTops: number[] = [];
+  for (const r of reminders) {
+    const ideal = Math.max(0, ((r.o.at - day) / 3_600_000) * HOUR - 10);
+    const prev = chipTops.at(-1);
+    chipTops.push(Math.min(24 * HOUR - CHIP, prev === undefined ? ideal : Math.max(ideal, prev + CHIP + 1)));
+  }
   return (
     <div
       data-day={day}
@@ -764,20 +841,20 @@ function DayColumn({
           </EventMenu>
         );
       })}
-      {reminders.map((r) => (
-        <CalendarItemMenu key={r.id} item={r}>
+      {reminders.map((r, i) => (
+        <CalendarItemMenu key={`${r.item.id}:${r.o.at}:${r.o.snoozed}`} item={r.item}>
           <button
-            onClick={() => onReminder(r)}
-            className="absolute inset-x-1 z-[1] flex h-5 items-center gap-1 rounded-full bg-background px-2 text-[11px] font-medium shadow-[0_0_0_0.5px_rgb(0_0_0/0.1),0_1px_2px_rgb(0_0_0/0.08)] hover:bg-subtle"
-            style={{ top: ((r.next_at! - day) / 3_600_000) * HOUR - 10 }}
-            title={`${r.title} · ${clock(r.next_at!)}`}
-          >
-            {r.kind === "routine" ? (
-              <Sparkles className="size-3 shrink-0 text-lime-deep" />
-            ) : (
-              <Bell className="size-3 shrink-0 text-muted-foreground" />
+            onClick={() => onReminder(r.item)}
+            className={cn(
+              "absolute inset-x-1 z-[1] flex h-5 items-center gap-1 rounded-full bg-background px-2 text-[11px] font-medium shadow-[0_0_0_0.5px_rgb(0_0_0/0.1),0_1px_2px_rgb(0_0_0/0.08)] hover:bg-subtle",
+              // What already went off is quieter than what's to come.
+              r.o.status !== null && "bg-subtle! text-muted-foreground shadow-none! hover:bg-fill!",
             )}
-            <span className="truncate">{r.title}</span>
+            style={{ top: chipTops[i] }}
+            title={timedLabel(r)}
+          >
+            <TimedIcon t={r} className="size-3 shrink-0" />
+            <span className={cn("truncate", notHappened(r) && "line-through")}>{r.item.title}</span>
           </button>
         </CalendarItemMenu>
       ))}
@@ -808,7 +885,7 @@ function Agenda({
   from: number;
   to: number;
   events: CalendarEvent[];
-  reminders: ScheduleItem[];
+  reminders: Timed[];
   items: ScheduleItem[];
   loading: boolean;
   colorOf: (e: CalendarEvent) => string;
@@ -822,7 +899,7 @@ function Agenda({
     .map((d) => ({
       day: d,
       events: events.filter((e) => onDay(e, d) && (e.all_day || e.start >= d || d === startOfDay(from))),
-      reminders: reminders.filter((r) => r.next_at! >= d && r.next_at! < addDays(d, 1)),
+      reminders: reminders.filter((r) => r.o.at >= d && r.o.at < addDays(d, 1)),
     }))
     .filter((g) => g.events.length + g.reminders.length > 0);
 
@@ -842,22 +919,35 @@ function Agenda({
             <section key={g.day} className="flex flex-col gap-2">
               <h2 className="section-label">{dayTitle(g.day)}</h2>
               <Grouped>
-                {g.reminders.map((r) => (
-                  <CalendarItemMenu key={r.id} item={r}>
-                    <button
-                      onClick={() => onReminder(r)}
-                      className="flex min-h-[52px] items-center gap-3.5 px-4 py-2 text-left transition-colors hover:bg-[rgb(118_118_128/0.06)]"
-                    >
-                      <span className="w-24 shrink-0 type-subhead text-muted-foreground tabular-nums">{clock(r.next_at!)}</span>
-                      {r.kind === "routine" ? (
-                        <Sparkles className="size-4 shrink-0 text-lime-deep" />
-                      ) : (
-                        <Bell className="size-4 shrink-0 text-muted-foreground" />
-                      )}
-                      <span className="min-w-0 flex-1 truncate type-body">{r.title}</span>
-                    </button>
-                  </CalendarItemMenu>
-                ))}
+                {g.reminders.map((r) => {
+                  const state = timedState(r);
+                  return (
+                    <CalendarItemMenu key={`${r.item.id}:${r.o.at}:${r.o.snoozed}`} item={r.item}>
+                      <button
+                        onClick={() => onReminder(r.item)}
+                        className="flex min-h-[52px] items-center gap-3.5 px-4 py-2 text-left transition-colors hover:bg-[rgb(118_118_128/0.06)]"
+                      >
+                        <span className="w-24 shrink-0 type-subhead text-muted-foreground tabular-nums">{timedClock(r)}</span>
+                        <TimedIcon t={r} className="size-4 shrink-0" />
+                        <span className="min-w-0 flex-1">
+                          <span
+                            className={cn(
+                              "block truncate type-body",
+                              r.o.status !== null && "text-muted-foreground",
+                              notHappened(r) && "line-through",
+                            )}
+                          >
+                            {r.item.title}
+                          </span>
+                          {r.o.count > 1 && (
+                            <span className="block truncate type-subhead text-muted-foreground">{r.item.description}</span>
+                          )}
+                        </span>
+                        {state && <span className="shrink-0 type-footnote text-faint">{state}</span>}
+                      </button>
+                    </CalendarItemMenu>
+                  );
+                })}
                 {g.events.map((e) => (
                   <EventMenu key={e.id} event={e} onOpen={onOpen}>
                     <button

@@ -220,6 +220,25 @@ pub async fn recent(db: &Db, limit: usize) -> Result<Vec<Delivery>, DbError> {
     .await
 }
 
+/// Deliveries that were due in `[from, to)`, oldest first, at most `limit`.
+pub async fn due_between(
+    db: &Db,
+    from: i64,
+    to: i64,
+    limit: usize,
+) -> Result<Vec<Delivery>, DbError> {
+    db.call(move |c| {
+        let mut stmt = c.prepare(&format!(
+            "SELECT {DELIVERY_COLUMNS} FROM schedule_deliveries d
+             JOIN schedule_items i ON i.id = d.item_id
+             WHERE d.due_at >= ?1 AND d.due_at < ?2 ORDER BY d.due_at, d.at LIMIT ?3"
+        ))?;
+        stmt.query_map(params![from, to, limit as i64], delivery)?
+            .collect()
+    })
+    .await
+}
+
 pub async fn set_status(
     db: &Db,
     id: Uuid,

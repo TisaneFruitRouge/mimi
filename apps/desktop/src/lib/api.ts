@@ -31,6 +31,7 @@ import type { SendMessageResult } from "@/bindings/SendMessageResult";
 import type { Delivery } from "@/bindings/Delivery";
 import type { NewScheduleItem } from "@/bindings/NewScheduleItem";
 import type { ScheduleItem } from "@/bindings/ScheduleItem";
+import type { ScheduleOccurrence } from "@/bindings/ScheduleOccurrence";
 import type { ScheduleUpdate } from "@/bindings/ScheduleUpdate";
 import type { Settings } from "@/bindings/Settings";
 import type { Status } from "@/bindings/Status";
@@ -279,6 +280,9 @@ export const api = {
   deleteSchedule: (id: string) => call<null>("DELETE", `/schedule/${id}`),
   runRoutine: (id: string) => call<null>("POST", `/schedule/${id}/run`),
   deliveries: () => call<Delivery[]>("GET", "/schedule/deliveries?limit=30"),
+  /** Every time reminders and routines go off (or went off) in a range, for the calendar. */
+  scheduleOccurrences: (from: number, to: number) =>
+    call<ScheduleOccurrence[]>("GET", `/schedule/occurrences?from=${from}&to=${to}`),
   reminderDone: (deliveryId: string) =>
     call<null>("POST", `/schedule/deliveries/${deliveryId}/done`),
   snoozeReminder: (deliveryId: string, minutes: number) =>
@@ -317,9 +321,10 @@ export const keys = {
   conversation: (id: string) => ["conversation", id] as const,
   memory: ["memory"] as const,
   memoryNote: (path: string) => ["memory", "note", path] as const,
-  /** Reminders and routines, and their recent deliveries. */
+  /** Reminders and routines, their recent deliveries and their times in the calendar. */
   schedule: ["schedule"] as const,
   deliveries: ["schedule", "deliveries"] as const,
+  occurrences: (from: number, to: number) => ["schedule", "occurrences", from, to] as const,
   /** Everything read from mail. */
   mail: ["mail"] as const,
   mailPresets: ["mail", "presets"] as const,
