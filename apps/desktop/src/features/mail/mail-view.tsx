@@ -296,6 +296,25 @@ export function MailView({
     return id;
   });
   const [composing, setComposing] = useState<MailDraft | null>(null);
+  // Conversations being deleted: gone from the list at once (the server's move to the
+  // Trash follows), back if it fails. Kept apart from the query cache, so a refresh that
+  // lands meanwhile can't bring them back for a moment.
+  const [removing, setRemoving] = useState<ReadonlySet<number>>(() => new Set());
+  const deleteThread = (id: number) => {
+    setRemoving((s) => new Set(s).add(id));
+    setSelected((current) => (current === id ? null : current));
+    api.deleteMail(id).then(
+      () => toast.success("Moved to the Trash"),
+      (e) => {
+        setRemoving((s) => {
+          const next = new Set(s);
+          next.delete(id);
+          return next;
+        });
+        toast.error((e as Error).message);
+      },
+    );
+  };
   // Reply or Forward chosen from a conversation's menu in the list, done once it opens.
   const [pendingAction, setPendingAction] = useState<{ id: number; action: ThreadAction } | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -383,6 +402,8 @@ export function MailView({
           setSelected(id);
           setPendingAction({ id, action });
         }}
+        removing={removing}
+        onDelete={deleteThread}
         onCompose={compose}
       />
       <div className="h-full min-w-0 flex-1">
@@ -403,6 +424,7 @@ export function MailView({
                 overview={o}
                 showAddress={manyAddresses(o)}
                 onGone={() => setSelected(null)}
+                onDelete={() => deleteThread(selected)}
                 onAsk={onAsk}
                 onOpenPerson={onOpenPerson}
                 onForward={(draft) => {
@@ -646,6 +668,8 @@ function ThreadList({
   onFolder,
   onLeaveFolder,
   onAction,
+  removing,
+  onDelete,
   scope,
   onScope,
   rows,
@@ -664,6 +688,8 @@ function ThreadList({
   onFolder: (id: number) => void;
   onLeaveFolder: () => void;
   onAction: (id: number, action: ThreadAction) => void;
+  removing: ReadonlySet<number>;
+  onDelete: (id: number) => void;
   scope: MailScope;
   onScope: (s: MailScope) => void;
   rows: ScopeRow[];
@@ -687,7 +713,7 @@ function ThreadList({
   const accounts = connections.filter((c) => c.integration === "email");
   const problem = accounts.find((c) => c.status === "error");
   const checking = accounts.some((c) => c.detail.startsWith("Checking"));
-  const list = threads.data ?? [];
+  const list = (threads.data ?? []).filter((t) => !removing.has(t.id));
   const box = useRef<HTMLDivElement>(null);
   const [deleting, setDeleting] = useState<MailThread | null>(null);
 
@@ -863,13 +889,7 @@ function ThreadList({
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
-              onClick={() =>
-                deleting &&
-                api
-                  .deleteMail(deleting.id)
-                  .then(() => toast.success("Moved to the Trash"))
-                  .catch((e) => toast.error((e as Error).message))
-              }
+              onClick={() => deleting && onDelete(deleting.id)}
             >
               Delete
             </AlertDialogAction>
@@ -1068,6 +1088,7 @@ function Reader({
   overview,
   showAddress,
   onGone,
+  onDelete,
   onForward,
   action,
   onActionTaken,
@@ -1078,6 +1099,8 @@ function Reader({
   overview: MailOverview;
   showAddress: boolean;
   onGone: () => void;
+  /** Deletes the conversation (the panel removes it from view at once). */
+  onDelete: () => void;
   onForward: (draft: MailDraft) => void;
   /** Reply or Forward asked for from the list, to start once the conversation is here. */
   action: ThreadAction | null;
@@ -1154,15 +1177,6 @@ function Reader({
   const mine = ownAddresses(overview);
   const startReply = () => setReply(replyTo(d));
   const replyAll = replyAllTo(d, mine);
-  const remove = async () => {
-    try {
-      await api.deleteMail(id);
-      toast.success("Moved to the Trash");
-      onGone();
-    } catch (e) {
-      toast.error((e as Error).message);
-    }
-  };
   // The conversation itself goes along as a # mention, so the assistant reads it.
   const ask = () => onAsk(mentionDraft("mail_thread", String(t.id), mailLabel(t.subject)));
   const openPerson = async (email: string) => {
@@ -1243,7 +1257,7 @@ function Reader({
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction variant="destructive" onClick={remove}>
+                  <AlertDialogAction variant="destructive" onClick={onDelete}>
                     Delete
                   </AlertDialogAction>
                 </AlertDialogFooter>
