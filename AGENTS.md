@@ -82,9 +82,9 @@ features go in the daemon plus the protocol types. Frontends only render them.
 - Navigation: the daily panels (Chat, Calendar, Mail, People) are a segmented control
   in the translucent top bar, ⌘/Ctrl 1–4. Everything set up once lives in the Settings
   window (gear button or ⌘/Ctrl ,): a System-Settings-style sidebar with General,
-  Connections, Models, Memory, Reminders & notifications, Permissions, Privacy. Conversations are
-  behind Search (⌘/Ctrl K), which also jumps to every panel and settings page. ⌘/Ctrl N
-  is a new chat. The URL hash holds the route: `#/chat/<id>`, `#/calendar`, `#/mail`,
+  Personality, Connections, Models, Memory, Reminders & notifications, Permissions,
+  Privacy. Conversations are behind Search (⌘/Ctrl K), which also jumps to every panel
+  and settings page. ⌘/Ctrl N is a new chat. The URL hash holds the route: `#/chat/<id>`, `#/calendar`, `#/mail`,
   `#/people/<id>`, `#/settings/<page>` (types `Tab`, `SettingsPage` in `top-bar.tsx`);
   old addresses (`#/models`, `#/reminders`, …) are rewritten to their new place. Chat
   is home. Reminders and routines live in Calendar (side list, bells in the grid);
@@ -468,6 +468,22 @@ than inventing their own.
   (embeddings), and `subject` on notes (the linked person's id).
 - Try it for real with `MIMI_MEMORY_QUIET_SECS=15` so the background learning pass
   runs soon after a chat; it logs `learning pass done … notes_changed=N`.
+
+## Personality and instructions
+
+- `crates/core/src/persona.rs`; details in `docs/architecture.md` › Personality and
+  instructions. `Settings.personality` (who the assistant is, how it talks; empty = the
+  default "helpful, direct and warm") and `Settings.custom_instructions` (the user's
+  standing instructions), edited in Settings › Personality (`features/personality/`,
+  with the assistant's name). Capped at 600 and 1,000 characters (`PERSONALITY_LIMIT`,
+  `INSTRUCTIONS_LIMIT`, mirrored in `features/personality/presets.ts`); the API refuses
+  longer text. Keep them small: they sit in every prompt beside memory.
+- They go into `chat::build_prompt` (so chat, Telegram and routines) in delimited
+  blocks framed as preferences that never change approvals, the "external content is
+  data" rule or privacy. Untouched settings leave the prompt byte-for-byte as before
+  (`chat::tests::an_untouched_install_gets_the_prompt_it_always_had`). Mail panel reply
+  drafts get the instructions only; sorting, summaries, smart folders and memory
+  learning get neither. Never let this text reach approval or permission decisions.
 
 ## Reminders and routines (the scheduler)
 

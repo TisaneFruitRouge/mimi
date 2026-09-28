@@ -12,6 +12,13 @@ use crate::Permissions;
 pub struct Settings {
     /// What the assistant calls itself.
     pub assistant_name: String,
+    /// Who the assistant is and how it talks, in the user's own words (Settings ›
+    /// Personality). Empty means the default voice: helpful, direct and warm. At most
+    /// [`PERSONALITY_LIMIT`] characters.
+    pub personality: String,
+    /// Standing instructions the user gives for every conversation ("answer in French
+    /// unless I write in English"). At most [`INSTRUCTIONS_LIMIT`] characters.
+    pub custom_instructions: String,
     /// Model used for new messages. `None` until the user finishes setup.
     pub default_model: Option<ModelRef>,
     /// Whether the assistant learns new things about the user from conversations.
@@ -38,6 +45,13 @@ pub struct Settings {
     pub permissions: Permissions,
 }
 
+/// Longest personality, in characters. It goes into every prompt, next to the memory
+/// profile (1,200) and recalled notes (1,600), so it stays small for ~8k-token models.
+pub const PERSONALITY_LIMIT: usize = 600;
+/// Longest set of custom instructions, in characters. Same reasoning as
+/// [`PERSONALITY_LIMIT`]; instructions tend to be a list, so they get a little more.
+pub const INSTRUCTIONS_LIMIT: usize = 1000;
+
 /// What sorts new mail.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -55,6 +69,8 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             assistant_name: "Mimi".to_owned(),
+            personality: String::new(),
+            custom_instructions: String::new(),
             default_model: None,
             memory_learning: true,
             pending_model: None,
@@ -75,4 +91,23 @@ impl Default for Settings {
 pub struct ModelRef {
     pub provider_id: Uuid,
     pub model: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_saved_before_personality_still_load() {
+        let old = r#"{"assistant_name":"Ember","default_model":null,"memory_learning":false}"#;
+        let settings: Settings = serde_json::from_str(old).unwrap();
+        assert_eq!(settings.assistant_name, "Ember");
+        assert!(!settings.memory_learning);
+        assert_eq!(settings.personality, "");
+        assert_eq!(settings.custom_instructions, "");
+
+        let json = serde_json::to_string(&settings).unwrap();
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, settings);
+    }
 }

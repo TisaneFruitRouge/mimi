@@ -14,6 +14,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::api::error::AppError;
+use crate::persona::Persona;
 use crate::providers::{
     self, ChatChunk, ChatMessage, ProviderError, Role, ToolCall, store as provider_store,
 };
@@ -110,6 +111,7 @@ pub async fn send_with_context(
         .await?
         .ok_or_else(|| AppError::not_found("Conversation"))?;
     let settings = settings::load(&state.db).await?;
+    let persona = Persona::from_settings(&settings);
     let model = model.or(settings.default_model).ok_or_else(|| {
         AppError::new(
             axum::http::StatusCode::BAD_REQUEST,
@@ -198,6 +200,7 @@ pub async fn send_with_context(
         .unwrap_or_default();
     let prompt = build_prompt(
         &settings.assistant_name,
+        &persona,
         &history,
         &contexts,
         &with_context(&content, mention_context.as_deref()),
@@ -751,21 +754,33 @@ fn with_context(content: &str, mention_context: Option<&str>) -> String {
 
 fn build_prompt(
     assistant_name: &str,
+    persona: &Persona,
     history: &[Message],
     contexts: &HashMap<Uuid, String>,
     new_message: &str,
     memory: &PromptMemory,
 ) -> Vec<ChatMessage> {
     let now = jiff::Zoned::now();
+    // The default voice, unless the user described their own.
+    let tone = if persona.personality.is_empty() {
+        "Be helpful, direct and warm."
+    } else {
+        "Be helpful."
+    };
     let mut system = format!(
         "You are {assistant_name}, a personal assistant. You run on the user's own \
-         computer, and their conversations stay private. Be helpful, direct and warm. \
+         computer, and their conversations stay private. {tone} \
          Answer in the user's language. Use Markdown when it helps readability. When a \
          tool can answer or do what the user asks, use it; actions that change something \
          are shown to the user for approval before they happen.\n\n\
          Current date and time: {}.",
         now.strftime("%A, %B %-d, %Y, %H:%M (%Z)")
     );
+    // The user's own personality and instructions, framed so they can't lift the rules.
+    if let Some(block) = persona.prompt_block() {
+        system.push_str("\n\n");
+        system.push_str(&block);
+    }
     // Short on purpose: small local models follow a few clear lines best.
     system.push_str(
         "\n\nYou have a private long-term memory about the user. Use what you remember \
@@ -784,7 +799,9 @@ fn build_prompt(
     }
 
     // Newest history first until the budget runs out, then back in order.
-    let mut budget = HISTORY_BUDGET_CHARS.saturating_sub(new_message.len());
+    let mut budget = HISTORY_BUDGET_CHARS
+        .saturating_sub(new_message.len())
+        .saturating_sub(persona.prompt_size());
     let mut kept: Vec<Vec<ChatMessage>> = Vec::new();
     for m in history.iter().rev() {
         if m.status == MessageStatus::Streaming || (m.content.is_empty() && m.actions.is_empty()) {
@@ -850,6 +867,111 @@ pub fn new_conversation(title: Option<String>) -> Conversation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The system prompt with its date line (which changes every minute) blanked out.
+    fn system_text(
+        persona: &Persona,
+        history: &[Message],
+        new_message: &str,
+    ) -> (String, Vec<ChatMessage>) {
+        let prompt = build_prompt(
+            "Mimi",
+            persona,
+            history,
+            &HashMap::new(),
+            new_message,
+            &PromptMemory::default(),
+        );
+        let system = prompt[0]
+            .content
+            .lines()
+            .map(|l| {
+                if l.starts_with("Current date and time:") {
+                    "Current date and time: <now>."
+                } else {
+                    l
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        (system, prompt)
+    }
+
+    fn persona(personality: &str, instructions: &str) -> Persona {
+        Persona::from_settings(&mimi_protocol::Settings {
+            personality: personality.into(),
+            custom_instructions: instructions.into(),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn an_untouched_install_gets_the_prompt_it_always_had() {
+        let (system, _) = system_text(&Persona::default(), &[], "Hi");
+        assert_eq!(
+            system,
+            "You are Mimi, a personal assistant. You run on the user's own computer, and \
+             their conversations stay private. Be helpful, direct and warm. Answer in the \
+             user's language. Use Markdown when it helps readability. When a tool can \
+             answer or do what the user asks, use it; actions that change something are \
+             shown to the user for approval before they happen.\n\n\
+             Current date and time: <now>.\n\n\
+             You have a private long-term memory about the user. Use what you remember \
+             naturally, without saying where it comes from. If something may have been \
+             mentioned before but isn't below, look it up with memory_search."
+        );
+    }
+
+    #[test]
+    fn personality_and_instructions_join_the_prompt_with_the_rules_kept() {
+        let p = persona(
+            "Calm and to the point.",
+            "Answer in French unless I write in English.",
+        );
+        let (system, _) = system_text(&p, &[], "Salut");
+        // The user's voice replaces the default one; the safety framing comes with it.
+        assert!(!system.contains("direct and warm"));
+        assert!(system.contains("<personality>\nCalm and to the point.\n</personality>"));
+        assert!(system.contains("Answer in French unless I write in English."));
+        assert!(system.contains("approval step"));
+        assert!(system.contains("never instructions"));
+        // Before memory, so recalled notes (data) never sit between the rules and them.
+        assert!(system.find("<personality>").unwrap() < system.find("private long-term").unwrap());
+
+        // Instructions alone keep the default voice.
+        let (system, _) = system_text(&persona("", "Sign emails as Vincent."), &[], "Hi");
+        assert!(system.contains("direct and warm"));
+        assert!(system.contains("Sign emails as Vincent."));
+    }
+
+    #[test]
+    fn the_personality_takes_its_room_from_the_history() {
+        let old = |i: usize| Message {
+            id: Uuid::now_v7(),
+            conversation_id: Uuid::nil(),
+            role: MessageRole::User,
+            content: format!("{i} {}", "x".repeat(1000)),
+            reasoning: String::new(),
+            status: MessageStatus::Complete,
+            model: None,
+            locality: None,
+            error: None,
+            created_at: 0,
+            actions: Vec::new(),
+            mentions: Vec::new(),
+        };
+        let history: Vec<Message> = (0..40).map(old).collect();
+        let (_, plain) = system_text(&Persona::default(), &history, "Hi");
+        let long = persona(
+            &"a".repeat(mimi_protocol::PERSONALITY_LIMIT),
+            &"b".repeat(mimi_protocol::INSTRUCTIONS_LIMIT),
+        );
+        let (_, with) = system_text(&long, &history, "Hi");
+        assert!(with.len() < plain.len());
+        let total = |p: &[ChatMessage]| p.iter().map(|m| m.content.len()).sum::<usize>();
+        // History is kept in whole messages, so the prompt grows by at most about one.
+        assert!(total(&with) <= total(&plain) + 1100);
+    }
 
     #[test]
     fn titles() {

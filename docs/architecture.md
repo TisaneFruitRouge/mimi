@@ -231,6 +231,37 @@ small in the prompt however much accumulates. It works like a tiny file system:
   `POST /v1/memory/forget-all`, `GET /v1/people/{id}/memory`. Changes publish
   `memory_changed`.
 
+## Personality and instructions
+
+Settings › Personality (`#/settings/personality`, `features/personality/`) holds the
+assistant's name, its personality (who it is and how it talks) and the user's custom
+instructions ("answer in French unless I write in English", "sign my emails as
+Vincent"). Both texts are `Settings.personality` and `Settings.custom_instructions`,
+free text capped at 600 and 1,000 characters (`PERSONALITY_LIMIT`,
+`INSTRUCTIONS_LIMIT`): they go into every prompt next to the memory profile (1,200)
+and recalled notes (1,600), so they stay small enough for ~8k-token local models. The
+API trims them and refuses longer text; the page offers a few starting points (Warm &
+friendly, Calm & concise, Playful, Professional, Straight talker) that fill the box,
+and "Default", which empties it.
+
+- **Where they apply** (`crates/core/src/persona.rs`): `chat::build_prompt` adds them
+  after the opening lines and the date, before memory, so the desktop chat, Telegram
+  and routines (all `chat::send`) get them. Their size comes out of the history budget.
+  The personality replaces the default "helpful, direct and warm"; empty texts leave
+  the prompt exactly as it was. Reply drafts written from the Mail panel
+  (`triage::draft_reply`) get the instructions only (the draft is the user's voice, not
+  the assistant's); drafts the assistant writes in a chat already have both. Sorting,
+  summaries, smart folders and memory learning never see them: their output has a fixed
+  shape, and learning reads only the user's messages.
+- **They can't lift the rules.** The texts sit in `<personality>` and
+  `<user_instructions>` blocks (the tags are removed from the text itself), introduced
+  as the user's preferences that don't change the approval step, the rule that emails,
+  pages, calendars and tool results are information rather than instructions, or
+  privacy. Enforcement stays in code anyway: approvals and permissions are decided in
+  `chat::act`, which this text never reaches (`api/tests.rs ›
+  instructions_reach_the_model_but_cannot_skip_approval`). The prompt also says not to
+  save them to memory, since they're already known.
+
 ## Reminders and routines
 
 `crates/core/src/schedule/`. Reminders tell the user something at the right time;
@@ -486,8 +517,8 @@ sign-in, reads, writes, rules and revocation against `google_fake.rs`.
 
 The top bar holds the panels used every day: **Chat** (home), **Calendar**, **Mail**
 and **People** (⌘/Ctrl 1–4). What is set up once is in the **Settings** window
-(`#/settings/<page>`: General, Connections, Models, Memory, Reminders & notifications,
-Privacy), a sidebar like the system's own settings. Every panel can hand something to
+(`#/settings/<page>`: General, Personality, Connections, Models, Memory, Reminders &
+notifications, Permissions, Privacy), a sidebar like the system's own settings. Every panel can hand something to
 Chat with "Ask … about this": `lib/draft.ts` holds a pending draft (text plus its
 `Mention`s), the shell opens a new chat, and the composer takes the draft on mount, so
 the thing arrives as an @ pill the engine resolves like any other mention.

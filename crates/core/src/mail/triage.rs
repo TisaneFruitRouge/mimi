@@ -219,7 +219,17 @@ pub async fn draft_reply(
         )),
         None => text.push_str("\n\nWrite a sensible reply."),
     }
-    let body = model::ask(state, DRAFT_INSTRUCTIONS, text).await?;
+    // The user's standing instructions ("sign as Vincent") shape their drafts too; the
+    // personality doesn't, since this is the user's voice, not the assistant's.
+    let persona = crate::settings::load(&state.db)
+        .await
+        .map(|s| crate::persona::Persona::from_settings(&s))
+        .unwrap_or_default();
+    let system = match persona.mail_block() {
+        Some(block) => format!("{DRAFT_INSTRUCTIONS}\n\n{block}"),
+        None => DRAFT_INSTRUCTIONS.to_owned(),
+    };
+    let body = model::ask(state, &system, text).await?;
     let body = body.trim().trim_matches('`').trim().to_owned();
     if body.is_empty() {
         return Err("The model didn't write anything. Try again.".to_owned());
