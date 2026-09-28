@@ -1,6 +1,7 @@
 import { useQueries, useQuery } from "@tanstack/react-query";
 
 import type { Locality } from "@/bindings/Locality";
+import type { ModelPrice } from "@/bindings/ModelPrice";
 import type { ModelRef } from "@/bindings/ModelRef";
 import { api, keys } from "@/lib/api";
 
@@ -23,9 +24,14 @@ const useCatalog = () =>
 
 export interface ModelOption {
   ref: ModelRef;
+  /** The source's own name for the model, e.g. "Claude Sonnet 5". */
+  name: string | null;
   providerName: string;
   locality: Locality;
   sizeBytes: number | null;
+  /** Whether it can use tools, when the source says. */
+  supportsTools: boolean | null;
+  price: ModelPrice | null;
 }
 
 /** Every model from every configured model source, in source order. */
@@ -42,9 +48,12 @@ export function useAllModels() {
   const options: ModelOption[] = providers.flatMap((p, i) =>
     (results[i]?.data ?? []).map((m) => ({
       ref: { provider_id: p.id, model: m.id },
+      name: m.name,
       providerName: p.name,
       locality: p.locality,
       sizeBytes: m.size_bytes,
+      supportsTools: m.supports_tools,
+      price: m.price,
     })),
   );
   const failed = providers.filter((_, i) => results[i]?.isError);
@@ -54,13 +63,21 @@ export function useAllModels() {
 export const sameModel = (a: ModelRef | null | undefined, b: ModelRef | null | undefined) =>
   !!a && !!b && a.provider_id === b.provider_id && a.model === b.model;
 
-/** Friendly name and description for a model id, from the catalog when it's known. */
+/**
+ * Friendly name and description for a model id: from the catalog when it's known, else
+ * the name its source gave it, else a tidied id.
+ */
 export function useModelInfo() {
   const catalog = useCatalog().data ?? [];
-  return (id: string) => {
+  return (id: string, sourceName?: string | null) => {
     const known = catalog.find((m) => m.id === id || m.id === id.replace(/:latest$/, ""));
+    // OpenRouter names say who made the model: "DeepSeek: DeepSeek V4 Flash".
+    const [maker, name] = sourceName?.includes(": ")
+      ? [sourceName.slice(0, sourceName.indexOf(": ")), sourceName.slice(sourceName.indexOf(": ") + 2)]
+      : [null, sourceName];
     return {
-      name: known?.name ?? prettify(id),
+      name: known?.name ?? name ?? prettify(id),
+      maker,
       description: known?.description ?? null,
     };
   };
@@ -79,6 +96,14 @@ export function useActiveModel() {
   const info = useModelInfo();
   const ref = settings?.default_model ?? null;
   const provider = providers.find((p) => p.id === ref?.provider_id) ?? null;
+  const models = useQuery({
+    queryKey: keys.models(ref?.provider_id ?? ""),
+    queryFn: () => api.models(ref!.provider_id),
+    enabled: !!ref,
+    staleTime: 60_000,
+    retry: false,
+  }).data;
   if (!ref || !provider) return null;
-  return { ref, provider, ...info(ref.model) };
+  const sourceName = models?.find((m) => m.id === ref.model)?.name;
+  return { ref, provider, ...info(ref.model, sourceName) };
 }

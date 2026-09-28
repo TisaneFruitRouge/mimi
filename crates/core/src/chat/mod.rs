@@ -290,7 +290,7 @@ const TOOL_OUTPUT_LIMIT: usize = 16_000;
 /// One assistant reply in progress: model rounds, tool calls and approvals.
 struct Turn {
     state: Arc<AppState>,
-    client: providers::OpenAiCompatible,
+    client: providers::ChatClient,
     model: String,
     prompt: Vec<ChatMessage>,
     message: Message,
@@ -424,6 +424,7 @@ impl Turn {
             };
 
             let mut calls = Vec::new();
+            let mut replay = None;
             let mut text = String::new();
             loop {
                 let chunk = tokio::select! {
@@ -439,6 +440,7 @@ impl Turn {
                     }
                     Some(Ok(ChatChunk::Reasoning(r))) => self.append(String::new(), r),
                     Some(Ok(ChatChunk::ToolCalls(c))) => calls = c,
+                    Some(Ok(ChatChunk::Replay(r))) => replay = Some(r),
                 }
             }
             // Calls when no tools were offered (after the round cap) are ignored.
@@ -446,7 +448,8 @@ impl Turn {
                 return Ok(());
             }
 
-            self.prompt.push(ChatMessage::tool_calls(text, &calls));
+            self.prompt
+                .push(ChatMessage::tool_calls(text, &calls).with_replay(replay));
             self.separate = true;
             for call in calls {
                 if !self.act(call, round).await {

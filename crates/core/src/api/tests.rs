@@ -108,6 +108,67 @@ async fn settings_round_trip_and_validate() {
 }
 
 /// Serves the real router on a loopback port, for tests that need a live socket.
+#[tokio::test]
+async fn anthropic_sources_are_always_cloud() {
+    let app = app();
+    // Its address can't make it look local: the label decides what may be sent to it.
+    let (status, provider) = call(
+        &app,
+        Method::POST,
+        "/v1/providers",
+        Some(serde_json::json!({
+            "name": "Anthropic",
+            "kind": "anthropic",
+            "base_url": "http://127.0.0.1:9/v1",
+            "api_key": "sk-ant-x",
+            "locality": "device",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{provider}");
+    assert_eq!(provider["locality"], "cloud");
+    let id = provider["id"].as_str().unwrap();
+    let (status, provider) = call(
+        &app,
+        Method::PATCH,
+        &format!("/v1/providers/{id}"),
+        Some(serde_json::json!({"locality": "network"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(provider["locality"], "cloud");
+
+    // Nothing to download through it, and a key is needed to connect.
+    let (status, body) = call(
+        &app,
+        Method::POST,
+        &format!("/v1/providers/{id}/pull"),
+        Some(serde_json::json!({"model": "claude-sonnet-5"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let (status, body) = call(
+        &app,
+        Method::POST,
+        "/v1/providers/probe",
+        Some(serde_json::json!({"kind": "anthropic", "base_url": "https://api.anthropic.com/v1"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["message"], "Anthropic needs an API key.");
+
+    let (_, presets) = call(&app, Method::GET, "/v1/providers/presets", None).await;
+    let anthropic = presets
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == "anthropic")
+        .unwrap();
+    assert_eq!(anthropic["kind"], "anthropic");
+    assert_eq!(anthropic["locality"], "cloud");
+    assert_eq!(anthropic["needs_api_key"], true);
+}
+
 async fn serve() -> (u16, Arc<AppState>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();

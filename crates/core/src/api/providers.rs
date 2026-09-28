@@ -3,14 +3,14 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Path, State};
 use mimi_protocol::{
-    Event, ModelInfo, ModelPull, NewProvider, ProbeRequest, ProbeResult, Provider, ProviderKind,
-    ProviderPreset, ProviderUpdate, PullRequest,
+    Event, Locality, ModelInfo, ModelPull, NewProvider, ProbeRequest, ProbeResult, Provider,
+    ProviderKind, ProviderPreset, ProviderUpdate, PullRequest,
 };
 use uuid::Uuid;
 
 use super::error::{ApiResult, AppError};
 use crate::providers::store::{self, ProviderRecord};
-use crate::providers::{self, OpenAiCompatible, ProviderError};
+use crate::providers::{self, Anthropic, OpenAiCompatible, ProviderError};
 use crate::{AppState, now_ms, settings};
 
 pub async fn list(State(state): State<Arc<AppState>>) -> ApiResult<Vec<Provider>> {
@@ -37,7 +37,11 @@ pub async fn create(
             name: valid_name(&new.name)?,
             kind: new.kind,
             base_url: providers::base_url_string(&url),
-            locality: new.locality.unwrap_or_else(|| providers::locality_of(&url)),
+            locality: match new.kind {
+                // Always a third-party service, whatever the address looks like.
+                ProviderKind::Anthropic => Locality::Cloud,
+                _ => new.locality.unwrap_or_else(|| providers::locality_of(&url)),
+            },
             has_api_key: false,
             created_at: now_ms(),
         },
@@ -76,6 +80,9 @@ pub async fn update(
     }
     if let Some(locality) = update.locality {
         record.provider.locality = locality;
+    }
+    if record.provider.kind == ProviderKind::Anthropic {
+        record.provider.locality = Locality::Cloud;
     }
     if let Some(key) = update.api_key {
         record.api_key = clean_key(Some(key));
@@ -132,6 +139,31 @@ pub async fn probe(
 ) -> ApiResult<ProbeResult> {
     let url = providers::parse_base_url(&req.base_url).map_err(AppError::bad_request)?;
     let key = clean_key(req.api_key);
+    match req.kind {
+        ProviderKind::Builtin => {
+            return Err(AppError::bad_request(
+                "The built-in model source is part of Mimi; it can't be added by hand.",
+            ));
+        }
+        ProviderKind::Anthropic => {
+            if key.is_none() {
+                return Err(AppError::bad_request("Anthropic needs an API key."));
+            }
+            let client = Anthropic::new(state.http.clone(), url.clone(), key);
+            let models = client.list_models().await.map_err(|e| match e {
+                ProviderError::Unauthorized => AppError::bad_request(
+                    "Anthropic didn't accept this key. Check that you copied all of it.",
+                ),
+                other => other.into(),
+            })?;
+            return Ok(Json(ProbeResult {
+                base_url: providers::base_url_string(&url),
+                locality: Locality::Cloud,
+                models,
+            }));
+        }
+        ProviderKind::OpenaiCompatible => {}
+    }
     let attempt = |url: reqwest::Url| {
         let client = OpenAiCompatible::new(state.http.clone(), url.clone(), key.clone());
         async move { client.list_models().await.map(|models| (url, models)) }
@@ -194,12 +226,14 @@ pub async fn pull(
             .map(Json)
             .map_err(AppError::bad_request);
     }
-    let client = providers::connect(&state.http, &record).map_err(AppError::bad_request)?;
-    if !client.is_ollama().await {
-        return Err(AppError::bad_request(
-            "This model source can't download models. Downloads work through Ollama.",
-        ));
-    }
+    let client = match providers::connect_openai(&state.http, &record) {
+        Ok(client) if client.is_ollama().await => client,
+        _ => {
+            return Err(AppError::bad_request(
+                "This model source can't download models. Downloads work through Ollama.",
+            ));
+        }
+    };
     Ok(Json(providers::pull::start(
         state.clone(),
         client,

@@ -481,14 +481,16 @@ Release builds are single-instance: launching again brings the window forward.
 ## Models and the built-in runtime
 
 Model sources are OpenAI-compatible endpoints (Ollama, LM Studio, a server on the
-network, a cloud service) plus one that is part of Mimi: **Built into Mimi**, backed by
+network, a cloud service), Anthropic's Messages API (`ProviderKind::Anthropic`, the
+user's own API key), plus one that is part of Mimi: **Built into Mimi**, backed by
 llama.cpp's `llama-server`, which ships with the installers. Nobody has to install a
 model runner.
 
 ```
  chat / memory learning
-        │ providers::chat_client(source, model)
+        │ providers::chat_client(source, model) -> ChatClient
         ├── OpenAI-compatible source ──► its URL (Ollama, LM Studio, cloud, …)
+        ├── Anthropic source ──► https://api.anthropic.com/v1/messages
         └── built-in source ──► Runtime::ensure(model)
                                   │ start or reuse llama-server:
                                   │ 127.0.0.1:<random port>, per-start API key file,
@@ -496,7 +498,17 @@ model runner.
                                   └► http://127.0.0.1:<port>/v1
 ```
 
-- **Internal jobs don't think.** `OpenAiCompatible::complete(model, messages,
+- **Anthropic** (`providers/anthropic.rs`) translates Mimi's OpenAI-shaped prompt:
+  system messages become `system`, tool calls `tool_use` blocks, tool results one user
+  message. When Claude calls tools, its reply (signed thinking blocks included) comes
+  back as `ChatChunk::Replay` and rides on the in-memory prompt (`ChatMessage::replay`)
+  so the next round sends it unchanged, as the API requires; saved history is replayed
+  without thinking. The tool list and, in tool loops, the conversation are marked for
+  prompt caching. Replies are capped at the model's own output limit (from `/models`)
+  or 32k. Thinking is left to each model's default (`ChatOptions` has no effect: the
+  switches differ between Claude models). An Anthropic source is always `cloud`,
+  whatever its address.
+- **Internal jobs don't think.** `ChatClient::complete(model, messages,
   ChatOptions::QUICK)` returns a whole answer without the model's reasoning, for
   background work (memory learning, mail triage); `stream_chat_with` takes the same
   `ChatOptions { thinking }` for streaming. With thinking off, local sources (built-in,

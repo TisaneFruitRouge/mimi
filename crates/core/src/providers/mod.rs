@@ -2,17 +2,79 @@
 
 use std::net::IpAddr;
 
-use mimi_protocol::{Locality, ProviderPreset};
+use futures::stream::BoxStream;
+use mimi_protocol::{Locality, ProviderKind, ProviderPreset};
 use reqwest::Url;
 
+pub mod anthropic;
 pub mod openai;
 pub mod pull;
 pub mod store;
 
+pub use anthropic::Anthropic;
 pub use openai::{
     ChatChunk, ChatMessage, ChatOptions, FunctionSpec, OpenAiCompatible, ProviderError, Role,
     ToolCall, ToolSpec,
 };
+
+/// A chat client for any kind of source: the OpenAI-compatible API most of them speak,
+/// or Anthropic's own.
+pub enum ChatClient {
+    OpenAi(OpenAiCompatible),
+    Anthropic(Anthropic),
+}
+
+impl ChatClient {
+    pub async fn list_models(&self) -> Result<Vec<mimi_protocol::ModelInfo>, ProviderError> {
+        match self {
+            Self::OpenAi(c) => c.list_models().await,
+            Self::Anthropic(c) => c.list_models().await,
+        }
+    }
+
+    /// Streams a reply to `messages`, offering `tools` when there are any.
+    pub async fn stream_chat(
+        &self,
+        model: &str,
+        messages: &[ChatMessage],
+        tools: &[ToolSpec],
+    ) -> Result<BoxStream<'static, Result<ChatChunk, ProviderError>>, ProviderError> {
+        self.stream_chat_with(model, messages, tools, ChatOptions::default())
+            .await
+    }
+
+    pub async fn stream_chat_with(
+        &self,
+        model: &str,
+        messages: &[ChatMessage],
+        tools: &[ToolSpec],
+        options: ChatOptions,
+    ) -> Result<BoxStream<'static, Result<ChatChunk, ProviderError>>, ProviderError> {
+        match self {
+            Self::OpenAi(c) => c.stream_chat_with(model, messages, tools, options).await,
+            Self::Anthropic(c) => c.stream_chat_with(model, messages, tools, options).await,
+        }
+    }
+
+    /// The whole answer to `messages`, without tools; reasoning is dropped. For
+    /// internal jobs such as learning or sorting mail, usually with [`ChatOptions::QUICK`].
+    pub async fn complete(
+        &self,
+        model: &str,
+        messages: &[ChatMessage],
+        options: ChatOptions,
+    ) -> Result<String, ProviderError> {
+        use futures::StreamExt;
+        let mut stream = self.stream_chat_with(model, messages, &[], options).await?;
+        let mut out = String::new();
+        while let Some(chunk) = stream.next().await {
+            if let ChatChunk::Content(text) = chunk? {
+                out.push_str(&text);
+            }
+        }
+        Ok(out)
+    }
+}
 
 /// A client for chatting with `model` from a stored source. The built-in runtime starts
 /// (or switches to) that model first.
@@ -20,12 +82,12 @@ pub async fn chat_client(
     state: &crate::AppState,
     record: &store::ProviderRecord,
     model: &str,
-) -> Result<OpenAiCompatible, String> {
-    if record.provider.kind == mimi_protocol::ProviderKind::Builtin {
+) -> Result<ChatClient, String> {
+    if record.provider.kind == ProviderKind::Builtin {
         let endpoint = state.runtime.ensure(state, model).await?;
-        return Ok(
+        return Ok(ChatClient::OpenAi(
             OpenAiCompatible::new(state.http.clone(), endpoint.url, Some(endpoint.key)).local(true),
-        );
+        ));
     }
     connect(&state.http, record)
 }
@@ -35,24 +97,41 @@ pub async fn list_models(
     state: &crate::AppState,
     record: &store::ProviderRecord,
 ) -> Result<Vec<mimi_protocol::ModelInfo>, ProviderError> {
-    if record.provider.kind == mimi_protocol::ProviderKind::Builtin {
+    if record.provider.kind == ProviderKind::Builtin {
         return Ok(crate::runtime::download::installed(&state.paths));
     }
     let client = connect(&state.http, record).map_err(ProviderError::Status)?;
     client.list_models().await
 }
 
-/// A client for a stored provider's HTTP API. Not for the built-in source, whose
+/// A chat client for a stored provider's HTTP API. Not for the built-in source, whose
 /// address changes; use [`chat_client`] or [`list_models`].
 pub fn connect(
     http: &reqwest::Client,
     record: &store::ProviderRecord,
-) -> Result<OpenAiCompatible, String> {
+) -> Result<ChatClient, String> {
     let url = parse_base_url(&record.provider.base_url)?;
-    Ok(
-        OpenAiCompatible::new(http.clone(), url, record.api_key.clone())
-            .local(record.provider.locality != Locality::Cloud),
-    )
+    Ok(match record.provider.kind {
+        ProviderKind::Anthropic => {
+            ChatClient::Anthropic(Anthropic::new(http.clone(), url, record.api_key.clone()))
+        }
+        ProviderKind::OpenaiCompatible | ProviderKind::Builtin => ChatClient::OpenAi(
+            OpenAiCompatible::new(http.clone(), url, record.api_key.clone())
+                .local(record.provider.locality != Locality::Cloud),
+        ),
+    })
+}
+
+/// The OpenAI-compatible client for a stored provider, for what only those offer
+/// (downloads through Ollama, embeddings).
+pub fn connect_openai(
+    http: &reqwest::Client,
+    record: &store::ProviderRecord,
+) -> Result<OpenAiCompatible, String> {
+    match connect(http, record)? {
+        ChatClient::OpenAi(client) => Ok(client),
+        ChatClient::Anthropic(_) => Err("This model source can't do that.".to_owned()),
+    }
 }
 
 /// Normalized form for storage: no trailing slash.
@@ -119,61 +198,81 @@ fn locality_of_ip(ip: IpAddr) -> Locality {
 }
 
 pub fn presets() -> Vec<ProviderPreset> {
-    let preset = |id: &str, name: &str, description: &str, base_url: &str, needs_api_key| {
-        let locality = locality_of(&Url::parse(base_url).expect("preset URLs are valid"));
-        ProviderPreset {
-            id: id.to_owned(),
-            name: name.to_owned(),
-            description: description.to_owned(),
-            base_url: base_url.to_owned(),
-            locality,
-            needs_api_key,
-        }
+    struct Preset {
+        id: &'static str,
+        name: &'static str,
+        description: &'static str,
+        kind: ProviderKind,
+        base_url: &'static str,
+        key_url: Option<&'static str>,
+        recommended_model: Option<&'static str>,
+    }
+    let local = |id, name, base_url| Preset {
+        id,
+        name,
+        description: "Runs models on this computer.",
+        kind: ProviderKind::OpenaiCompatible,
+        base_url,
+        key_url: None,
+        recommended_model: None,
     };
-    vec![
-        preset(
-            "ollama",
-            "Ollama",
-            "Runs models on this computer.",
-            "http://localhost:11434/v1",
-            false,
-        ),
-        preset(
-            "lmstudio",
-            "LM Studio",
-            "Runs models on this computer.",
-            "http://localhost:1234/v1",
-            false,
-        ),
-        preset(
-            "llamacpp",
-            "llama.cpp server",
-            "Runs models on this computer.",
-            "http://localhost:8080/v1",
-            false,
-        ),
-        preset(
-            "mistral",
-            "Mistral",
-            "Cloud models from Mistral AI, hosted in the EU.",
-            "https://api.mistral.ai/v1",
-            true,
-        ),
-        preset(
-            "openai",
-            "OpenAI",
-            "Cloud models from OpenAI.",
-            "https://api.openai.com/v1",
-            true,
-        ),
-        preset(
-            "openrouter",
-            "OpenRouter",
-            "Many cloud models behind one account.",
-            "https://openrouter.ai/api/v1",
-            true,
-        ),
+    [
+        local("ollama", "Ollama", "http://localhost:11434/v1"),
+        local("lmstudio", "LM Studio", "http://localhost:1234/v1"),
+        local("llamacpp", "llama.cpp server", "http://localhost:8080/v1"),
+        Preset {
+            id: "anthropic",
+            name: "Anthropic",
+            description: "Claude models. Thoughtful, good at writing and at using tools.",
+            kind: ProviderKind::Anthropic,
+            base_url: "https://api.anthropic.com/v1",
+            key_url: Some("https://platform.claude.com/settings/keys"),
+            recommended_model: Some("claude-sonnet-5"),
+        },
+        Preset {
+            id: "openai",
+            name: "OpenAI",
+            description: "GPT models, from the makers of ChatGPT.",
+            kind: ProviderKind::OpenaiCompatible,
+            base_url: "https://api.openai.com/v1",
+            key_url: Some("https://platform.openai.com/api-keys"),
+            recommended_model: None,
+        },
+        Preset {
+            id: "mistral",
+            name: "Mistral",
+            description: "Models from Mistral AI, hosted in the EU.",
+            kind: ProviderKind::OpenaiCompatible,
+            base_url: "https://api.mistral.ai/v1",
+            key_url: Some("https://console.mistral.ai/api-keys"),
+            recommended_model: Some("mistral-medium-latest"),
+        },
+        Preset {
+            id: "openrouter",
+            name: "OpenRouter",
+            description: "Many companies' models behind one account.",
+            kind: ProviderKind::OpenaiCompatible,
+            base_url: "https://openrouter.ai/api/v1",
+            key_url: Some("https://openrouter.ai/settings/keys"),
+            recommended_model: Some("deepseek/deepseek-v4-flash"),
+        },
     ]
+    .into_iter()
+    .map(|p| {
+        let locality = locality_of(&Url::parse(p.base_url).expect("preset URLs are valid"));
+        ProviderPreset {
+            id: p.id.to_owned(),
+            name: p.name.to_owned(),
+            description: p.description.to_owned(),
+            kind: p.kind,
+            base_url: p.base_url.to_owned(),
+            locality,
+            needs_api_key: locality == Locality::Cloud,
+            key_url: p.key_url.map(str::to_owned),
+            recommended_model: p.recommended_model.map(str::to_owned),
+        }
+    })
+    .collect()
 }
 
 #[cfg(test)]

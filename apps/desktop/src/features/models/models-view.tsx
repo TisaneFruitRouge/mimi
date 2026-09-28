@@ -1,18 +1,18 @@
 import { forwardRef, useRef, useState } from "react";
 import { motion } from "motion/react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight,
   Check,
+  ChevronRight,
   Cloud,
   Cpu,
   Download,
-  House,
   Loader2,
-  Monitor,
   MoreHorizontal,
   Plus,
   Radar,
+  Search,
   Sparkles,
 } from "lucide-react";
 import { cn } from "cn";
@@ -45,10 +45,13 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ModelPickerDialog, costLabel } from "@/features/models/model-list";
 import { AddSourceDialog, EditSourceDialog } from "@/features/models/source-dialogs";
+import { SourceMark, presetOf } from "@/features/models/source-mark";
 import { api, keys } from "@/lib/api";
 import { formatBytes } from "@/lib/format";
 import {
+  type ModelOption,
   sameModel,
   useActiveModel,
   useAllModels,
@@ -72,8 +75,16 @@ const tierLine: Record<HardwareTier, string> = {
 /** Choosing and managing models. Doubles as first-run setup until a model is chosen. */
 export function ModelsView({ setup = false, onChat }: { setup?: boolean; onChat?: () => void }) {
   const [adding, setAdding] = useState<null | "any" | "cloud">(null);
+  // The model picker, open on one source's models or (null) all of them.
+  const [browsing, setBrowsing] = useState<{ source: string | null } | null>(null);
   const rec = useRecommendations().data;
   const yourModels = useRef<HTMLElement>(null);
+  const providers = useProviders().data ?? [];
+  const presets = useQuery({ queryKey: keys.presets, queryFn: api.presets }).data ?? [];
+  const recommended = (ref: ModelRef) => {
+    const provider = providers.find((p) => p.id === ref.provider_id);
+    return !!provider && presetOf(provider, presets)?.recommended_model === ref.model;
+  };
 
   return (
     <Page>
@@ -91,7 +102,7 @@ export function ModelsView({ setup = false, onChat }: { setup?: boolean; onChat?
           <SetupCard onAdd={() => setAdding("any")} />
         ) : (
           <ActiveModelCard
-            onChange={() => yourModels.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+            onChange={() => setBrowsing({ source: null })}
             onChat={onChat}
           />
         )}
@@ -99,7 +110,7 @@ export function ModelsView({ setup = false, onChat }: { setup?: boolean; onChat?
       </div>
 
       {!setup && <DetectedServers />}
-      <YourModels ref={yourModels} />
+      <YourModels ref={yourModels} onBrowse={(source) => setBrowsing({ source })} />
 
       <Section title="Good fits for this computer">
         <div className="grid grid-cols-3 gap-3">
@@ -119,6 +130,12 @@ export function ModelsView({ setup = false, onChat }: { setup?: boolean; onChat?
 
       <Sources onAdd={() => setAdding("any")} />
 
+      <ModelPickerDialog
+        open={browsing !== null}
+        onOpenChange={(o) => !o && setBrowsing(null)}
+        initialSource={browsing?.source ?? null}
+        recommended={recommended}
+      />
       <AddSourceDialog
         open={adding !== null}
         onOpenChange={(o) => !o && setAdding(null)}
@@ -330,11 +347,19 @@ function DetectedServers() {
   );
 }
 
-const YourModels = forwardRef<HTMLElement>(function YourModels(_, ref) {
+/**
+ * The model in use, the models on the user's own machines, and a way into each cloud
+ * service's (often long) list through the model picker.
+ */
+const YourModels = forwardRef<HTMLElement, { onBrowse: (source: string | null) => void }>(function YourModels(
+  { onBrowse },
+  ref,
+) {
   const { options, loading } = useAllModels();
   const settings = useSettings().data;
   const rec = useRecommendations().data;
   const providers = useProviders().data ?? [];
+  const presets = useQuery({ queryKey: keys.presets, queryFn: api.presets }).data ?? [];
   const info = useModelInfo();
   const [removing, setRemoving] = useState<ModelRef | null>(null);
   if (!loading && options.length === 0) return null;
@@ -346,72 +371,100 @@ const YourModels = forwardRef<HTMLElement>(function YourModels(_, ref) {
     await api.putSettings({ ...settings, default_model: ref }).catch((e) => toast.error(e.message));
   };
 
+  const inUse = options.find((o) => sameModel(o.ref, settings?.default_model));
+  const own = options.filter((o) => o.locality !== "cloud" && o !== inUse);
+  const cloud = providers
+    .filter((p) => p.locality === "cloud")
+    .map((p) => ({ provider: p, count: options.filter((o) => o.ref.provider_id === p.id).length }))
+    .filter((c) => c.count > 0);
+
+  const modelRow = (o: ModelOption) => {
+    const current = o === inUse;
+    const { name, maker, description } = info(o.ref.model, o.name);
+    const detail =
+      description ??
+      [maker, o.price ? costLabel(o.price) : null, `From ${o.providerName}`].filter(Boolean).join(" · ");
+    return (
+      <Row
+        key={`${o.ref.provider_id}/${o.ref.model}`}
+        onClick={current ? undefined : () => use(o.ref)}
+        title={name}
+        detail={
+          <>
+            {detail}
+            {o.locality !== "cloud" && !fits(o.ref) && (
+              <span className="text-cloud"> · may be slow on this computer</span>
+            )}
+          </>
+        }
+        trailing={
+          <>
+            <LocalityBadge locality={o.locality} />
+            <span className="flex w-7 justify-center">
+              {current ? (
+                <Check className="size-[18px] text-lime-deep" strokeWidth={2.6} />
+              ) : (
+                <span className="size-[18px] rounded-full shadow-[inset_0_0_0_1.5px_rgb(0_0_0/0.18)]" />
+              )}
+            </span>
+          </>
+        }
+        accessory={
+          builtin(o.ref) ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`Options for ${name}`}
+                  className="rounded-full text-muted-foreground"
+                >
+                  <MoreHorizontal />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem variant="destructive" disabled={current} onSelect={() => setRemoving(o.ref)}>
+                  {current ? "In use, choose another first" : "Remove from this computer"}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : undefined
+        }
+      />
+    );
+  };
+
   return (
     <section ref={ref} className="flex scroll-mt-24 flex-col gap-2.5">
-      <h2 className="section-label">Your models</h2>
+      <div className="flex min-h-7 items-end justify-between gap-4">
+        <h2 className="section-label">Your models</h2>
+        {options.length > 1 && (
+          <Button variant="ghost" size="sm" onClick={() => onBrowse(null)} className="-mr-2 text-muted-foreground">
+            <Search /> Browse all
+          </Button>
+        )}
+      </div>
       <Grouped>
-        {options.map((o) => {
-          const current = sameModel(o.ref, settings?.default_model);
-          const { name, description } = info(o.ref.model);
-          return (
-            <Row
-              key={`${o.ref.provider_id}/${o.ref.model}`}
-              onClick={current ? undefined : () => use(o.ref)}
-              title={name}
-              detail={
-                <>
-                  {description ?? `From ${o.providerName}`}
-                  {o.locality !== "cloud" && !fits(o.ref) && (
-                    <span className="text-cloud"> · may be slow on this computer</span>
-                  )}
-                </>
-              }
-              trailing={
-                <>
-                  <LocalityBadge locality={o.locality} />
-                  <span className="flex w-7 justify-center">
-                    {current ? (
-                      <Check className="size-[18px] text-lime-deep" strokeWidth={2.6} />
-                    ) : (
-                      <span className="size-[18px] rounded-full shadow-[inset_0_0_0_1.5px_rgb(0_0_0/0.18)]" />
-                    )}
-                  </span>
-                </>
-              }
-              accessory={
-                builtin(o.ref) ? (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label={`Options for ${name}`}
-                        className="rounded-full text-muted-foreground"
-                      >
-                        <MoreHorizontal />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem
-                        variant="destructive"
-                        disabled={current}
-                        onSelect={() => setRemoving(o.ref)}
-                      >
-                        {current ? "In use, choose another first" : "Remove from this computer"}
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                ) : undefined
-              }
-            />
-          );
-        })}
+        {inUse && modelRow(inUse)}
+        {own.map(modelRow)}
+        {cloud.map(({ provider, count }) => (
+          <Row
+            key={`browse-${provider.id}`}
+            onClick={() => onBrowse(provider.id)}
+            icon={<SourceMark presetId={presetOf(provider, presets)?.id} locality="cloud" size="sm" />}
+            title={`Choose from ${count} ${provider.name} model${count === 1 ? "" : "s"}`}
+            detail="Search, and see what each one costs"
+            trailing={<ChevronRight className="size-4 text-faint" />}
+          />
+        ))}
         {loading && options.length === 0 && <Skeleton className="m-4 h-10" />}
       </Grouped>
       <AlertDialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove {removing ? info(removing.model).name : ""}?</AlertDialogTitle>
+            <AlertDialogTitle>
+              Remove {removing ? info(removing.model, options.find((o) => sameModel(o.ref, removing))?.name).name : ""}?
+            </AlertDialogTitle>
             <AlertDialogDescription>
               It's deleted from this computer to free up space. You can download it again any time.
             </AlertDialogDescription>
@@ -566,14 +619,9 @@ function CloudCard({ recommended = false, onAdd }: { recommended?: boolean; onAd
   );
 }
 
-const sourceIcon = {
-  device: { icon: Monitor, tone: "bg-private-soft text-private" },
-  network: { icon: House, tone: "bg-network-soft text-network" },
-  cloud: { icon: Cloud, tone: "bg-cloud-soft text-cloud" },
-};
-
 function Sources({ onAdd }: { onAdd: () => void }) {
   const providers = useProviders().data ?? [];
+  const presets = useQuery({ queryKey: keys.presets, queryFn: api.presets }).data ?? [];
   const runtime = useRuntime().data;
   const [editing, setEditing] = useState<Provider | null>(null);
   const [removing, setRemoving] = useState<Provider | null>(null);
@@ -591,15 +639,10 @@ function Sources({ onAdd }: { onAdd: () => void }) {
       ) : (
         <Grouped>
           {providers.map((p) => {
-            const { icon: Icon, tone } = sourceIcon[p.locality];
             return (
               <Row
                 key={p.id}
-                icon={
-                  <IconTile className={tone}>
-                    <Icon />
-                  </IconTile>
-                }
+                icon={<SourceMark presetId={presetOf(p, presets)?.id} locality={p.locality} />}
                 title={p.name}
                 detail={
                   p.kind === "builtin"
