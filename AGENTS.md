@@ -481,6 +481,11 @@ than inventing their own.
   `schedule_change`, `schedule_cancel`. No approval (the user's own local schedule), but
   every write returns `schedule_revision` and shows as a quiet line with Undo, like
   memory. Changes merge with the existing rule ("make it 8:00" keeps "every weekday").
+- **In the calendar:** `GET /v1/schedule/occurrences?from&to` (ms, at most ~a year) lists
+  every time items go off in the range: past ones from `schedule_deliveries` (with their
+  status), future ones from `rules::occurrences` starting at `next_at` (none for paused or
+  ended items), plus a pending snooze. Items repeating more often than every 2 hours come
+  once per local day with a count. The Calendar panel draws a chip on each one.
 - Schema: `schedule_items`, `schedule_deliveries` (history), `schedule_revisions`
   (undo). Try it for real with a scratch daemon, `MIMI_NO_NOTIFICATIONS=1`, and
   `MIMI_TELEGRAM_API` pointed at a fake bot server; "remind me in 2 minutes to …" fires

@@ -18,7 +18,7 @@ use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use mimi_protocol::{
     ActionStatus, Delivery, DeliveryStatus, Event, MessageStatus, NewScheduleItem, Schedule,
-    ScheduleItem, ScheduleKind, ScheduleUpdate,
+    ScheduleItem, ScheduleKind, ScheduleOccurrence, ScheduleUpdate,
 };
 use tokio::sync::Notify;
 use uuid::Uuid;
@@ -644,6 +644,94 @@ pub fn to_public(item: &Item) -> ScheduleItem {
         conversation_id: item.conversation_id,
         created_at: item.created_at,
     }
+}
+
+/// Most entries one item adds to a calendar range (items that go off every few minutes
+/// are already folded to one entry a day).
+const MAX_OCCURRENCES_PER_ITEM: usize = 500;
+/// Most past deliveries read for one calendar range.
+const MAX_HISTORY: usize = 20_000;
+
+fn occurrence(item_id: Uuid, at: i64, status: Option<DeliveryStatus>) -> ScheduleOccurrence {
+    ScheduleOccurrence {
+        item_id,
+        at,
+        until: at,
+        count: 1,
+        status,
+        snoozed: false,
+    }
+}
+
+/// Every time a reminder or routine goes off in `[from, to)`, for a calendar: what
+/// already happened, from the history, and what's still to come, from each rule starting
+/// at its next time. Paused and ended items have nothing to come; event-relative ones
+/// come once, before their event.
+pub async fn occurrences(
+    state: &AppState,
+    from: i64,
+    to: i64,
+) -> Result<Vec<ScheduleOccurrence>, AppError> {
+    let tz = zone();
+    let items = store::list(&state.db).await?;
+    let history = store::due_between(&state.db, from, to, MAX_HISTORY).await?;
+    let mut out = Vec::new();
+    for item in &items {
+        let folds = rules::folds(&item.schedule);
+        let same_day =
+            |a: i64, b: i64| rules::local_date(ts(a), &tz) == rules::local_date(ts(b), &tz);
+        let mut mine: Vec<ScheduleOccurrence> = Vec::new();
+        for d in history.iter().filter(|d| d.item_id == item.id) {
+            match mine.last_mut() {
+                Some(o) if folds && same_day(o.at, d.due_at) => {
+                    o.until = d.due_at;
+                    o.count += 1;
+                    o.status = Some(d.status);
+                }
+                _ => mine.push(occurrence(item.id, d.due_at, Some(d.status))),
+            }
+        }
+        let past = mine.len();
+        if !item.paused && item.ended.is_none() {
+            if let Some(next) = item.next_at
+                && next < to
+            {
+                let spans = rules::occurrences(
+                    &item.schedule,
+                    ts(next.max(from)),
+                    ts(to),
+                    ts(item.anchor_at),
+                    &tz,
+                    item.event_start.map(ts),
+                    MAX_OCCURRENCES_PER_ITEM,
+                );
+                for s in spans {
+                    let at = s.first.as_millisecond();
+                    // Already in the history (it's going off right now).
+                    if !folds && mine[..past].iter().any(|o| o.at == at) {
+                        continue;
+                    }
+                    mine.push(ScheduleOccurrence {
+                        until: s.last.as_millisecond(),
+                        count: s.count,
+                        ..occurrence(item.id, at, None)
+                    });
+                }
+            }
+            if let Some(back) = item.snoozed_until
+                && (from..to).contains(&back)
+            {
+                mine.push(ScheduleOccurrence {
+                    snoozed: true,
+                    ..occurrence(item.id, back, None)
+                });
+            }
+        }
+        mine.truncate(MAX_OCCURRENCES_PER_ITEM);
+        out.extend(mine);
+    }
+    out.sort_by_key(|o| o.at);
+    Ok(out)
 }
 
 pub async fn list(state: &AppState) -> Result<Vec<ScheduleItem>, AppError> {

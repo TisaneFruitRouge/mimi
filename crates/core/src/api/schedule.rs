@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use mimi_protocol::{Delivery, NewScheduleItem, ScheduleItem, ScheduleUpdate, Snooze};
+use mimi_protocol::{
+    Delivery, NewScheduleItem, ScheduleItem, ScheduleOccurrence, ScheduleUpdate, Snooze,
+};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -54,6 +56,33 @@ pub async fn deliveries(
 ) -> ApiResult<Vec<Delivery>> {
     let limit = q.limit.unwrap_or(30).clamp(1, 200);
     Ok(Json(schedule::store::recent(&state.db, limit).await?))
+}
+
+/// The longest span one request may ask for, as for calendar events.
+const MAX_SPAN_MS: i64 = 400 * 24 * 60 * 60 * 1000;
+
+#[derive(Deserialize)]
+pub struct Range {
+    from: Option<i64>,
+    to: Option<i64>,
+}
+
+/// Every time reminders and routines go off between `from` and `to` (ms; the next week by
+/// default), including what already happened, for the calendar.
+pub async fn occurrences(
+    State(state): State<Arc<AppState>>,
+    Query(r): Query<Range>,
+) -> ApiResult<Vec<ScheduleOccurrence>> {
+    let from = r.from.unwrap_or_else(crate::now_ms);
+    let to =
+        r.to.unwrap_or_else(|| from.saturating_add(7 * 24 * 60 * 60 * 1000));
+    if to <= from {
+        return Err(AppError::bad_request("The end must be after the start."));
+    }
+    if to - from > MAX_SPAN_MS {
+        return Err(AppError::bad_request("Ask for at most a year at a time."));
+    }
+    Ok(Json(schedule::occurrences(&state, from, to).await?))
 }
 
 fn already_handled() -> AppError {

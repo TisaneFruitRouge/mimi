@@ -2280,6 +2280,50 @@ mod schedule_flow {
     }
 
     #[tokio::test]
+    async fn the_calendar_gets_every_occurrence_in_a_range() {
+        let llm = scripted_llm(|_, _| Reply::Text("ok")).await;
+        let (h, _, _) = setup(&llm).await;
+        let item = add(
+            &h,
+            json!({"kind": "reminder", "title": "Water the plants", "schedule": {"type": "daily", "time": "18:00"}}),
+        )
+        .await;
+        let now = crate::now_ms();
+        let day = 24 * 3_600_000;
+        let (status, list) = h
+            .call(
+                reqwest::Method::GET,
+                &format!("/schedule/occurrences?from={now}&to={}", now + 14 * day),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(status, 200, "{list}");
+        let list = list.as_array().unwrap();
+        // Fourteen evenings (give or take one when the clocks change in between).
+        assert!((13..=15).contains(&list.len()), "{list:?}");
+        assert!(
+            list.iter()
+                .all(|o| o["item_id"] == item["id"] && o["status"].is_null() && o["count"] == 1)
+        );
+        assert_eq!(list[0]["at"], item["next_at"]);
+
+        // A range the wrong way round, or longer than a year, is refused.
+        for query in [
+            format!("from={now}&to={}", now - day),
+            format!("from={now}&to={}", now + 500 * day),
+        ] {
+            let (status, _) = h
+                .call(
+                    reqwest::Method::GET,
+                    &format!("/schedule/occurrences?{query}"),
+                    Value::Null,
+                )
+                .await;
+            assert_eq!(status, 400);
+        }
+    }
+
+    #[tokio::test]
     async fn routines_run_in_their_conversation_and_report_back() {
         let llm = scripted_llm(|_, _| Reply::Text("Nothing planned today. **Enjoy!**")).await;
         let (h, _, _) = setup(&llm).await;

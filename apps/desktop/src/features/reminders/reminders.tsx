@@ -385,7 +385,7 @@ export function ItemRow({
   );
 }
 
-const statusText: Record<Delivery["status"], string> = {
+export const statusText: Record<Delivery["status"], string> = {
   delivered: "Sent",
   late: "Sent late",
   missed: "Missed",

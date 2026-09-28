@@ -124,6 +124,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             axum::routing::patch(schedule::update).delete(schedule::delete),
         )
         .route("/schedule/{id}/run", post(schedule::run))
+        .route("/schedule/occurrences", get(schedule::occurrences))
         .route("/schedule/deliveries", get(schedule::deliveries))
         .route("/schedule/deliveries/{id}/done", post(schedule::done))
         .route("/schedule/deliveries/{id}/snooze", post(schedule::snooze))
