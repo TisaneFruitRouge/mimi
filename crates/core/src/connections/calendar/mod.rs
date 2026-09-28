@@ -1,5 +1,6 @@
-//! Calendars: Google (read through its secret address, written through a pre-filled
-//! page the user saves) and CalDAV accounts (read and write).
+//! Calendars: Google signed in with Google (read and write through Google's API), Google
+//! read through its secret address (written through a pre-filled page the user saves),
+//! and CalDAV accounts (read and write).
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -13,11 +14,23 @@ use self::caldav::{CalDav, RemoteCalendar};
 use self::ics::CalEvent;
 
 pub mod caldav;
+pub mod edit;
+pub mod google;
 pub mod ics;
 pub mod tools;
 
+#[cfg(test)]
+pub mod google_fake;
+
+/// A Google calendar read through its secret iCal address.
 pub const GOOGLE: &str = "google_calendar";
+/// A Google account the user signed in with: all its calendars, read and write.
+pub const GOOGLE_ACCOUNT: &str = "google";
 pub const CALDAV: &str = "caldav";
+
+/// Said when the assistant or the panel tries to change a calendar read through its
+/// private address.
+pub const READ_ONLY: &str = "This Google calendar is connected through its private address, so it can only be read. To let your assistant change it, connect Google Calendar again with \"Sign in with Google\" in Settings › Connections.";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GoogleConfig {
@@ -45,6 +58,11 @@ pub enum Account {
         id: uuid::Uuid,
         config: CalDavConfig,
     },
+    /// Signed in with Google.
+    GoogleApi {
+        id: uuid::Uuid,
+        config: google::GoogleAccountConfig,
+    },
 }
 
 /// One calendar the user can see, whatever account it comes from.
@@ -55,13 +73,15 @@ pub struct CalendarRef {
     pub name: String,
     /// `#rrggbb`.
     pub color: String,
-    /// Events can be saved straight into it (CalDAV). Google calendars are read here and
-    /// written by the user through a pre-filled page.
+    /// Events can be saved straight into it (CalDAV, or Google signed in with Google).
+    /// Google calendars read through their private address are written by the user
+    /// through a pre-filled page.
     pub writable: bool,
     pub google: bool,
 }
 
-/// A Google calendar is a whole connection; a CalDAV one is a collection in an account.
+/// A Google calendar read through its address is a whole connection; a CalDAV one is a
+/// collection in an account, and a signed-in Google one a calendar of the account.
 pub fn calendar_id(connection: uuid::Uuid, collection_url: Option<&str>) -> String {
     match collection_url {
         None => connection.to_string(),
@@ -90,7 +110,7 @@ pub fn calendar_color(id: &str, own: Option<&str>) -> String {
     PALETTE[fnv1a(id.as_bytes()) as usize % PALETTE.len()].to_owned()
 }
 
-fn fnv1a(bytes: &[u8]) -> u32 {
+pub(crate) fn fnv1a(bytes: &[u8]) -> u32 {
     bytes.iter().fold(0x811c_9dc5_u32, |h, b| {
         (h ^ u32::from(*b)).wrapping_mul(0x0100_0193)
     })
@@ -123,6 +143,18 @@ pub fn calendars(accounts: &[Account]) -> Vec<CalendarRef> {
                     });
                 }
             }
+            Account::GoogleApi { id, config } => {
+                for cal in &config.calendars {
+                    let cid = calendar_id(*id, Some(&cal.id));
+                    out.push(CalendarRef {
+                        color: calendar_color(&cid, cal.color.as_deref()),
+                        id: cid,
+                        name: cal.name.clone(),
+                        writable: cal.writable,
+                        google: true,
+                    });
+                }
+            }
         }
     }
     out
@@ -143,16 +175,23 @@ pub fn parse_ics_url(raw: &str) -> Result<Url, String> {
     Ok(url)
 }
 
-/// Fetches iCal feeds, keeping them briefly so a conversation doesn't refetch on every
-/// question.
+/// Access to calendars over the network: iCal feeds, kept briefly so a conversation
+/// doesn't refetch on every question, and Google's API (tokens, sign-ins).
 #[derive(Default)]
-pub struct FeedCache(Mutex<HashMap<String, (Instant, String)>>);
+pub struct FeedCache {
+    feeds: Mutex<HashMap<String, (Instant, String)>>,
+    pub google: google::GoogleAccess,
+}
 
 const FEED_TTL: Duration = Duration::from_secs(120);
 
 impl FeedCache {
     pub async fn fetch(&self, http: &reqwest::Client, url: &str) -> Result<String, String> {
-        if let Some((at, body)) = self.0.lock().unwrap_or_else(|e| e.into_inner()).get(url)
+        if let Some((at, body)) = self
+            .feeds
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(url)
             && at.elapsed() < FEED_TTL
         {
             return Ok(body.clone());
@@ -186,7 +225,7 @@ impl FeedCache {
         if !ics::looks_like_calendar(&body) {
             return Err("That address doesn't lead to a calendar. Copy the \"Secret address in iCal format\".".to_owned());
         }
-        self.0
+        self.feeds
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(url.to_owned(), (Instant::now(), body.clone()));
@@ -194,7 +233,10 @@ impl FeedCache {
     }
 
     pub fn forget(&self, url: &str) {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).remove(url);
+        self.feeds
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(url);
     }
 }
 
@@ -248,6 +290,27 @@ pub async fn events_between(
                     }
                 }
             }
+            Account::GoogleApi { id, config } => {
+                for cal in &config.calendars {
+                    let cid = calendar_id(*id, Some(&cal.id));
+                    match google::events(&cache.google, http, *id, config, cal, from, to).await {
+                        Ok(found) => events.extend(found.into_iter().map(|mut e| {
+                            e.calendar_id = cid.clone();
+                            e
+                        })),
+                        Err(e) => {
+                            problems.push(format!("{}: {e}", cal.name));
+                            // Signed out or offline: the other calendars won't do better.
+                            if matches!(
+                                e,
+                                google::GoogleError::SignedOut | google::GoogleError::Unreachable
+                            ) {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     events.sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.title.cmp(&b.title)));
@@ -265,59 +328,89 @@ pub struct NewEvent {
     pub notes: Option<String>,
 }
 
-/// Where a new event can go.
+/// Where a new event can go. `id` is the calendar's (see [`calendar_id`]).
 #[derive(Debug, Clone)]
 pub enum Target {
     CalDav {
+        id: String,
         config: CalDavConfig,
         calendar: RemoteCalendar,
     },
-    /// Google calendars are read-only here: the user saves the event themselves.
-    Google { name: String },
+    /// Signed in with Google: saved through Google's API.
+    GoogleApi {
+        id: String,
+        account: uuid::Uuid,
+        config: google::GoogleAccountConfig,
+        calendar: google::GoogleCalendar,
+    },
+    /// Google calendars read through their address are read-only here: the user saves
+    /// the event themselves.
+    Google { id: String, name: String },
 }
 
 impl Target {
     pub fn name(&self) -> &str {
         match self {
             Target::CalDav { calendar, .. } => &calendar.name,
-            Target::Google { name } => name,
+            Target::GoogleApi { calendar, .. } => &calendar.name,
+            Target::Google { name, .. } => name,
+        }
+    }
+
+    pub fn id(&self) -> &str {
+        match self {
+            Target::CalDav { id, .. }
+            | Target::GoogleApi { id, .. }
+            | Target::Google { id, .. } => id,
         }
     }
 }
 
 /// The calendar with this id (see [`calendar_id`]), as a place to add an event.
 pub fn target_by_id(accounts: &[Account], wanted: &str) -> Option<Target> {
-    accounts.iter().find_map(|account| match account {
-        Account::Google { id, name, .. } => {
-            (calendar_id(*id, None) == wanted).then(|| Target::Google { name: name.clone() })
-        }
-        Account::CalDav { id, config } => config
-            .calendars
-            .iter()
-            .find(|c| calendar_id(*id, Some(&c.url)) == wanted)
-            .map(|calendar| Target::CalDav {
-                config: config.clone(),
-                calendar: calendar.clone(),
-            }),
-    })
+    all_targets(accounts).into_iter().find(|t| t.id() == wanted)
 }
 
-/// Every calendar an event could be added to, CalDAV (direct) first.
+/// Every calendar an event could be added to: the ones saved into directly first
+/// (CalDAV, then Google signed in), then Google calendars read through their address.
 pub fn targets(accounts: &[Account]) -> Vec<Target> {
+    let mut out = all_targets(accounts);
+    out.retain(|t| !matches!(t, Target::GoogleApi { calendar, .. } if !calendar.writable));
+    out.sort_by_key(|t| match t {
+        Target::CalDav { .. } => 0,
+        Target::GoogleApi { .. } => 1,
+        Target::Google { .. } => 2,
+    });
+    out
+}
+
+fn all_targets(accounts: &[Account]) -> Vec<Target> {
     let mut out = Vec::new();
     for account in accounts {
-        if let Account::CalDav { config, .. } = account {
-            for calendar in &config.calendars {
-                out.push(Target::CalDav {
-                    config: config.clone(),
-                    calendar: calendar.clone(),
-                });
+        match account {
+            Account::CalDav { id, config } => {
+                for calendar in &config.calendars {
+                    out.push(Target::CalDav {
+                        id: calendar_id(*id, Some(&calendar.url)),
+                        config: config.clone(),
+                        calendar: calendar.clone(),
+                    });
+                }
             }
-        }
-    }
-    for account in accounts {
-        if let Account::Google { name, .. } = account {
-            out.push(Target::Google { name: name.clone() });
+            Account::GoogleApi { id, config } => {
+                for calendar in &config.calendars {
+                    out.push(Target::GoogleApi {
+                        id: calendar_id(*id, Some(&calendar.id)),
+                        account: *id,
+                        config: config.clone(),
+                        calendar: calendar.clone(),
+                    });
+                }
+            }
+            Account::Google { id, name, .. } => out.push(Target::Google {
+                id: calendar_id(*id, None),
+                name: name.clone(),
+            }),
         }
     }
     out
@@ -330,12 +423,35 @@ pub enum Created {
     OpenToSave { url: String },
 }
 
-pub async fn create(target: &Target, event: &NewEvent) -> Result<Created, String> {
+pub async fn create(
+    http: &reqwest::Client,
+    cache: &FeedCache,
+    target: &Target,
+    event: &NewEvent,
+) -> Result<Created, String> {
     match target {
         Target::Google { .. } => Ok(Created::OpenToSave {
             url: google_template_link(event),
         }),
-        Target::CalDav { config, calendar } => {
+        Target::GoogleApi {
+            account,
+            config,
+            calendar,
+            ..
+        } => {
+            if !calendar.writable {
+                return Err("You can only read that calendar.".to_owned());
+            }
+            google::insert(&cache.google, http, *account, config, calendar, event)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(Created::Saved {
+                calendar: calendar.name.clone(),
+            })
+        }
+        Target::CalDav {
+            config, calendar, ..
+        } => {
             let uid = format!("{}@mimi", uuid::Uuid::now_v7());
             let url = Url::parse(&calendar.url).map_err(|e| e.to_string())?;
             CalDav::new(&config.username, &config.password)
@@ -345,6 +461,221 @@ pub async fn create(target: &Target, event: &NewEvent) -> Result<Created, String
             Ok(Created::Saved {
                 calendar: calendar.name.clone(),
             })
+        }
+    }
+}
+
+/// An existing event occurrence: found again by its calendar, uid and start.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EventRef {
+    pub calendar_id: String,
+    pub uid: String,
+    pub start: DateTime<Utc>,
+}
+
+/// An event as it is now, and whether it repeats.
+#[derive(Debug, Clone)]
+pub struct Located {
+    pub event: CalEvent,
+    pub repeats: bool,
+}
+
+/// Finds an event to change or remove. Calendars that can only be read say so.
+pub async fn locate(
+    http: &reqwest::Client,
+    cache: &FeedCache,
+    accounts: &[Account],
+    r: &EventRef,
+) -> Result<Located, String> {
+    let target = all_targets(accounts)
+        .into_iter()
+        .find(|t| t.id() == r.calendar_id)
+        .ok_or("That calendar isn't connected anymore.")?;
+    match &target {
+        Target::Google { .. } => Err(READ_ONLY.to_owned()),
+        Target::GoogleApi {
+            account,
+            config,
+            calendar,
+            ..
+        } => {
+            let found = google::find_occurrence(
+                &cache.google,
+                http,
+                *account,
+                config,
+                calendar,
+                &r.uid,
+                r.start,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            let mut event = found.event;
+            event.calendar_id = r.calendar_id.clone();
+            Ok(Located {
+                event,
+                repeats: found.repeats,
+            })
+        }
+        Target::CalDav {
+            config, calendar, ..
+        } => {
+            let (object, found) = dav_object(config, calendar, r).await?;
+            let later = r.start + chrono::Duration::seconds(1);
+            let mut event =
+                ics::events_between(&object.data, &calendar.name, r.start, later, &Local)
+                    .ok()
+                    .and_then(|events| {
+                        events
+                            .into_iter()
+                            .find(|e| e.uid == r.uid && e.start == r.start)
+                    })
+                    .ok_or("That event isn't in the calendar anymore.")?;
+            event.calendar_id = r.calendar_id.clone();
+            Ok(Located {
+                event,
+                repeats: found.repeats,
+            })
+        }
+    }
+}
+
+/// The stored object holding the event, and where in it the occurrence is.
+async fn dav_object(
+    config: &CalDavConfig,
+    calendar: &RemoteCalendar,
+    r: &EventRef,
+) -> Result<(caldav::DavObject, edit::Found), String> {
+    let url = Url::parse(&calendar.url).map_err(|e| e.to_string())?;
+    let later = r.start + chrono::Duration::seconds(1);
+    let objects = CalDav::new(&config.username, &config.password)
+        .objects(&url, r.start, later)
+        .await
+        .map_err(|e| e.to_string())?;
+    objects
+        .into_iter()
+        .find_map(|o| edit::find(&o.data, &r.uid, r.start, &Local).map(|f| (o, f)))
+        .ok_or_else(|| "That event isn't in the calendar anymore.".to_owned())
+}
+
+/// Changes an event: this occurrence only, or (`whole`) the whole event or series.
+pub async fn change_event(
+    http: &reqwest::Client,
+    cache: &FeedCache,
+    accounts: &[Account],
+    r: &EventRef,
+    whole: bool,
+    changes: &edit::Changes,
+) -> Result<(), String> {
+    let target = all_targets(accounts)
+        .into_iter()
+        .find(|t| t.id() == r.calendar_id)
+        .ok_or("That calendar isn't connected anymore.")?;
+    match &target {
+        Target::Google { .. } => Err(READ_ONLY.to_owned()),
+        Target::GoogleApi {
+            account,
+            config,
+            calendar,
+            ..
+        } => {
+            let found = google::find_occurrence(
+                &cache.google,
+                http,
+                *account,
+                config,
+                calendar,
+                &r.uid,
+                r.start,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            let id = if whole && found.repeats {
+                if changes.when.is_some() {
+                    return Err("Every occurrence of a repeating event can't be moved at once. Move one occurrence at a time, or change the series in Google Calendar.".to_owned());
+                }
+                r.uid.clone()
+            } else {
+                found.id
+            };
+            google::patch(
+                &cache.google,
+                http,
+                *account,
+                config,
+                calendar,
+                &id,
+                &google::patch_fields(changes),
+            )
+            .await
+            .map_err(|e| e.to_string())
+        }
+        Target::CalDav {
+            config, calendar, ..
+        } => {
+            let (object, found) = dav_object(config, calendar, r).await?;
+            let data = edit::change(&object.data, &r.uid, found, whole, changes, &Local)?;
+            CalDav::new(&config.username, &config.password)
+                .replace(&object, data)
+                .await
+                .map_err(|e| e.to_string())
+        }
+    }
+}
+
+/// Removes an event: this occurrence only, or (`whole`) the whole event or series.
+pub async fn remove_event(
+    http: &reqwest::Client,
+    cache: &FeedCache,
+    accounts: &[Account],
+    r: &EventRef,
+    whole: bool,
+) -> Result<(), String> {
+    let target = all_targets(accounts)
+        .into_iter()
+        .find(|t| t.id() == r.calendar_id)
+        .ok_or("That calendar isn't connected anymore.")?;
+    match &target {
+        Target::Google { .. } => Err(READ_ONLY.to_owned()),
+        Target::GoogleApi {
+            account,
+            config,
+            calendar,
+            ..
+        } => {
+            let found = google::find_occurrence(
+                &cache.google,
+                http,
+                *account,
+                config,
+                calendar,
+                &r.uid,
+                r.start,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            let id = if whole && found.repeats {
+                r.uid.clone()
+            } else {
+                found.id
+            };
+            google::delete(&cache.google, http, *account, config, calendar, &id)
+                .await
+                .map_err(|e| e.to_string())
+        }
+        Target::CalDav {
+            config, calendar, ..
+        } => {
+            let (object, found) = dav_object(config, calendar, r).await?;
+            let client = CalDav::new(&config.username, &config.password);
+            match found.occurrence {
+                Some(occurrence) if found.repeats && !whole => {
+                    let data = edit::remove_occurrence(&object.data, &r.uid, occurrence, &Local)?;
+                    client.replace(&object, data).await
+                }
+                _ => client.delete(&object).await,
+            }
+            .map_err(|e| e.to_string())
         }
     }
 }
@@ -573,5 +904,201 @@ ATTENDEE:mailto:nobody\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
                 (None, "lea@example.com")
             ]
         );
+    }
+
+    /// Against a real CalDAV server with no password, e.g. Radicale:
+    /// `uvx radicale --auth-type=none --storage-filesystem-folder=/tmp/r` then
+    /// `MIMI_TEST_CALDAV=http://127.0.0.1:5232/ cargo test -p mimi-core live_caldav -- --ignored`.
+    #[tokio::test]
+    #[ignore]
+    async fn live_caldav_adds_changes_and_removes_events() {
+        use chrono::TimeZone;
+        let Ok(server) = std::env::var("MIMI_TEST_CALDAV") else {
+            panic!("set MIMI_TEST_CALDAV to a CalDAV server's address");
+        };
+        let server = Url::parse(&server).unwrap();
+        let collection = server
+            .join(&format!("mimi-test/cal-{}/", uuid::Uuid::now_v7()))
+            .unwrap();
+        let made = reqwest::Client::new()
+            .request(
+                reqwest::Method::from_bytes(b"MKCALENDAR").unwrap(),
+                collection.clone(),
+            )
+            .basic_auth("mimi-test", Some("x"))
+            .send()
+            .await
+            .unwrap();
+        assert!(made.status().is_success(), "{}", made.status());
+        let dav = CalDav::new("mimi-test", "x");
+        let found = dav.discover(&server).await.unwrap();
+        let cal = found
+            .into_iter()
+            .find(|c| c.url == collection.as_str())
+            .expect("the new calendar is discovered");
+        let id = uuid::Uuid::now_v7();
+        let accounts = vec![Account::CalDav {
+            id,
+            config: CalDavConfig {
+                server_url: server.to_string(),
+                username: "mimi-test".into(),
+                password: "x".into(),
+                calendars: vec![cal.clone()],
+            },
+        }];
+        let cid = calendar_id(id, Some(&cal.url));
+        let http = reqwest::Client::new();
+        let cache = FeedCache::default();
+        let at = |d: u32, h: u32| Utc.with_ymd_and_hms(2026, 10, d, h, 0, 0).unwrap();
+
+        // A single event, added the way the assistant and the panel do.
+        let target = target_by_id(&accounts, &cid).unwrap();
+        let event = NewEvent {
+            title: "Dentist".into(),
+            start: at(2, 8),
+            end: at(2, 9),
+            all_day: false,
+            location: Some("Rue du Lac 4".into()),
+            notes: None,
+        };
+        assert!(matches!(
+            create(&http, &cache, &target, &event).await.unwrap(),
+            Created::Saved { .. }
+        ));
+        // A weekly series.
+        let series = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:t\r\nBEGIN:VEVENT\r\n\
+UID:standup@mimi-test\r\nDTSTART;TZID=Europe/Zurich:20261005T090000\r\n\
+DTEND;TZID=Europe/Zurich:20261005T091500\r\nRRULE:FREQ=WEEKLY;COUNT=4\r\nSUMMARY:Standup\r\n\
+END:VEVENT\r\nEND:VCALENDAR\r\n";
+        dav.create(
+            &Url::parse(&cal.url).unwrap(),
+            "standup@mimi-test",
+            series.into(),
+        )
+        .await
+        .unwrap();
+
+        let read = |from: DateTime<Utc>, to: DateTime<Utc>| {
+            let (http, cache, accounts) = (&http, &cache, &accounts);
+            async move {
+                let (events, problems) = events_between(http, cache, accounts, from, to).await;
+                assert!(problems.is_empty(), "{problems:?}");
+                events
+            }
+        };
+        let events = read(at(1, 0), at(31, 0)).await;
+        assert_eq!(events.len(), 5);
+        let dentist = events.iter().find(|e| e.title == "Dentist").unwrap();
+        let r = EventRef {
+            calendar_id: cid.clone(),
+            uid: dentist.uid.clone(),
+            start: dentist.start,
+        };
+        let located = locate(&http, &cache, &accounts, &r).await.unwrap();
+        assert!(!located.repeats);
+
+        // Move and rename the single event, clearing its place.
+        let changes = edit::Changes {
+            title: Some("Dentist (Dr. Lee)".into()),
+            when: Some(edit::When {
+                start: at(3, 10),
+                end: at(3, 11),
+                all_day: false,
+            }),
+            location: Some(String::new()),
+            notes: None,
+        };
+        change_event(&http, &cache, &accounts, &r, false, &changes)
+            .await
+            .unwrap();
+        let events = read(at(1, 0), at(31, 0)).await;
+        let moved = events.iter().find(|e| e.uid == r.uid).unwrap();
+        assert_eq!(
+            (moved.title.as_str(), moved.start, moved.location.as_deref()),
+            ("Dentist (Dr. Lee)", at(3, 10), None)
+        );
+
+        // One occurrence of the series moved, another removed, the rest untouched.
+        let standups: Vec<_> = events.iter().filter(|e| e.title == "Standup").collect();
+        let second = EventRef {
+            calendar_id: cid.clone(),
+            uid: standups[1].uid.clone(),
+            start: standups[1].start,
+        };
+        assert!(
+            locate(&http, &cache, &accounts, &second)
+                .await
+                .unwrap()
+                .repeats
+        );
+        let later = edit::Changes {
+            when: Some(edit::When {
+                start: second.start + chrono::Duration::hours(2),
+                end: second.start + chrono::Duration::hours(3),
+                all_day: false,
+            }),
+            ..Default::default()
+        };
+        change_event(&http, &cache, &accounts, &second, false, &later)
+            .await
+            .unwrap();
+        let third = EventRef {
+            calendar_id: cid.clone(),
+            uid: standups[2].uid.clone(),
+            start: standups[2].start,
+        };
+        remove_event(&http, &cache, &accounts, &third, false)
+            .await
+            .unwrap();
+        let events = read(at(1, 0), at(31, 0)).await;
+        let starts: Vec<_> = events
+            .iter()
+            .filter(|e| e.uid == "standup@mimi-test")
+            .map(|e| e.start)
+            .collect();
+        assert_eq!(
+            starts,
+            [
+                standups[0].start,
+                second.start + chrono::Duration::hours(2),
+                standups[3].start
+            ]
+        );
+        // Moving the whole series at once is refused; renaming it isn't.
+        let first = EventRef {
+            calendar_id: cid.clone(),
+            uid: standups[0].uid.clone(),
+            start: standups[0].start,
+        };
+        assert!(
+            change_event(&http, &cache, &accounts, &first, true, &later)
+                .await
+                .is_err()
+        );
+        let renamed = edit::Changes {
+            title: Some("Team standup".into()),
+            ..Default::default()
+        };
+        change_event(&http, &cache, &accounts, &first, true, &renamed)
+            .await
+            .unwrap();
+        // Then the whole series goes, and the single event too.
+        remove_event(&http, &cache, &accounts, &first, true)
+            .await
+            .unwrap();
+        let moved_ref = EventRef {
+            calendar_id: cid.clone(),
+            uid: r.uid.clone(),
+            start: at(3, 10),
+        };
+        remove_event(&http, &cache, &accounts, &moved_ref, false)
+            .await
+            .unwrap();
+        assert!(read(at(1, 0), at(31, 0)).await.is_empty());
+        let _ = reqwest::Client::new()
+            .delete(collection)
+            .basic_auth("mimi-test", Some("x"))
+            .send()
+            .await;
     }
 }

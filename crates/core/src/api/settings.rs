@@ -41,7 +41,11 @@ pub async fn put(
             "Add your TypeSafe API key before sorting mail with Jev.",
         ));
     }
-    let sorter_changed = settings::load(&state.db).await?.mail_sorter != new.mail_sorter;
+    let current = settings::load(&state.db).await?;
+    let sorter_changed = current.mail_sorter != new.mail_sorter;
+    // Permissions change only through `/permissions`, where they're checked; a client
+    // saving other settings can't widen them, even with a stale copy.
+    new.permissions = current.permissions;
     settings::save(&state.db, &new).await?;
     if sorter_changed {
         // Where mail is sorted shows in the Mail panel.

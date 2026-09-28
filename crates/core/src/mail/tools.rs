@@ -482,6 +482,18 @@ impl Tool for Send {
         Some(crate::tools::Governs::SendMail)
     }
 
+    /// Everyone it goes to, copies included.
+    fn call_targets(&self, args: &Value) -> Vec<crate::tools::CallTarget> {
+        ["to", "cc"]
+            .iter()
+            .flat_map(|key| args[*key].as_array().cloned().unwrap_or_default())
+            .filter_map(|v| {
+                v.as_str()
+                    .map(|s| crate::tools::CallTarget::Email(s.to_owned()))
+            })
+            .collect()
+    }
+
     /// Every recipient as its own entry, exactly as it will be sent: the card lists them
     /// one by one, whatever shape the model wrote them in.
     fn prepare(&self, args: Value) -> Result<Value, String> {

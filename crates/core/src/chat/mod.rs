@@ -491,11 +491,19 @@ impl Turn {
             .await
             .map(|s| s.permissions)
             .unwrap_or_default();
-        // What the card shows is what runs: the arguments in the shape the tool reads.
+        let ctx = ToolContext {
+            state: self.state.clone(),
+            conversation_id: self.message.conversation_id,
+        };
+        // What the card shows is what runs: what the arguments refer to, looked up, and
+        // the arguments in the shape the tool reads.
         let parsed = match (&tool, parsed) {
-            (Some(t), Ok(args)) if permissions::may_ask(t.as_ref(), &args, &permissions) => {
-                t.prepare(args)
-            }
+            (Some(t), Ok(args)) => match t.resolve(&ctx, args).await {
+                Ok(args) if permissions::may_ask(t.as_ref(), &args, &permissions) => {
+                    t.prepare(args)
+                }
+                other => other,
+            },
             (_, parsed) => parsed,
         };
         let shown_args = parsed
@@ -508,6 +516,12 @@ impl Turn {
             ),
             // Can't tell what it would do, and it won't run anyway.
             _ => (call.name.clone(), false),
+        };
+        let offer = match (&tool, &parsed) {
+            (Some(t), Ok(args)) if requires_approval => {
+                permissions::always_offer(&self.state, t.as_ref(), args, &permissions).await
+            }
+            _ => None,
         };
         self.message.actions.push(Action {
             id: Uuid::now_v7(),
@@ -522,9 +536,20 @@ impl Turn {
             call_id: call.id.clone(),
             round,
             content_offset: self.message.content.chars().count() as u32,
+            always_allow: offer.as_ref().map(|(text, _)| text.clone()),
         });
         let idx = self.message.actions.len() - 1;
         let action_id = self.message.actions[idx].id;
+        if let (Some((_, targets)), Some(kind)) = (
+            offer,
+            tool.as_ref()
+                .and_then(|t| t.governed_by())
+                .map(|g| g.kind().id),
+        ) {
+            self.state
+                .approvals
+                .offer(action_id, crate::tools::AlwaysOffer { kind, targets });
+        }
 
         let (tool, mut args) = match (tool, parsed) {
             (None, _) => {
@@ -553,8 +578,10 @@ impl Turn {
             };
             match decision {
                 Some(Decision::Approve(edited)) => {
+                    self.message.actions[idx].always_allow = None;
                     if let Some(edited) = edited {
-                        args = match tool.prepare(edited) {
+                        let resolved = tool.resolve(&ctx, edited).await;
+                        args = match resolved.and_then(|a| tool.prepare(a)) {
                             Ok(args) => args,
                             Err(e) => {
                                 self.finish_action(idx, Err(e)).await;
@@ -568,6 +595,7 @@ impl Turn {
                     self.message.actions[idx].status = ActionStatus::Approved;
                 }
                 Some(Decision::Reject) | None => {
+                    self.message.actions[idx].always_allow = None;
                     self.message.actions[idx].status = ActionStatus::Rejected;
                     self.save().await;
                     self.prompt
@@ -579,10 +607,6 @@ impl Turn {
 
         self.message.actions[idx].status = ActionStatus::Running;
         self.save().await;
-        let ctx = ToolContext {
-            state: self.state.clone(),
-            conversation_id: self.message.conversation_id,
-        };
         let result = tokio::select! {
             r = tool.run(&ctx, args.clone()) => r,
             _ = self.cancel.cancelled() => {

@@ -7,4 +7,9 @@ export type ApproveAction = {
 /**
  * Replaces the model's arguments, when the user edited them.
  */
-arguments: Record<string, unknown> | null, };
+arguments: Record<string, unknown> | null, 
+/**
+ * The user chose the card's `always_allow`: approve, and add the matching exception
+ * in Settings › Permissions. Not with edited arguments.
+ */
+always: boolean, };

@@ -1162,6 +1162,7 @@ mod tool_use {
             call_id: "call_0".into(),
             round: 0,
             content_offset: 0,
+            always_allow: None,
         };
         let message = mimi_protocol::Message {
             id: uuid::Uuid::now_v7(),
@@ -2859,10 +2860,18 @@ mod mail_flow {
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        let (_, mut settings) = h.call(reqwest::Method::GET, "/settings", Value::Null).await;
-        assert_eq!(settings["permissions"]["send_mail"], "ask");
-        settings["permissions"]["send_mail"] = json!("automatic");
-        let (status, _) = h.call(reqwest::Method::PUT, "/settings", settings).await;
+        let (_, kinds) = h
+            .call(reqwest::Method::GET, "/permissions", Value::Null)
+            .await;
+        assert_eq!(kinds[0]["id"], "send_mail");
+        assert_eq!(kinds[0]["autonomy"], "ask");
+        let (status, _) = h
+            .call(
+                reqwest::Method::PUT,
+                "/permissions/send_mail",
+                json!({"autonomy": "automatic", "rules": []}),
+            )
+            .await;
         assert_eq!(status, 200);
 
         let id = start(&h, "Tell Sam noon works, then forward it").await;
@@ -3067,5 +3076,681 @@ mod mail_flow {
         assert_eq!(sent.len(), 1);
         assert!(sent[0].data.contains("In-Reply-To: <din1@example.com>"));
         assert_eq!(fake.count("Sent"), 1);
+    }
+
+    /// An exception for one person lets email to them go out on its own while the rest
+    /// still asks; "Don't ask again" on a card adds one; strangers still always ask.
+    #[tokio::test]
+    async fn people_exceptions_and_dont_ask_again() {
+        let fake = FakeMail::start(ME, "app-pass").await;
+        let llm = scripted_llm(|_, n| match n {
+            0 => Reply::Call(
+                "mail_send",
+                json!({"to": ["sam@example.com"], "subject": "Lunch", "body": "Noon works."}),
+            ),
+            1 => Reply::Call(
+                "mail_send",
+                json!({"to": ["Léa <lea@example.com>"], "subject": "Hi", "body": "Hello."}),
+            ),
+            2 => Reply::Call(
+                "mail_send",
+                json!({"to": ["lea@example.com"], "subject": "Again", "body": "Hello again."}),
+            ),
+            3 => Reply::Call(
+                "mail_send",
+                json!({"to": ["sam@example.com"], "cc": ["mallory@example.net"], "subject": "Fwd", "body": "Mail."}),
+            ),
+            _ => Reply::Text("Done."),
+        })
+        .await;
+        let mut h = Harness::new().await;
+        h.use_mock(llm.port()).await;
+        h.state
+            .tool_sources
+            .add(std::sync::Arc::new(crate::mail::tools::MailTools));
+        connect(&h, &fake, 0).await;
+        let mut ids = Vec::new();
+        for (name, email) in [("Sam", "sam@example.com"), ("Léa", "lea@example.com")] {
+            let (status, person) = h
+                .call(
+                    reqwest::Method::POST,
+                    "/people",
+                    json!({"name": name, "handles": [{"channel": "email", "value": email}]}),
+                )
+                .await;
+            assert_eq!(status, 200, "{person}");
+            ids.push(person["id"].as_str().unwrap().to_owned());
+        }
+        let (status, kinds) = h
+            .call(
+                reqwest::Method::PUT,
+                "/permissions/send_mail",
+                json!({"autonomy": "ask", "rules": [
+                    {"target": {"kind": "person", "id": ids[0]}, "autonomy": "automatic"}
+                ]}),
+            )
+            .await;
+        assert_eq!(status, 200, "{kinds}");
+        assert_eq!(kinds[0]["rules"][0]["label"], "Sam");
+
+        let id = start(&h, "Write to Sam and Léa").await;
+        // Sam's went out on its own; Léa's asks, offering to stop asking for her.
+        let action = pending(&mut h, &id).await;
+        assert_eq!(action.arguments["to"], json!(["Léa <lea@example.com>"]));
+        assert_eq!(
+            action.always_allow.as_deref(),
+            Some("Don't ask again for Léa")
+        );
+        assert_eq!(fake.sent().len(), 1);
+        // "Don't ask again" can't be combined with an edit.
+        let (status, _) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/actions/{}/approve", action.id),
+                json!({"always": true, "arguments": {"to": ["x@example.net"]}}),
+            )
+            .await;
+        assert_eq!(status, 400);
+        let (status, _) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/actions/{}/approve", action.id),
+                json!({"always": true}),
+            )
+            .await;
+        assert_eq!(status, 200);
+        // The next email to Léa goes on its own; a copy to a stranger still asks, with
+        // nothing to offer.
+        let action = pending(&mut h, &id).await;
+        assert_eq!(action.arguments["cc"], json!(["mallory@example.net"]));
+        assert_eq!(action.always_allow, None);
+        assert_eq!(fake.sent().len(), 3);
+        h.call(
+            reqwest::Method::POST,
+            &format!("/actions/{}/reject", action.id),
+            Value::Null,
+        )
+        .await;
+        let (reply, _) = h.wait_for_reply(&id).await;
+        let statuses: Vec<_> = reply.actions.iter().map(|a| a.status).collect();
+        assert_eq!(
+            statuses,
+            [
+                ActionStatus::Done,
+                ActionStatus::Done,
+                ActionStatus::Done,
+                ActionStatus::Rejected
+            ]
+        );
+        assert_eq!(
+            reply
+                .actions
+                .iter()
+                .map(|a| a.requires_approval)
+                .collect::<Vec<_>>(),
+            [false, true, false, true]
+        );
+        let (_, kinds) = h
+            .call(reqwest::Method::GET, "/permissions", Value::Null)
+            .await;
+        let rules = &kinds[0]["rules"];
+        assert_eq!(rules.as_array().unwrap().len(), 2);
+        assert_eq!(rules[1]["target"]["id"], ids[1].as_str());
+        assert_eq!(rules[1]["autonomy"], "automatic");
+        assert_eq!(kinds[0]["autonomy"], "ask");
+    }
+}
+
+/// Settings › Permissions through the API: the catalog, what it accepts, and settings
+/// saved by the first version.
+mod permission_api {
+    use serde_json::{Value, json};
+
+    use super::Harness;
+
+    #[tokio::test]
+    async fn the_catalog_checks_what_it_is_given() {
+        let h = Harness::new().await;
+        let (status, kinds) = h
+            .call(reqwest::Method::GET, "/permissions", Value::Null)
+            .await;
+        assert_eq!(status, 200);
+        let summary: Vec<(String, String, String)> = kinds
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|k| {
+                (
+                    k["id"].as_str().unwrap().to_owned(),
+                    k["autonomy"].as_str().unwrap().to_owned(),
+                    k["targets"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect();
+        let expect = |a: &str, b: &str, c: &str| (a.to_owned(), b.to_owned(), c.to_owned());
+        assert_eq!(
+            summary,
+            [
+                expect("send_mail", "ask", "person"),
+                expect("add_events", "ask", "calendar"),
+                expect("change_events", "ask", "calendar"),
+                expect("schedule", "automatic", "none"),
+            ]
+        );
+
+        let put = |kind: &'static str, body: Value| {
+            let h = &h;
+            async move {
+                h.call(reqwest::Method::PUT, &format!("/permissions/{kind}"), body)
+                    .await
+            }
+        };
+        assert_eq!(
+            put("nope", json!({"autonomy": "ask", "rules": []})).await.0,
+            404
+        );
+        let stranger = uuid::Uuid::now_v7();
+        for (kind, target) in [
+            ("send_mail", json!({"kind": "calendar", "id": "x"})),
+            (
+                "add_events",
+                json!({"kind": "calendar", "id": "not-connected"}),
+            ),
+            ("send_mail", json!({"kind": "person", "id": stranger})),
+            ("schedule", json!({"kind": "person", "id": stranger})),
+        ] {
+            let (status, err) = put(
+                kind,
+                json!({"autonomy": "ask", "rules": [{"target": target, "autonomy": "automatic"}]}),
+            )
+            .await;
+            assert_eq!(status, 400, "{kind} {target} {err}");
+        }
+
+        let (_, sam) = h
+            .call(
+                reqwest::Method::POST,
+                "/people",
+                json!({"name": "Sam", "handles": [{"channel": "email", "value": "sam@example.com"}]}),
+            )
+            .await;
+        let sam_id = sam["id"].as_str().unwrap().to_owned();
+        // One exception per person: the last one given wins.
+        let (status, kinds) = put(
+            "send_mail",
+            json!({"autonomy": "automatic", "rules": [
+                {"target": {"kind": "person", "id": sam_id}, "autonomy": "automatic"},
+                {"target": {"kind": "person", "id": sam_id}, "autonomy": "ask"}
+            ]}),
+        )
+        .await;
+        assert_eq!(status, 200, "{kinds}");
+        assert_eq!(kinds[0]["autonomy"], "automatic");
+        assert_eq!(kinds[0]["rules"].as_array().unwrap().len(), 1);
+        assert_eq!(kinds[0]["rules"][0]["autonomy"], "ask");
+        assert_eq!(kinds[0]["rules"][0]["label"], "Sam");
+
+        // Saving other settings (even a stale copy) leaves permissions alone.
+        let (_, mut settings) = h.call(reqwest::Method::GET, "/settings", Value::Null).await;
+        settings["permissions"] = json!({"send_mail": "automatic", "schedule": "ask"});
+        settings["assistant_name"] = json!("Ada");
+        let (status, _) = h.call(reqwest::Method::PUT, "/settings", settings).await;
+        assert_eq!(status, 200);
+        let (_, kinds) = h
+            .call(reqwest::Method::GET, "/permissions", Value::Null)
+            .await;
+        assert_eq!(kinds[0]["rules"].as_array().unwrap().len(), 1);
+        assert_eq!(kinds[3]["autonomy"], "automatic");
+
+        // An exception about someone no longer in People stays visible, doing nothing,
+        // and can still be kept when saving.
+        let (status, _) = h
+            .call(
+                reqwest::Method::DELETE,
+                &format!("/people/{sam_id}"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(status, 200);
+        let (_, kinds) = h
+            .call(reqwest::Method::GET, "/permissions", Value::Null)
+            .await;
+        assert_eq!(kinds[0]["rules"][0]["missing"], true);
+        let rules = kinds[0]["rules"].clone();
+        let (status, _) = put(
+            "send_mail",
+            json!({"autonomy": "ask", "rules": [{"target": rules[0]["target"], "autonomy": "ask"}]}),
+        )
+        .await;
+        assert_eq!(status, 200);
+    }
+
+    #[tokio::test]
+    async fn settings_saved_by_the_first_version_keep_their_meaning() {
+        let h = Harness::new().await;
+        let old = json!({
+            "assistant_name": "Mimi",
+            "permissions": {"send_mail": "automatic", "add_events": "ask", "schedule": "ask"}
+        })
+        .to_string();
+        h.state
+            .db
+            .call(move |c| {
+                c.execute(
+                    "INSERT INTO settings (key, value) VALUES ('app', ?1)
+                     ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                    [old],
+                )
+            })
+            .await
+            .unwrap();
+        let (_, kinds) = h
+            .call(reqwest::Method::GET, "/permissions", Value::Null)
+            .await;
+        let autonomy: Vec<&str> = kinds
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|k| k["autonomy"].as_str().unwrap())
+            .collect();
+        assert_eq!(autonomy, ["automatic", "ask", "ask", "ask"]);
+    }
+}
+
+/// Google Calendar with Google sign-in, against a fake Google.
+mod google_flow {
+    use std::time::Duration;
+
+    use mimi_protocol::ActionStatus;
+    use serde_json::{Value, json};
+
+    use super::Harness;
+    use super::tool_use::{Reply, scripted_llm};
+    use crate::connections::calendar::google_fake::{self, Fake, Shared};
+
+    fn fake_account() -> Fake {
+        let mut fake = Fake::default();
+        fake.calendars = vec![
+            json!({"id": "me@example.com", "summary": "me@example.com", "primary": true,
+                   "accessRole": "owner", "backgroundColor": "#9fe1e7"}),
+            json!({"id": "family@group.calendar.google.com", "summary": "Family",
+                   "accessRole": "reader"}),
+        ];
+        fake.events.insert(
+            "me@example.com".into(),
+            vec![
+                json!({"id": "dentist1", "summary": "Dentist",
+                       "start": {"dateTime": "2026-10-02T08:00:00Z"},
+                       "end": {"dateTime": "2026-10-02T08:45:00Z"}}),
+                json!({"id": "standup_1", "recurringEventId": "standup", "summary": "Standup",
+                       "start": {"dateTime": "2026-10-05T07:00:00Z"},
+                       "end": {"dateTime": "2026-10-05T07:15:00Z"}}),
+                json!({"id": "standup_2", "recurringEventId": "standup", "summary": "Standup",
+                       "start": {"dateTime": "2026-10-12T07:00:00Z"},
+                       "end": {"dateTime": "2026-10-12T07:15:00Z"}}),
+            ],
+        );
+        fake
+    }
+
+    async fn setup(fake: Fake) -> (Harness, Shared) {
+        let h = Harness::new().await;
+        let (shared, endpoints) = google_fake::start(fake).await;
+        *h.state
+            .connections
+            .feeds
+            .google
+            .endpoints_override
+            .lock()
+            .unwrap() = Some(endpoints);
+        (h, shared)
+    }
+
+    /// Goes through sign-in as the browser would; returns the connection.
+    async fn sign_in(h: &Harness, body: Value, fake: &Shared) -> Value {
+        let (status, started) = h.call(reqwest::Method::POST, "/google/sign-in", body).await;
+        assert_eq!(status, 200, "{started}");
+        let url = reqwest::Url::parse(started["url"].as_str().unwrap()).unwrap();
+        let q: std::collections::HashMap<String, String> = url.query_pairs().into_owned().collect();
+        assert_eq!(q["code_challenge_method"], "S256");
+        assert_eq!(q["access_type"], "offline");
+        assert_eq!(
+            q["scope"],
+            "https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly"
+        );
+        let redirect = q["redirect_uri"].clone();
+        assert!(redirect.starts_with("http://127.0.0.1:"), "{redirect}");
+        let browser = reqwest::Client::new();
+        // Something else on the port, or a forged answer: turned away, still waiting.
+        let res = browser
+            .get(format!("{redirect}?code=good-code&state=forged"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 404);
+        let res = browser
+            .get(format!("{redirect}?code=good-code&state={}", q["state"]))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 200);
+        assert!(res.text().await.unwrap().contains("signed in"));
+        let id = started["id"].as_str().unwrap();
+        for _ in 0..100 {
+            let (_, status) = h
+                .call(
+                    reqwest::Method::GET,
+                    &format!("/google/sign-in/{id}"),
+                    Value::Null,
+                )
+                .await;
+            if status["state"] == "done" {
+                // PKCE: the code was exchanged with the verifier behind the challenge.
+                let verifier = fake.lock().unwrap().verifiers.last().unwrap().clone();
+                assert_eq!(
+                    crate::connections::calendar::google::tests_challenge(&verifier),
+                    q["code_challenge"]
+                );
+                return status["connection"].clone();
+            }
+            assert_eq!(status["state"], "waiting", "{status}");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("the sign-in never finished");
+    }
+
+    #[tokio::test]
+    async fn sign_in_reads_and_writes_google_calendars() {
+        let (h, fake) = setup(fake_account()).await;
+        let (_, info) = h
+            .call(reqwest::Method::GET, "/google/sign-in", Value::Null)
+            .await;
+        assert_eq!(info["available"], true);
+        let connection = sign_in(&h, json!({}), &fake).await;
+        assert_eq!(connection["integration"], "google");
+        assert_eq!(connection["name"], "me@example.com");
+        assert_eq!(connection["status"], "ok");
+        // The token never reaches clients.
+        let (_, all) = h
+            .call(reqwest::Method::GET, "/connections", Value::Null)
+            .await;
+        assert!(!all.to_string().contains("refresh-"));
+
+        let (_, integrations) = h
+            .call(reqwest::Method::GET, "/integrations", Value::Null)
+            .await;
+        let google = integrations
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["id"] == "google_calendar")
+            .unwrap();
+        assert_eq!(google["status"], "connected");
+
+        let (_, cals) = h
+            .call(reqwest::Method::GET, "/calendars", Value::Null)
+            .await;
+        assert_eq!(cals.as_array().unwrap().len(), 2);
+        assert_eq!(cals[0]["name"], "me@example.com");
+        assert_eq!(cals[0]["writable"], true);
+        assert_eq!(cals[0]["color"], "#9fe1e7");
+        assert_eq!(cals[1]["writable"], false);
+
+        let from = chrono::DateTime::parse_from_rfc3339("2026-10-01T00:00:00Z")
+            .unwrap()
+            .timestamp_millis();
+        let (_, events) = h
+            .call(
+                reqwest::Method::GET,
+                &format!("/calendar/events?from={from}&to={}", from + 20 * 86_400_000),
+                Value::Null,
+            )
+            .await;
+        let titles: Vec<&str> = events["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["title"].as_str().unwrap())
+            .collect();
+        assert_eq!(titles, ["Dentist", "Standup", "Standup"]);
+        assert_eq!(events["events"][0]["calendar_id"], cals[0]["id"]);
+
+        // Adding from the panel saves straight into Google.
+        let (status, created) = h
+            .call(
+                reqwest::Method::POST,
+                "/calendar/events",
+                json!({"calendar_id": cals[0]["id"], "title": "Haircut",
+                       "start": from + 3_600_000, "end": from + 7_200_000}),
+            )
+            .await;
+        assert_eq!(status, 200, "{created}");
+        assert_eq!(created["saved"], true);
+        assert_eq!(created["open_url"], Value::Null);
+        assert!(
+            fake.lock().unwrap().events["me@example.com"]
+                .iter()
+                .any(|e| e["summary"] == "Haircut")
+        );
+        // Not into a calendar the user can only read.
+        let (status, _) = h
+            .call(
+                reqwest::Method::POST,
+                "/calendar/events",
+                json!({"calendar_id": cals[1]["id"], "title": "Nope",
+                       "start": from, "end": from + 3_600_000}),
+            )
+            .await;
+        assert_eq!(status, 400);
+    }
+
+    /// The id the model got from `calendar_events` for the event called `title`.
+    fn id_of(req: &Value, title: &str) -> String {
+        req["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| m["role"] == "tool")
+            .filter_map(|m| serde_json::from_str::<Value>(m["content"].as_str()?).ok())
+            .flat_map(|out| out["events"].as_array().cloned().unwrap_or_default())
+            .find(|e| e["title"] == title)
+            .map(|e| e["id"].as_str().unwrap().to_owned())
+            .expect("the event was read first")
+    }
+
+    #[tokio::test]
+    async fn the_assistant_changes_and_removes_events_under_the_calendars_rules() {
+        let (mut h, fake) = setup(fake_account()).await;
+        let llm = scripted_llm(|req, n| match n {
+            0 => Reply::Call(
+                "calendar_events",
+                json!({"from": "2026-10-01", "to": "2026-10-13"}),
+            ),
+            1 => Reply::Call(
+                "calendar_change_event",
+                json!({"event": id_of(req, "Dentist"), "start": "2026-10-02T15:00",
+                       "event_title": "Something harmless", "calendar_id": "elsewhere"}),
+            ),
+            2 => Reply::Call(
+                "calendar_delete_event",
+                json!({"event": id_of(req, "Standup"), "which": "this"}),
+            ),
+            3 => Reply::Call(
+                "calendar_change_event",
+                json!({"event": id_of(req, "Standup"), "which": "all", "start": "2026-10-05T11:00"}),
+            ),
+            _ => Reply::Text("Done."),
+        })
+        .await;
+        h.use_mock(llm.port()).await;
+        h.state.tool_sources.add(std::sync::Arc::new(
+            crate::connections::calendar::tools::CalendarTools,
+        ));
+        sign_in(&h, json!({}), &fake).await;
+
+        let (_, conv) = h
+            .call(reqwest::Method::POST, "/conversations", json!({}))
+            .await;
+        let (_, sent) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/conversations/{}/messages", conv["id"].as_str().unwrap()),
+                json!({"content": "Move the dentist to 15:00 and drop Monday's standup"}),
+            )
+            .await;
+        let id = sent["assistant_message"]["id"].as_str().unwrap().to_owned();
+        // The card shows the event as the calendar has it, whatever the model wrote.
+        let action = pending_action(&mut h, &id).await;
+        assert_eq!(action.tool, "calendar_change_event");
+        assert_eq!(action.arguments["event_title"], "Dentist");
+        assert_eq!(action.arguments["calendar"], "me@example.com");
+        assert_ne!(action.arguments["calendar_id"], "elsewhere");
+        assert!(
+            action.summary.starts_with("Change “Dentist”"),
+            "{}",
+            action.summary
+        );
+        assert_eq!(
+            action.always_allow.as_deref(),
+            Some("Don't ask again for me@example.com")
+        );
+        let (status, _) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/actions/{}/approve", action.id),
+                json!({"always": true}),
+            )
+            .await;
+        assert_eq!(status, 200);
+        // Now allowed for this calendar: the removal runs on its own. Moving every
+        // standup at once is refused before any card.
+        let (reply, _) = h.wait_for_reply(&id).await;
+        let tools: Vec<(&str, ActionStatus, bool)> = reply
+            .actions
+            .iter()
+            .map(|a| (a.tool.as_str(), a.status, a.requires_approval))
+            .collect();
+        assert_eq!(
+            tools,
+            [
+                ("calendar_events", ActionStatus::Done, false),
+                ("calendar_change_event", ActionStatus::Done, true),
+                ("calendar_delete_event", ActionStatus::Done, false),
+                ("calendar_change_event", ActionStatus::Failed, false),
+            ],
+            "{:?}",
+            reply.actions.iter().map(|a| &a.error).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            reply.actions[2].result.as_deref(),
+            Some("removed “Standup”")
+        );
+        let events = fake.lock().unwrap().events["me@example.com"].clone();
+        let dentist = events.iter().find(|e| e["id"] == "dentist1").unwrap();
+        assert_ne!(dentist["start"]["dateTime"], "2026-10-02T08:00:00Z");
+        let standups: Vec<&str> = events
+            .iter()
+            .filter(|e| e["recurringEventId"] == "standup")
+            .map(|e| e["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(standups, ["standup_2"], "only Monday's occurrence went");
+        let (_, kinds) = h
+            .call(reqwest::Method::GET, "/permissions", Value::Null)
+            .await;
+        assert_eq!(kinds[2]["id"], "change_events");
+        assert_eq!(kinds[2]["rules"][0]["label"], "me@example.com");
+        assert_eq!(kinds[2]["autonomy"], "ask");
+    }
+
+    async fn pending_action(h: &mut Harness, message_id: &str) -> mimi_protocol::Action {
+        use futures::StreamExt;
+        loop {
+            let frame = tokio::time::timeout(Duration::from_secs(10), h.ws.next())
+                .await
+                .expect("timed out waiting for an approval card")
+                .unwrap()
+                .unwrap();
+            if let Ok(mimi_protocol::Event::MessageUpdated { message }) =
+                serde_json::from_str(frame.to_text().unwrap())
+                && message.id.to_string() == message_id
+                && let Some(a) = message
+                    .actions
+                    .iter()
+                    .find(|a| a.status == ActionStatus::PendingApproval)
+            {
+                return a.clone();
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_revoked_sign_in_says_so_and_signing_in_again_keeps_the_connection() {
+        let (h, fake) = setup(fake_account()).await;
+        let first = sign_in(&h, json!({}), &fake).await;
+        let id = first["id"].as_str().unwrap().to_owned();
+        // The user removes Mimi's access in their Google account.
+        fake.lock().unwrap().refresh_tokens.clear();
+        h.state.connections.feeds.google.forget(id.parse().unwrap());
+        let (_, events) = h
+            .call(reqwest::Method::GET, "/calendar/events", Value::Null)
+            .await;
+        assert!(
+            events["unavailable"][0]
+                .as_str()
+                .unwrap()
+                .contains("sign in again"),
+            "{events}"
+        );
+        let (_, all) = h
+            .call(reqwest::Method::GET, "/connections", Value::Null)
+            .await;
+        assert_eq!(all[0]["status"], "error");
+        assert!(all[0]["detail"].as_str().unwrap().contains("Sign in again"));
+
+        let again = sign_in(&h, json!({"reconnect": id}), &fake).await;
+        assert_eq!(
+            again["id"],
+            id.as_str(),
+            "same connection, same calendar ids"
+        );
+        assert_eq!(again["status"], "ok");
+        let (_, all) = h
+            .call(reqwest::Method::GET, "/connections", Value::Null)
+            .await;
+        assert_eq!(all.as_array().unwrap().len(), 1);
+
+        // Disconnecting tells Google to forget the access.
+        let (status, _) = h
+            .call(
+                reqwest::Method::DELETE,
+                &format!("/connections/{id}"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(status, 200);
+        for _ in 0..100 {
+            if !fake.lock().unwrap().revoked.is_empty() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("the access was never revoked");
+    }
+
+    #[tokio::test]
+    async fn without_an_app_identity_sign_in_is_not_offered() {
+        let h = Harness::new().await;
+        if crate::connections::calendar::google::Endpoints::google().is_some() {
+            return; // Built or run with a real client ID.
+        }
+        let (_, info) = h
+            .call(reqwest::Method::GET, "/google/sign-in", Value::Null)
+            .await;
+        assert_eq!(info["available"], false);
+        let (status, err) = h
+            .call(reqwest::Method::POST, "/google/sign-in", json!({}))
+            .await;
+        assert_eq!(status, 400);
+        assert!(err["message"].as_str().unwrap().contains("isn't available"));
     }
 }

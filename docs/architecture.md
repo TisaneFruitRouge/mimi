@@ -101,6 +101,46 @@ Details:
   run later.
 - **Models without tool support:** some models reject the `tools` parameter. The
   reply is retried once as plain chat.
+- **Looking things up first:** before anything is decided, `Tool::resolve` may look up
+  what the arguments point at (the calendar tools read the event a change is about) and
+  write it into the arguments, replacing whatever the model put under those keys. The
+  card, the permission decision and the run all see the real thing.
+
+### Permissions
+
+Settings › Permissions lets the user skip the card for some kinds of action. The kinds
+are descriptors in one place, `tools::permissions::KINDS`: a stable id (the settings
+key), title, the two plain-language details, an optional safety-net note, an icon and a
+colour, a default `Autonomy`, and what an exception can be about (people, calendars or
+nothing). `GET /v1/permissions` serves them with the user's choices
+(`PermissionKind`), and the Permissions page renders only that, so a new kind is a
+`Governs` variant, a descriptor, and `Tool::governed_by` on its tools.
+
+| Kind | Default | Exceptions | Tools |
+| --- | --- | --- | --- |
+| `send_mail` | ask | people | `mail_send` |
+| `add_events` | ask | calendars | `calendar_add_event` |
+| `change_events` | ask | calendars | `calendar_change_event`, `calendar_delete_event` |
+| `schedule` | automatic | none | reminders and routines |
+
+- **Choices** are `Settings.permissions`: per kind id, `{ autonomy, rules }`, where a
+  rule is `{ target: person(id) | calendar(id), autonomy }`. Settings saved by the first
+  version (`"send_mail": "automatic"`) still load, meaning the same. `PUT
+  /v1/permissions/{kind}` is the only way to change them (it refuses unknown kinds,
+  targets the kind can't have, and new exceptions about people or calendars that don't
+  exist); `PUT /v1/settings` keeps what's stored, so a stale client can't undo them.
+- **Deciding** (`requires_approval`): a tool says what a call is about with
+  `Tool::call_targets` (email recipients, a calendar id). Each target takes its
+  exception's choice, else the kind's default; a person exception covers every address
+  of that person in People, and when two exceptions cover one address, asking wins. The
+  call runs on its own only if every target does. For `send_mail` the safety net comes
+  after: every recipient must also be known (`mail::known`), whatever the rules say.
+- **"Don't ask again for Sam"**: when a card could have been skipped by an exception
+  (every target is one person or calendar with no exception of its own, and for email
+  every recipient is known), the daemon offers it: `Action.always_allow` holds the
+  text, `Approvals` keeps the exact exception, and `POST /actions/{id}/approve` with
+  `always: true` approves and adds it. Never with edited arguments. Telegram cards
+  don't offer it.
 
 ## Memory
 
@@ -369,6 +409,44 @@ the assistant; a reply box that can draft the answer with the model; Send only b
 user). Drafts the assistant writes in chat appear as editable cards with their own Send
 button (`draft-card.tsx`); `mail_send` approval cards show every field.
 
+## Calendars
+
+`connections/calendar/`. Three kinds of account (`Account`):
+
+- **Google, signed in** (`google.rs`, integration `google`): OAuth 2.0 for installed
+  apps. `POST /v1/google/sign-in` binds a listener on 127.0.0.1 (random port) for that
+  sign-in only (10 minutes at most) and returns Google's consent page, with PKCE (S256),
+  a random `state`, `access_type=offline` and two scopes: `calendar.events` and
+  `calendar.calendarlist.readonly`. The client opens it; the browser comes back to the
+  listener, which turns away anything without the right `state`; the daemon exchanges
+  the code with Google, lists the calendars and saves (or refreshes) the connection.
+  Clients poll `GET /v1/google/sign-in/{id}` and may `DELETE` it. The refresh token is
+  in the connection's config; access tokens (an hour) are kept in memory
+  (`FeedCache.google`). A refused refresh marks the connection `signed_out` ("Sign in
+  again" in Connections, which reconnects the same row with `reconnect`, keeping its
+  calendar ids); disconnecting revokes the token with Google. Events come from Google's
+  own expansion (`singleEvents`), with the series' id as `uid`; writes are
+  insert/patch/delete on an occurrence's id (one) or the series' (all). The app
+  identity is `MIMI_GOOGLE_CLIENT_ID`/`_SECRET`, at build time (`option_env!`) or run
+  time; without one, `GET /v1/google/sign-in` says `available: false` and the dialog
+  offers only the private address. See `docs/google-oauth.md`.
+- **Google through its private address** (`google_calendar`): read-only; new events
+  open a pre-filled Google page, and changes are refused with a plain explanation.
+- **CalDAV** (`caldav.rs`, `edit.rs`): objects are read with their ETag and written back
+  with `If-Match`. A change or removal of one occurrence of a repeating event is an
+  override (`RECURRENCE-ID`) or an `EXDATE`, written in the series' own form (date,
+  UTC, named zone or floating); the whole event or series is changed in place or
+  deleted. Moving every occurrence at once is refused (for Google too).
+
+The assistant's tools (`tools.rs`): `calendar_events` (each event gets an `id`: start
+plus a hash of calendar and uid; an @-mentioned event's `ev:` id works too),
+`calendar_add_event`, `calendar_change_event` and `calendar_delete_event` (`which`:
+this occurrence or all). The last two resolve the event before the card, so the card
+shows its real title, time and calendar, and they re-check that it's the same calendar
+when they run. `live_caldav_adds_changes_and_removes_events` runs all of it against a
+real server (`MIMI_TEST_CALDAV`, e.g. Radicale); `api/tests.rs › google_flow` covers
+sign-in, reads, writes, rules and revocation against `google_fake.rs`.
+
 ## People and @ mentions
 
 `crates/core/src/people/` keeps one directory of people, unified across sources.
@@ -421,9 +499,11 @@ the thing arrives as an @ pill the engine resolves like any other mention.
   event-relative ones as a bell on their event. An event's sheet shows when, where, who
   (matched to People), the invitation's notes as plain text, "Remind me before…"
   (a `before_event` reminder on that occurrence) and "Ask … about this". New events go
-  straight into CalDAV calendars; for Google ones the pre-filled Google page opens.
+  straight into CalDAV calendars and Google calendars signed in with Google; for Google
+  calendars read through their private address the pre-filled Google page opens.
   - `GET /v1/calendars` → `CalendarInfo` (stable id, name, colour, writable). Ids are
-    the connection id (Google) or connection id + hash of the collection URL (CalDAV).
+    the connection id (Google through its address) or connection id + hash of the
+    collection URL (CalDAV) or of Google's calendar id (signed in).
     Colours are the server's `calendar-color` when it has one, else picked from a fixed
     palette by id, so they never change between runs.
   - `GET /v1/calendar/events?from&to` → `CalendarEvents` (events plus the calendars that

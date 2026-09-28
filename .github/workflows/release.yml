@@ -75,6 +75,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Build the daemon and fetch llama-server
+        # The Google sign-in app identity (docs/google-oauth.md). Without these secrets
+        # the build still works; it just offers only the private-address option.
+        env:
+          MIMI_GOOGLE_CLIENT_ID: ${{ secrets.MIMI_GOOGLE_CLIENT_ID }}
+          MIMI_GOOGLE_CLIENT_SECRET: ${{ secrets.MIMI_GOOGLE_CLIENT_SECRET }}
         run: scripts/prepare-bundle.sh ${{ matrix.target }}
 
       - name: Build the installers

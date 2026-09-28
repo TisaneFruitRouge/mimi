@@ -169,7 +169,7 @@ pub async fn create(
         notes: tidy(new.notes),
     };
     // The user pressed "Add" themselves: this is their own action, not the assistant's.
-    let created = calendar::create(&target, &event)
+    let created = calendar::create(&state.http, &state.connections.feeds, &target, &event)
         .await
         .map_err(|e| AppError::bad_request(format!("Couldn't add the event: {e}")))?;
     Ok(Json(match created {

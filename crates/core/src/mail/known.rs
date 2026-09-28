@@ -19,12 +19,7 @@ use crate::people::normalize::match_key;
 pub async fn all_known(state: &AppState, recipients: &[String]) -> bool {
     let Some(emails) = recipients
         .iter()
-        .map(|raw| {
-            raw.trim()
-                .parse::<Mailbox>()
-                .ok()
-                .map(|m| m.email.to_string().to_lowercase())
-        })
+        .map(|raw| address_of(raw))
         .collect::<Option<Vec<String>>>()
     else {
         return false;
@@ -53,6 +48,15 @@ pub async fn all_known(state: &AppState, recipients: &[String]) -> bool {
         })
         .await
         .unwrap_or(false)
+}
+
+/// The address in "Sam <sam@x.org>" or a bare address, lowercased. `None` for anything
+/// else.
+pub fn address_of(raw: &str) -> Option<String> {
+    raw.trim()
+        .parse::<Mailbox>()
+        .ok()
+        .map(|m| m.email.to_string().to_lowercase())
 }
 
 fn in_contacts(c: &Connection, email: &str, mail_sources: &[String]) -> rusqlite::Result<bool> {
