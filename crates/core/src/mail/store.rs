@@ -377,11 +377,24 @@ pub fn account_addresses(c: &Connection, conn: Uuid) -> rusqlite::Result<Vec<Str
     .collect()
 }
 
-/// Every address mail arrived at, in any account.
-pub fn received_addresses(c: &Connection) -> rusqlite::Result<Vec<String>> {
-    c.prepare("SELECT DISTINCT received_on FROM mail_messages WHERE received_on IS NOT NULL")?
-        .query_map([], |r| r.get(0))?
-        .collect()
+/// Puts mail recorded as arriving at an address that isn't plainly the user's (believed
+/// from its headers before `parse::is_own_address` was the rule) back on the account's
+/// address. Returns how many messages changed.
+pub fn forget_foreign_received_on(
+    c: &Connection,
+    conn: Uuid,
+    account: &str,
+) -> rusqlite::Result<usize> {
+    let mut changed = 0;
+    for address in account_addresses(c, conn)? {
+        if !parse::is_own_address(&address, account) {
+            changed += c.execute(
+                "UPDATE mail_messages SET received_on = ?3 WHERE connection_id = ?1 AND received_on = ?2",
+                params![conn.to_string(), address, account.to_lowercase()],
+            )?;
+        }
+    }
+    Ok(changed)
 }
 
 /// An account's addresses that have mail in the inbox: (address, conversations, unread
@@ -610,11 +623,12 @@ pub fn thread(c: &Connection, id: i64, me: &[String]) -> rusqlite::Result<Option
     Ok(Some(MailThread {
         id,
         connection_id: conn.parse().unwrap_or_default(),
-        received_on,
+        received_on: received_on.clone(),
         suspicious,
         folders,
         subject,
-        participants: participants(&messages, me),
+        // The alias it arrived at is the user's, not someone they're writing with.
+        participants: participants(&messages, &[me, received_on.as_slice()].concat()),
         last_at,
         message_count: messages.len() as u32,
         unread: messages.iter().any(|m| !m.seen && !m.from_me),

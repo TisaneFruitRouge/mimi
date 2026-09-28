@@ -2680,6 +2680,92 @@ mod mail_flow {
         );
     }
 
+    /// A Cc written as plain text instead of a list still shows on the card, and the
+    /// approved message goes to exactly the addresses the card listed.
+    #[tokio::test]
+    async fn the_card_shows_every_recipient_that_is_sent_to() {
+        let fake = FakeMail::start(ME, "app-pass").await;
+        let llm = scripted_llm(|_, n| match n {
+            0 => Reply::Call(
+                "mail_send",
+                json!({"to": "sam@example.com", "cc": "x@evil.example, y@evil.example",
+                       "subject": "Lunch", "body": "Noon works."}),
+            ),
+            _ => Reply::Text("Sent."),
+        })
+        .await;
+        let mut h = Harness::new().await;
+        h.use_mock(llm.port()).await;
+        h.state
+            .tool_sources
+            .add(std::sync::Arc::new(crate::mail::tools::MailTools));
+        connect(&h, &fake, 0).await;
+
+        let id = start(&h, "Tell Sam noon works").await;
+        let action = pending(&mut h, &id).await;
+        assert_eq!(action.arguments["to"], json!(["sam@example.com"]));
+        assert_eq!(
+            action.arguments["cc"],
+            json!(["x@evil.example", "y@evil.example"])
+        );
+        assert_eq!(
+            action.summary,
+            "Send an email to sam@example.com, with a copy to x@evil.example, y@evil.example"
+        );
+
+        let (status, _) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/actions/{}/approve", action.id),
+                json!({}),
+            )
+            .await;
+        assert_eq!(status, 200);
+        let (reply, _) = h.wait_for_reply(&id).await;
+        assert_eq!(reply.actions[0].status, ActionStatus::Done);
+        let sent = fake.sent();
+        assert_eq!(sent.len(), 1);
+        let mut to = sent[0].to.clone();
+        to.sort();
+        let mut shown: Vec<String> = ["to", "cc"]
+            .iter()
+            .flat_map(|k| action.arguments[k].as_array().unwrap().clone())
+            .map(|v| v.as_str().unwrap().to_owned())
+            .collect();
+        shown.sort();
+        assert_eq!(to, shown);
+    }
+
+    /// Arguments of the wrong shape are refused before any card, rather than read in a
+    /// way the card doesn't show.
+    #[tokio::test]
+    async fn a_send_with_unreadable_arguments_never_reaches_a_card() {
+        let fake = FakeMail::start(ME, "app-pass").await;
+        let llm = scripted_llm(|_, n| match n {
+            0 => Reply::Call(
+                "mail_send",
+                json!({"to": ["sam@example.com"], "cc": {"hidden": "x@evil.example"},
+                       "subject": "Lunch", "body": "Noon works."}),
+            ),
+            _ => Reply::Text("I couldn't."),
+        })
+        .await;
+        let mut h = Harness::new().await;
+        h.use_mock(llm.port()).await;
+        h.state
+            .tool_sources
+            .add(std::sync::Arc::new(crate::mail::tools::MailTools));
+        connect(&h, &fake, 0).await;
+
+        let id = start(&h, "Tell Sam noon works").await;
+        let (reply, _) = h.wait_for_reply(&id).await;
+        let action = &reply.actions[0];
+        assert_eq!(action.status, ActionStatus::Failed);
+        assert!(!action.requires_approval);
+        assert!(action.error.as_deref().unwrap().contains("`cc`"));
+        assert!(fake.sent().is_empty());
+    }
+
     #[tokio::test]
     async fn an_approved_reply_is_sent_and_threaded() {
         let fake = FakeMail::start(ME, "app-pass").await;

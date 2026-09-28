@@ -78,12 +78,14 @@ const PALETTE: &[&str] = &[
 /// The calendar's own colour when the server has one (`#rrggbb` or `#rrggbbaa`), else a
 /// stable pick from the palette.
 pub fn calendar_color(id: &str, own: Option<&str>) -> String {
-    if let Some(c) = own.map(str::trim)
-        && c.len() >= 7
-        && c.starts_with('#')
-        && c[1..7].chars().all(|ch| ch.is_ascii_hexdigit())
+    // `get`, not slicing: the server's text may have a multi-byte character anywhere.
+    if let Some(hex) = own
+        .map(str::trim)
+        .and_then(|c| c.strip_prefix('#'))
+        .and_then(|c| c.get(..6))
+        && hex.chars().all(|ch| ch.is_ascii_hexdigit())
     {
-        return c[..7].to_ascii_lowercase();
+        return format!("#{}", hex.to_ascii_lowercase());
     }
     PALETTE[fnv1a(id.as_bytes()) as usize % PALETTE.len()].to_owned()
 }
@@ -521,6 +523,18 @@ mod tests {
             Some("Work")
         );
         assert!(target_by_id(&accounts, "nope").is_none());
+    }
+
+    /// The server writes the colour: anything that isn't one gets a palette colour.
+    #[test]
+    fn odd_colours_fall_back_to_the_palette() {
+        for odd in ["#12345é", "#é12345", "#1234", "12345678", "#12345g", "#"] {
+            assert!(
+                PALETTE.contains(&calendar_color("x", Some(odd)).as_str()),
+                "{odd}"
+            );
+        }
+        assert_eq!(calendar_color("x", Some(" #A1B2C3é ")), "#a1b2c3");
     }
 
     #[test]

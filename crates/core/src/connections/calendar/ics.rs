@@ -62,6 +62,10 @@ fn attendee(p: &icalendar::Property) -> Option<Attendee> {
 /// can't blow up.
 const MAX_OCCURRENCES: u16 = 400;
 
+/// Hard cap on the occurrences walked through (from the first) to reach a range: a daily
+/// rule for 270 years, or an hourly one for 11. Past that the event is left out.
+const MAX_STEPS: usize = 100_000;
+
 /// The calendar's own name (`X-WR-CALNAME`), if it has one.
 pub fn calendar_name(ics: &str) -> Option<String> {
     Calendar::from_str(ics)
@@ -115,12 +119,13 @@ pub fn events_between(
         let Some(start) = to_utc(&start_prop, local) else {
             continue;
         };
+        // A missing, negative or absurd length falls back to the usual one.
         let duration = event
             .get_end()
             .and_then(|end| to_utc(&end, local))
             .map(|end| end - start)
             .or_else(|| event.property_value("DURATION").and_then(parse_duration))
-            .filter(|d| *d >= Duration::zero())
+            .filter(|d| *d >= Duration::zero() && *d <= max_duration())
             .unwrap_or(if all_day {
                 Duration::days(1)
             } else {
@@ -136,7 +141,10 @@ pub fn events_between(
             .filter_map(attendee)
             .collect();
 
-        let make = |start: DateTime<Utc>| CalEvent {
+        // Calendar data comes from other people: an event at the very end of time must
+        // not overflow. Such an event is left out.
+        let end_of = |s: DateTime<Utc>| s.checked_add_signed(duration);
+        let make = |start: DateTime<Utc>, end: DateTime<Utc>| CalEvent {
             uid: uid.clone(),
             title: event
                 .get_summary()
@@ -144,7 +152,7 @@ pub fn events_between(
                 .trim()
                 .to_owned(),
             start,
-            end: start + duration,
+            end,
             all_day,
             location: event
                 .get_location()
@@ -159,39 +167,49 @@ pub fn events_between(
             attendees: attendees.clone(),
             organizer: organizer.clone(),
         };
-        let overlaps = |s: DateTime<Utc>| {
-            s < to && s + duration > from || (duration.is_zero() && s >= from && s < to)
+        // The occurrence starting at `s`, if it overlaps the range.
+        let occurrence_in_range = |s: DateTime<Utc>| {
+            let e = end_of(s)?;
+            let overlaps = s < to && e > from || (duration.is_zero() && s >= from && s < to);
+            overlaps.then(|| make(s, e))
         };
 
         let recurring =
             event.property_value("RRULE").is_some() && event.get_recurrence_id().is_none();
         if !recurring {
-            if overlaps(start) {
-                out.push(make(start));
-            }
+            out.extend(occurrence_in_range(start));
             continue;
         }
-        let Ok(set) = event.get_recurrence() else {
+        // A rule repeating every second or minute is taken as unreadable: no real calendar
+        // has one, and walking it from an early start up to today would take hours.
+        let every_minute = |r: &icalendar::rrule::RRule| {
+            use icalendar::rrule::Frequency;
+            matches!(r.get_freq(), Frequency::Secondly | Frequency::Minutely)
+        };
+        let Some(set) = event
+            .get_recurrence()
+            .ok()
+            .filter(|s| !s.get_rrule().iter().any(every_minute))
+        else {
             // An unreadable rule: still show the first occurrence rather than nothing.
-            if overlaps(start) {
-                out.push(make(start));
-            }
+            out.extend(occurrence_in_range(start));
             continue;
         };
-        let window_start = (from - duration).with_timezone(&icalendar::rrule::Tz::UTC);
-        let window_end = to.with_timezone(&icalendar::rrule::Tz::UTC);
-        for occurrence in set
-            .after(window_start)
-            .before(window_end)
-            .all(MAX_OCCURRENCES)
-            .dates
-        {
+        let window_start = from.checked_sub_signed(duration).unwrap_or(from);
+        let mut shown = 0;
+        // Occurrences come in order from the first. Walking is capped too, so a rule
+        // starting centuries ago gives up rather than stalling.
+        for occurrence in set.limit().into_iter().take(MAX_STEPS) {
             let occurrence = occurrence.with_timezone(&Utc);
-            if overridden.contains(&(uid.clone(), occurrence)) {
+            if occurrence > to || shown >= MAX_OCCURRENCES {
+                break;
+            }
+            if occurrence < window_start || overridden.contains(&(uid.clone(), occurrence)) {
                 continue;
             }
-            if overlaps(occurrence) {
-                out.push(make(occurrence));
+            if let Some(e) = occurrence_in_range(occurrence) {
+                out.push(e);
+                shown += 1;
             }
         }
     }
@@ -230,7 +248,13 @@ fn local_midnight(date: NaiveDate, local: &impl TimeZone) -> Option<DateTime<Utc
         .map(|d| d.with_timezone(&Utc))
 }
 
-/// Parses an RFC 5545 duration like `PT1H30M`, `P1D` or `P2W`.
+/// The longest an event may last; longer ones are taken as mistakes (or attacks).
+fn max_duration() -> Duration {
+    Duration::days(10 * 366)
+}
+
+/// Parses an RFC 5545 duration like `PT1H30M`, `P1D` or `P2W`. `None` for anything
+/// unreadable or longer than `max_duration`.
 fn parse_duration(raw: &str) -> Option<Duration> {
     let raw = raw.trim();
     let (negative, raw) = match raw.strip_prefix('-') {
@@ -246,18 +270,20 @@ fn parse_duration(raw: &str) -> Option<Duration> {
             rest = r;
             continue;
         }
+        // Digits are ASCII, so the count is also a byte offset.
         let digits = rest.chars().take_while(char::is_ascii_digit).count();
-        let n: i64 = rest[..digits].parse().ok()?;
-        let unit = rest[digits..].chars().next()?;
-        total += match (unit, in_time) {
-            ('W', false) => Duration::weeks(n),
-            ('D', false) => Duration::days(n),
-            ('H', true) => Duration::hours(n),
-            ('M', true) => Duration::minutes(n),
-            ('S', true) => Duration::seconds(n),
+        let n: i64 = rest.get(..digits)?.parse().ok()?;
+        let unit = rest.get(digits..)?.chars().next()?;
+        let part = match (unit, in_time) {
+            ('W', false) => Duration::try_weeks(n),
+            ('D', false) => Duration::try_days(n),
+            ('H', true) => Duration::try_hours(n),
+            ('M', true) => Duration::try_minutes(n),
+            ('S', true) => Duration::try_seconds(n),
             _ => return None,
-        };
-        rest = &rest[digits + 1..];
+        }?;
+        total = total.checked_add(&part).filter(|t| *t <= max_duration())?;
+        rest = rest.get(digits + unit.len_utf8()..)?;
     }
     Some(if negative { -total } else { total })
 }
@@ -369,5 +395,124 @@ END:VCALENDAR\r
         assert_eq!(parse_duration("P2W"), Some(Duration::weeks(2)));
         assert_eq!(parse_duration("-PT15M"), Some(Duration::minutes(-15)));
         assert_eq!(parse_duration("nonsense"), None);
+        // Absurd lengths are unreadable, not a crash.
+        assert_eq!(parse_duration("P999999999D"), None);
+        assert_eq!(parse_duration("P99999999999999999W"), None);
+        assert_eq!(parse_duration("PT9223372036854775807S"), None);
+        assert_eq!(
+            parse_duration("P3650DT1H"),
+            Some(Duration::hours(3650 * 24 + 1))
+        );
+        assert_eq!(parse_duration("P1é"), None);
+        assert_eq!(parse_duration("PT"), Some(Duration::zero()));
+    }
+
+    /// A rule repeating very often from long ago can't stall reading the calendar.
+    #[test]
+    fn endless_rules_give_up_quickly() {
+        let rules = [
+            ("20000101T000000Z", "FREQ=SECONDLY", 0),
+            ("20000101T000000Z", "FREQ=MINUTELY", 0),
+            ("20000101T000000Z", "FREQ=HOURLY", 0),
+            (
+                "19000101T000000Z",
+                "FREQ=YEARLY;BYHOUR=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23;BYMINUTE=0,10,20,30,40,50",
+                0,
+            ),
+            ("20000101T000000Z", "FREQ=DAILY", 1),
+            ("20000101T000000Z", "FREQ=YEARLY;BYMONTH=10;BYMONTHDAY=1", 1),
+        ];
+        for (start, rule, expected) in rules {
+            let ics = format!(
+                "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:r@example.com\r\n\
+                 DTSTART:{start}\r\nRRULE:{rule}\r\nSUMMARY:Again\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+            );
+            let started = std::time::Instant::now();
+            let events = events_between(
+                &ics,
+                "Personal",
+                zurich(2026, 10, 1, 0, 0),
+                zurich(2026, 10, 2, 0, 0),
+                &Zurich,
+            )
+            .unwrap();
+            assert_eq!(events.len(), expected, "{rule}");
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(2),
+                "{rule} took {:?}",
+                started.elapsed()
+            );
+        }
+    }
+
+    /// Calendars are written by other people: hostile values mustn't crash the daemon.
+    #[test]
+    fn hostile_calendar_data_is_skipped_not_fatal() {
+        let ics = "BEGIN:VCALENDAR\r
+VERSION:2.0\r
+BEGIN:VEVENT\r
+UID:long@example.com\r
+DTSTART:20261001T080000Z\r
+DURATION:P999999999D\r
+SUMMARY:Forever\r
+END:VEVENT\r
+BEGIN:VEVENT\r
+UID:end@example.com\r
+DTSTART:+2621421231T000000Z\r
+DURATION:P3000D\r
+SUMMARY:End of time\r
+END:VEVENT\r
+BEGIN:VEVENT\r
+UID:far@example.com\r
+DTSTART:20261001T090000Z\r
+DTEND:99991231T000000Z\r
+SUMMARY:Very long\r
+END:VEVENT\r
+BEGIN:VEVENT\r
+UID:rule@example.com\r
+DTSTART:99991231T230000Z\r
+DURATION:P3650D\r
+RRULE:FREQ=SECONDLY;INTERVAL=2147483647\r
+SUMMARY:Last second\r
+END:VEVENT\r
+BEGIN:VEVENT\r
+UID:daily@example.com\r
+DTSTART:20261001T100000Z\r
+DURATION:P999999999W\r
+RRULE:FREQ=DAILY\r
+SUMMARY:Daily\r
+END:VEVENT\r
+END:VCALENDAR\r
+";
+        let events = events_between(
+            ics,
+            "Personal",
+            zurich(2026, 10, 1, 0, 0),
+            zurich(2026, 10, 2, 0, 0),
+            &Zurich,
+        )
+        .unwrap();
+        let summary: Vec<(&str, Duration)> = events
+            .iter()
+            .map(|e| (e.title.as_str(), e.end - e.start))
+            .collect();
+        // The absurd lengths fall back to zero; the rest are left out or kept as they are.
+        assert_eq!(
+            summary,
+            [
+                ("Forever", Duration::zero()),
+                ("Very long", Duration::zero()),
+                ("Daily", Duration::zero()),
+            ]
+        );
+        // Far in the future, nothing overflows either.
+        events_between(
+            ics,
+            "Personal",
+            Utc.with_ymd_and_hms(9999, 12, 1, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(9999, 12, 31, 23, 59, 0).unwrap(),
+            &Zurich,
+        )
+        .unwrap();
     }
 }

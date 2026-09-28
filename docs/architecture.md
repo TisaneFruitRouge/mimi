@@ -275,7 +275,10 @@ self-signed certificates are only accepted for loopback servers (Proton Bridge).
      copy and starts over.
    - New messages: first pass `UID SEARCH SINCE <90 days ago>` (newest 2,000), later
      `UID SEARCH UID <last+1>:*`. Sizes first, then bodies in chunks of 25 (`BODY.PEEK[]`,
-     so reading doesn't mark mail read); over 2 MB only the headers.
+     so reading doesn't mark mail read); over 2 MB only the headers. Each chunk is stored
+     with the high-water mark it reached (only over UIDs actually fetched, in order), so
+     a pass that fails or times out part-way carries on from there. A message that can't
+     be read, or takes over 20 s to, is stored with its headers and a note as its body.
    - Flags and removals: `UID FETCH <min>:<max> (UID FLAGS)` over what's stored.
    - Mail older than 97 days is forgotten; the high-water mark becomes
      `max(highest UID seen, UIDNEXT-1)`.
@@ -303,7 +306,9 @@ same Message-ID in two mailboxes (a reply in Sent and Inbox) shows once.
 **Untrusted content.** Bodies are plain text: HTML goes through `parse::strip_hidden`
 (elements hidden by `display:none`, `visibility:hidden`, zero opacity or size,
 `mso-hide`, the `hidden` attribute; comments, scripts, styles; text whose inherited font
-size is under 2px) and html2text, and zero-width characters are removed. Tools label
+size is under 2px) and html2text, and zero-width characters are removed. That pass is
+linear however the HTML is nested, reads at most 512 KB of it, and leaves out tags
+nested over 100 deep (keeping their text), so crafted HTML can't stall sync. Tools label
 mail as data; the only tool that acts, `mail_send`, always needs approval and its card
 shows the whole message. Model calls about mail (sorting, summaries, reply drafts) get
 no tools; their answers are shown to the user or parsed into a fixed shape (a category

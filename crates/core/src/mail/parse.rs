@@ -45,7 +45,7 @@ pub fn parse(raw: &[u8]) -> Option<Parsed> {
     // message suspicious.
     let hidden_instructions = match msg.html_part(0).map(|p| &p.body) {
         Some(PartType::Html(html)) => super::suspicious::aimed_at_assistants(
-            &html2text::from_read(html.as_bytes(), 100).unwrap_or_default(),
+            &html2text::from_read(simplify_html(html, false).as_bytes(), 100).unwrap_or_default(),
         ),
         _ => false,
     };
@@ -203,14 +203,31 @@ const SHARED_DOMAINS: &[&str] = &[
     "yandex.ru",
 ];
 
+/// Whether `address` is plainly the user's, for an account whose main address is
+/// `account`: that address, a +tag of it, or any address on the account's own domain
+/// (not a domain shared by many people, like gmail.com). Headers of an incoming message
+/// can name any address, so nothing else is ever taken as the user's.
+pub fn is_own_address(address: &str, account: &str) -> bool {
+    let (address, account) = (address.to_lowercase(), account.to_lowercase());
+    let (Some((l, d)), Some((local, domain))) = (address.split_once('@'), account.split_once('@'))
+    else {
+        return false;
+    };
+    address == account
+        || (d == domain
+            && !domain.is_empty()
+            && (!SHARED_DOMAINS.contains(&domain) || l.split('+').next() == Some(local)))
+}
+
 /// Which of the user's addresses an incoming message arrived at, for an account whose
 /// main address is `account`: an alias or catch-all address on their own domain, a
 /// +tag, or the account's address itself.
 ///
-/// A delivery header is believed when the address is plainly the user's (their own
-/// domain, or their address with a +tag) or when the message was also addressed to it
-/// (an alias on another domain). Otherwise the visible recipients decide, and failing
-/// that (Bcc, mailing lists) it's the account's address.
+/// A delivery header is believed only when the address is plainly the user's
+/// (`is_own_address`): anyone can write one into a message, and it must not make an
+/// address of theirs count as the user's. Otherwise the visible recipients decide, and
+/// failing that (Bcc, mailing lists) it's the account's address. So mail to an alias on
+/// another domain counts as arriving at the account's address.
 pub fn received_on(
     delivered_to: &[String],
     to: &[MailAddress],
@@ -218,19 +235,9 @@ pub fn received_on(
     account: &str,
 ) -> String {
     let account = account.to_lowercase();
-    let (local, domain) = account.split_once('@').unwrap_or((&account, ""));
-    let own_domain = !domain.is_empty() && !SHARED_DOMAINS.contains(&domain);
-    let mine = |a: &str| {
-        let Some((l, d)) = a.split_once('@') else {
-            return false;
-        };
-        a == account || (d == domain && (own_domain || l.split('+').next() == Some(local)))
-    };
+    let mine = |a: &str| is_own_address(a, &account);
     let visible: Vec<&str> = to.iter().chain(cc).map(|a| a.email.as_str()).collect();
-    if let Some(a) = delivered_to
-        .iter()
-        .find(|a| mine(a) || visible.contains(&a.as_str()))
-    {
+    if let Some(a) = delivered_to.iter().find(|a| mine(a)) {
         return a.clone();
     }
     if visible.contains(&account.as_str()) {
@@ -345,18 +352,71 @@ const VOID: &[&str] = &[
     "wbr",
 ];
 
+/// Most HTML read from one message. The rest is left out, so a huge message can't
+/// stall sync (the text shown is cut much shorter anyway, see `MAX_BODY`).
+const MAX_HTML: usize = 512 * 1024;
+
+/// Deepest nesting handed on to the HTML-to-text conversion, which slows down sharply
+/// with depth. Tags nested deeper are left out; their text stays.
+const MAX_DEPTH: usize = 100;
+
+/// Elements whose end tag may be left out: a new one closes the previous one
+/// (`<p>a<p>b`), so they don't pile up as nesting.
+const OPTIONAL_END: &[&str] = &["p", "li", "dt", "dd", "tr", "td", "th", "option"];
+
 /// Removes what a reader can't see (elements hidden by styles or the `hidden` attribute,
 /// text in a font too small to read, comments, scripts, styles, templates), so hidden
-/// instructions don't reach the model.
+/// instructions don't reach the model. See `simplify_html`.
 pub fn strip_hidden(html: &str) -> String {
+    simplify_html(html, true)
+}
+
+/// `html` cut to `MAX_HTML` and flattened below `MAX_DEPTH`, without comments,
+/// scripts, styles and templates, and with `drop_hidden`, without anything a reader
+/// can't see either. Linear in the length of the HTML, however it's nested.
+pub fn simplify_html(html: &str, drop_hidden: bool) -> String {
+    let cut = (0..=MAX_HTML.min(html.len()))
+        .rev()
+        .find(|&i| html.is_char_boundary(i))
+        .unwrap_or(0);
+    let html = &html[..cut];
     let lower = html.to_ascii_lowercase();
     let bytes = lower.as_bytes();
     let mut out = String::with_capacity(html.len());
-    // Open elements, and whether text inside each is too small to read. Font size is
-    // inherited: `font-size: 0` on a wrapper is a common layout trick, with readable
-    // text set again inside, so only text that ends up tiny is dropped.
-    let mut open: Vec<(String, bool)> = Vec::new();
-    let tiny = |open: &[(String, bool)]| open.last().is_some_and(|(_, t)| *t);
+    // Open elements. Font size is inherited: `font-size: 0` on a wrapper is a common
+    // layout trick, with readable text set again inside, so only text that ends up tiny
+    // is dropped.
+    struct Open {
+        name: String,
+        /// Text inside is too small to read.
+        tiny: bool,
+        /// Its start tag was passed on (not left out for being too deep).
+        written: bool,
+    }
+    type Counts = std::collections::HashMap<String, usize>;
+    /// Closes the elements from the top of the stack down to `pos`. Returns whether the
+    /// one at `pos` had its start tag written.
+    fn close_from(
+        open: &mut Vec<Open>,
+        counts: &mut Counts,
+        depth: &mut usize,
+        pos: usize,
+    ) -> bool {
+        let written = open[pos].written;
+        for o in open.drain(pos..) {
+            if let Some(n) = counts.get_mut(&o.name) {
+                *n -= 1;
+            }
+            *depth -= usize::from(o.written);
+        }
+        written
+    }
+    let mut open: Vec<Open> = Vec::new();
+    // How many of each element are open, so a closing tag with nothing to close is
+    // dropped at once instead of searching the whole stack.
+    let mut counts = Counts::new();
+    let mut depth = 0;
+    let tiny = |open: &[Open]| drop_hidden && open.last().is_some_and(|o| o.tiny);
     let mut i = 0;
     while i < html.len() {
         let Some(rel) = lower[i..].find('<') else {
@@ -387,28 +447,47 @@ pub fn strip_hidden(html: &str) -> String {
             .collect();
         i = end;
         if tag.starts_with('/') {
-            if let Some(pos) = open.iter().rposition(|(n, _)| *n == name) {
-                open.truncate(pos);
+            // Once one is known to be open, the search stops at it, and everything it
+            // passes is closed: each element is searched past once at most.
+            if counts.get(&name).is_some_and(|n| *n > 0)
+                && let Some(pos) = open.iter().rposition(|o| o.name == name)
+                && close_from(&mut open, &mut counts, &mut depth, pos)
+            {
+                out.push_str(&html[start..end]);
             }
-            out.push_str(&html[start..end]);
             continue;
         }
         let self_closing = tag.ends_with('/') || VOID.contains(&name.as_str()) || name.is_empty();
         let hidden = matches!(
             name.as_str(),
             "script" | "style" | "template" | "head" | "title"
-        ) || hides(tag);
+        ) || (drop_hidden && hides(tag));
         if hidden {
             if !self_closing {
                 i = skip_element(&lower, bytes, end, &name);
             }
             continue;
         }
+        let mut written = true;
         if !self_closing {
+            if OPTIONAL_END.contains(&name.as_str()) && open.last().is_some_and(|o| o.name == name)
+            {
+                let top = open.len() - 1;
+                close_from(&mut open, &mut counts, &mut depth, top);
+            }
             let small = font_size(tag).map_or(tiny(&open), |v| font_too_small(&v));
-            open.push((name, small));
+            written = depth < MAX_DEPTH;
+            depth += usize::from(written);
+            *counts.entry(name.clone()).or_default() += 1;
+            open.push(Open {
+                name,
+                tiny: small,
+                written,
+            });
         }
-        out.push_str(&html[start..end]);
+        if written {
+            out.push_str(&html[start..end]);
+        }
     }
     out
 }
@@ -478,11 +557,19 @@ fn style_hides(style: &str) -> bool {
 fn skip_element(lower: &str, bytes: &[u8], from: usize, name: &str) -> usize {
     let open = format!("<{name}");
     let close = format!("</{name}");
+    let find = |pattern: &str, at: usize| lower[at..].find(pattern).map(|p| at + p);
+    // The next start and end tags, searched for again only once passed: every search
+    // covers new text, so deep nesting stays linear.
+    let (mut next_open, mut next_close) = (find(&open, from), find(&close, from));
     let mut depth = 1;
     let mut i = from;
     while depth > 0 {
-        let next_open = lower[i..].find(&open).map(|p| i + p);
-        let next_close = lower[i..].find(&close).map(|p| i + p);
+        if next_open.is_some_and(|o| o < i) {
+            next_open = find(&open, i);
+        }
+        if next_close.is_some_and(|c| c < i) {
+            next_close = find(&close, i);
+        }
         match (next_open, next_close) {
             (_, None) => return lower.len(),
             (Some(o), Some(c)) if o < c => {
@@ -628,12 +715,17 @@ mod tests {
         assert_eq!(received_on(&p, "me@gmail.com"), "me@gmail.com");
         let p = msg("To: me+shop@gmail.com\r\n");
         assert_eq!(received_on(&p, "me@gmail.com"), "me+shop@gmail.com");
-        // An alias on another domain counts when the message was addressed to it.
-        let p = msg("To: v@other.example\r\nX-Original-To: v@other.example\r\n");
+        // An address on another domain is never taken as the user's, even when the
+        // message was addressed to it: anyone can write these headers.
+        let p = msg(
+            "To: x@evil.example\r\nX-Original-To: x@evil.example\r\nDelivered-To: vincent@thewendlings.com\r\n",
+        );
         assert_eq!(
             received_on(&p, "vincent@thewendlings.com"),
-            "v@other.example"
+            "vincent@thewendlings.com"
         );
+        let p = msg("To: x@evil.example\r\nX-Original-To: x@evil.example\r\n");
+        assert_eq!(received_on(&p, "me@gmail.com"), "me@gmail.com");
         // A forwarding hop's foreign address is not.
         let p = msg("To: list@lists.example.net\r\nX-Original-To: stranger@other.example\r\n");
         assert_eq!(
@@ -679,6 +771,57 @@ mod tests {
         assert!(text.contains("Small print"), "{text}");
         for bad in ["tiny words", "one pixel", "preheader"] {
             assert!(!text.contains(bad), "{bad} leaked into: {text}");
+        }
+    }
+
+    /// HTML built to be slow to read (as sync reads it: the whole message) is read in
+    /// well under a second, and deep nesting keeps its text.
+    #[test]
+    fn crafted_html_is_read_quickly() {
+        // Under the size cap: all of it is read.
+        let unmatched = format!(
+            "<p>Start</p>{}{}<p>End</p>",
+            "<b>".repeat(60_000),
+            "</i>".repeat(60_000)
+        );
+        // Over it: the start is.
+        let huge = format!(
+            "<p>Start</p>{}{}<p>End</p>",
+            "<b>".repeat(160_000),
+            "</i>".repeat(160_000)
+        );
+        let nested = format!(
+            "{}Deep down{}",
+            "<div>".repeat(100_000),
+            "</div>".repeat(100_000)
+        );
+        let hidden = format!(
+            "<p>Shown</p><div hidden>{}secret{}</div><p>After</p>",
+            "<div>".repeat(40_000),
+            "</div>".repeat(40_000)
+        );
+        let tables = format!(
+            "{}Cell{}",
+            "<table><tr><td>".repeat(20_000),
+            "</td></tr></table>".repeat(20_000)
+        );
+        for (html, keep) in [
+            (&unmatched, "End"),
+            (&huge, "Start"),
+            (&nested, "Deep down"),
+            (&hidden, "After"),
+            (&tables, "Cell"),
+        ] {
+            let raw = format!(
+                "From: a@example.com\r\nTo: b@example.com\r\nSubject: x\r\n\
+                 Content-Type: text/html; charset=utf-8\r\n\r\n{html}\r\n"
+            );
+            let started = std::time::Instant::now();
+            let body = parse(raw.as_bytes()).unwrap().body;
+            let took = started.elapsed();
+            assert!(took < std::time::Duration::from_secs(2), "{keep}: {took:?}");
+            assert!(body.contains(keep), "{keep} missing from {body}");
+            assert!(!body.contains("secret"));
         }
     }
 

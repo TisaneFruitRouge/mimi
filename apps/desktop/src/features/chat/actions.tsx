@@ -145,7 +145,7 @@ function openUrlOf(a: Action): string | null {
 
 function ApprovalCard({ action: a }: { action: Action }) {
   const [busy, setBusy] = useState<null | "approve" | "reject">(null);
-  const rows = describeArgs(a.tool, a.arguments as Record<string, unknown>);
+  const rows = describeArgs(a.tool, a.arguments);
 
   if (a.status !== "pending_approval") return <DecidedCard action={a} />;
 
@@ -178,8 +178,8 @@ function ApprovalCard({ action: a }: { action: Action }) {
       </div>
       {rows.length > 0 && (
         <dl className="mt-3.5 grid grid-cols-[auto_1fr] gap-x-5 gap-y-2 rounded-[14px] bg-subtle px-4 py-3 type-callout">
-          {rows.map((r) => (
-            <div key={r.label} className="contents">
+          {rows.map((r, i) => (
+            <div key={`${i}-${r.label}`} className="contents">
               <dt className="text-muted-foreground">{r.label}</dt>
               <dd className="min-w-0 break-words whitespace-pre-wrap">{r.value}</dd>
             </div>

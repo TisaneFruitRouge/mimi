@@ -482,12 +482,20 @@ async fn mail_is_split_by_the_address_it_arrived_at() {
     };
     assert_eq!(overview(&state, other).await.unwrap().unread, 0);
 
-    // Aliases are the user's own addresses, never a conversation's participants.
+    // An alias is never one of its conversation's participants, but mail from it isn't
+    // taken as the user's (only what they sent, or mail from the account's address).
+    let order = all_threads(&state)
+        .await
+        .into_iter()
+        .find(|t| t.subject == "Order")
+        .unwrap();
     assert!(
-        my_addresses(&state)
-            .await
-            .contains(&"shop@example.org".to_owned())
+        order
+            .participants
+            .iter()
+            .all(|p| p.email != "shop@example.org")
     );
+    assert_eq!(my_addresses(&state).await, [ME]);
 
     // Mail stored before the column existed is filled in from its recipients.
     state
@@ -753,6 +761,157 @@ async fn replies_go_out_from_the_alias_the_mail_arrived_at() {
         "{err}"
     );
     assert_eq!(fake.sent().len(), 3);
+}
+
+/// A pass that fails part-way keeps what it stored, and the next one carries on from
+/// there instead of fetching everything again.
+#[tokio::test]
+async fn a_failed_pass_keeps_its_progress() {
+    let fake = FakeMail::start(ME, PASSWORD).await;
+    let now = now_ms();
+    for n in 1..=30 {
+        fake.deliver(
+            "INBOX",
+            &message(
+                "Sam <sam@example.com>",
+                ME,
+                &format!("Note {n}"),
+                "Hi",
+                &format!("n{n}@example.com"),
+                "",
+            ),
+            now - DAY,
+            &["\\Seen"],
+        );
+    }
+    let (state, account) = account_without_loop(&fake).await;
+    // The second batch can't be fetched.
+    fake.set_unreadable(Some(28));
+    let mut s = sync::session(&account.config).await.unwrap();
+    assert!(sync::pass(&state, &mut s, &account).await.is_err());
+    let _ = s.logout().await;
+    assert_eq!(fake.bodies_sent(), 25);
+    assert_eq!(all_threads(&state).await.len(), 25);
+
+    fake.set_unreadable(None);
+    pass(&state, &account).await;
+    assert_eq!(all_threads(&state).await.len(), 30);
+    // Only the five it hadn't stored were fetched again.
+    assert_eq!(fake.bodies_sent(), 30);
+}
+
+/// A message that can't be read is stored with a note, not dropped or fetched forever.
+#[tokio::test]
+async fn an_unreadable_message_is_stored_with_a_note() {
+    let fake = FakeMail::start(ME, PASSWORD).await;
+    fake.deliver("INBOX", ":\r\n", now_ms() - DAY, &[]);
+    let (state, account) = account_without_loop(&fake).await;
+    pass(&state, &account).await;
+    pass(&state, &account).await;
+    assert_eq!(fake.bodies_sent(), 1);
+    let list = all_threads(&state).await;
+    assert_eq!(list.len(), 1);
+    let detail = thread(&state, list[0].id).await.unwrap().unwrap();
+    assert!(
+        detail.messages[0].body.contains("couldn't be read here"),
+        "{}",
+        detail.messages[0].body
+    );
+}
+
+/// Anyone can write delivery headers: one naming the sender's own address must not make
+/// it the user's, mark the sender's mail as the user's, or let mail go out as it.
+#[tokio::test]
+async fn forged_delivery_headers_dont_make_an_address_the_users() {
+    const EVIL: &str = "x@evil.example";
+    let fake = FakeMail::start(ME, PASSWORD).await;
+    fake.deliver(
+        "INBOX",
+        &message(
+            "X <x@evil.example>",
+            EVIL,
+            "Invoice",
+            "Please pay.",
+            "f1@evil.example",
+            "X-Original-To: x@evil.example\r\nDelivered-To: me@example.org\r\n",
+        ),
+        now_ms() - 2 * DAY,
+        &[],
+    );
+    let (state, account) = account_without_loop(&fake).await;
+    pass(&state, &account).await;
+    let list = all_threads(&state).await;
+    assert_eq!(list[0].received_on.as_deref(), Some(ME));
+    assert!(!my_addresses(&state).await.contains(&EVIL.to_owned()));
+
+    // Mail stored when the header was still believed is put back on the account.
+    state
+        .db
+        .call(|c| {
+            c.execute(
+                "UPDATE mail_messages SET received_on = 'x@evil.example'",
+                [],
+            )
+        })
+        .await
+        .unwrap();
+    pass(&state, &account).await;
+    assert_eq!(
+        all_threads(&state).await[0].received_on.as_deref(),
+        Some(ME)
+    );
+
+    // Later mail from that address is theirs, not the user's.
+    fake.deliver(
+        "INBOX",
+        &message(
+            "X <x@evil.example>",
+            ME,
+            "Re: Invoice",
+            "Reminder.",
+            "f2@evil.example",
+            "In-Reply-To: <f1@evil.example>\r\n",
+        ),
+        now_ms() - DAY,
+        &[],
+    );
+    pass(&state, &account).await;
+    let detail = thread(&state, all_threads(&state).await[0].id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(detail.messages.len(), 2);
+    assert!(detail.messages.iter().all(|m| !m.from_me));
+    assert!(!detail.thread.last_from_me);
+    assert!(detail.thread.participants.iter().any(|p| p.email == EVIL));
+
+    // And nothing can be sent as it, asked for or not.
+    let draft = triage::reply_draft(&detail, "Paid.".to_owned());
+    let err = send(
+        &state,
+        MailDraft {
+            from: Some(EVIL.to_owned()),
+            ..draft.clone()
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        err.contains("isn't one of this account's addresses"),
+        "{err}"
+    );
+    send(
+        &state,
+        MailDraft {
+            from: None,
+            ..draft
+        },
+    )
+    .await
+    .unwrap();
+    let sent = fake.sent();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].from, ME);
 }
 
 #[tokio::test]

@@ -478,14 +478,32 @@ impl Tool for Send {
         true
     }
 
+    /// Every recipient as its own entry, exactly as it will be sent: the card lists them
+    /// one by one, whatever shape the model wrote them in.
+    fn prepare(&self, args: Value) -> Result<Value, String> {
+        let mut args = crate::tools::conform(&self.parameters(), args)?;
+        for key in ["to", "cc"] {
+            if !args[key].is_null() {
+                args[key] = json!(string_list(&args[key]));
+            }
+        }
+        Ok(args)
+    }
+
+    /// Names every recipient, copies included: a Telegram approval shows only this line.
     fn summary(&self, args: &Value) -> String {
         let to = string_list(&args["to"]);
-        let who = match to.as_slice() {
-            [] => "nobody yet".to_owned(),
-            [one] => one.clone(),
-            [one, rest @ ..] => format!("{one} and {} more", rest.len()),
+        let cc = string_list(&args["cc"]);
+        let who = if to.is_empty() {
+            "nobody yet".to_owned()
+        } else {
+            to.join(", ")
         };
-        format!("Send an email to {who}")
+        if cc.is_empty() {
+            format!("Send an email to {who}")
+        } else {
+            format!("Send an email to {who}, with a copy to {}", cc.join(", "))
+        }
     }
 
     fn result_label(&self, args: &Value, _output: &Value) -> String {

@@ -36,6 +36,8 @@ const IDLE_FOR: Duration = Duration::from_secs(10 * 60);
 const POLL_EVERY: Duration = Duration::from_secs(2 * 60);
 /// Longest a full pass may take before the connection is considered stuck.
 const PASS_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// Longest reading one message may take before it's stored unread.
+const PARSE_TIMEOUT: Duration = Duration::from_secs(20);
 const DAY_MS: i64 = 24 * 3600 * 1000;
 
 fn proto(e: async_imap::error::Error) -> MailError {
@@ -281,7 +283,9 @@ pub async fn pass(
     let mut changed = state
         .db
         .call(move |c| {
-            Ok(store::backfill_received_on(c, conn, &me)? + store::backfill_suspicious(c, conn)?)
+            Ok(store::backfill_received_on(c, conn, &me)?
+                + store::forget_foreign_received_on(c, conn, &me)?
+                + store::backfill_suspicious(c, conn)?)
         })
         .await
         .map_err(|e| MailError::Protocol(e.to_string()))?
@@ -373,18 +377,22 @@ async fn sync_mailbox(
         .or(last_uid)
         .unwrap_or(0)
         .max(selected.uid_next.unwrap_or(1).saturating_sub(1));
+    // Each batch is stored with the high-water mark it reached, so a pass that fails or
+    // runs out of time part-way carries on from there next time instead of starting over.
+    // The mark only moves over messages actually fetched, in order: a server may end a
+    // fetch early without an error, and what it left out must be fetched next time.
+    let mut in_order = true;
     for chunk in new_uids.chunks(CHUNK) {
         let fetched = fetch_messages(session, chunk).await?;
-        let me = account.config.email.clone();
-        let mailbox_name = mailbox.to_owned();
-        let messages: Vec<NewMessage> = tokio::task::spawn_blocking(move || {
-            fetched
-                .into_iter()
-                .filter_map(|m| m.into_new(conn, &mailbox_name, folder, &me))
-                .collect()
-        })
-        .await
-        .map_err(|e| MailError::Protocol(e.to_string()))?;
+        let got: std::collections::HashSet<u32> = fetched.iter().map(|f| f.uid).collect();
+        let prefix = chunk.iter().take_while(|u| got.contains(u)).last().copied();
+        let reached = if in_order { prefix } else { None };
+        in_order &= prefix == chunk.last().copied();
+        let mut messages: Vec<NewMessage> = Vec::with_capacity(fetched.len());
+        for m in fetched {
+            messages.push(m.read(conn, mailbox, folder, &account.config.email).await);
+        }
+        let (name, now) = (mailbox.to_owned(), now_ms());
         let added = state
             .db
             .call(move |c| {
@@ -392,6 +400,9 @@ async fn sync_mailbox(
                 let mut added = 0;
                 for m in &messages {
                     added += usize::from(store::insert(&tx, m)?.is_some());
+                }
+                if let Some(reached) = reached {
+                    store::set_sync_state(&tx, conn, &name, validity, reached, now)?;
                 }
                 tx.commit()?;
                 Ok(added)
@@ -496,21 +507,42 @@ struct Fetched {
 }
 
 impl Fetched {
+    /// Reads the message, away from the async threads. One that can't be read, or takes
+    /// too long, is still stored (its headers, with a note for its body), so it's never
+    /// fetched and tried again.
+    async fn read(self, conn: Uuid, mailbox: &str, folder: &'static str, me: &str) -> NewMessage {
+        let raw: Arc<[u8]> = self.raw.as_slice().into();
+        let reading = tokio::task::spawn_blocking({
+            let raw = raw.clone();
+            move || parse::parse(&raw)
+        });
+        let parsed = match tokio::time::timeout(PARSE_TIMEOUT, reading).await {
+            Ok(Ok(Some(mut parsed))) => {
+                if self.headers_only {
+                    parsed.body = "(This message is too large to copy. Open it in your usual \
+                                   mail app to read it.)"
+                        .to_owned();
+                }
+                parsed
+            }
+            _ => {
+                tracing::warn!(connection = %conn, folder, uid = self.uid, "couldn't read a message");
+                unreadable(&raw)
+            }
+        };
+        self.into_new(parsed, conn, mailbox, folder, me)
+    }
+
     fn into_new(
         self,
+        parsed: parse::Parsed,
         conn: Uuid,
         mailbox: &str,
         folder: &'static str,
         me: &str,
-    ) -> Option<NewMessage> {
-        let mut parsed = parse::parse(&self.raw)?;
-        if self.headers_only {
-            parsed.body =
-                "(This message is too large to copy. Open it in your usual mail app to read it.)"
-                    .to_owned();
-        }
+    ) -> NewMessage {
         let outgoing = folder == "sent" || parsed.from.email.eq_ignore_ascii_case(me);
-        Some(NewMessage {
+        NewMessage {
             connection_id: conn,
             mailbox: mailbox.to_owned(),
             folder,
@@ -522,8 +554,40 @@ impl Fetched {
             received_on: (!outgoing)
                 .then(|| parse::received_on(&parsed.delivered_to, &parsed.to, &parsed.cc, me)),
             parsed,
-        })
+        }
     }
+}
+
+/// A message that couldn't be read whole: its headers if those can be, with a note for
+/// its body.
+fn unreadable(raw: &[u8]) -> parse::Parsed {
+    let headers_end = raw
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map_or(raw.len(), |p| p + 4)
+        .min(64 * 1024);
+    let mut parsed = parse::parse(&raw[..headers_end]).unwrap_or_else(|| parse::Parsed {
+        message_id: None,
+        in_reply_to: None,
+        refs: Vec::new(),
+        from: mimi_protocol::MailAddress {
+            name: None,
+            email: String::new(),
+        },
+        to: Vec::new(),
+        cc: Vec::new(),
+        subject: String::new(),
+        date: None,
+        body: String::new(),
+        attachments: Vec::new(),
+        automated: false,
+        suspicious: false,
+        delivered_to: Vec::new(),
+    });
+    parsed.body =
+        "(This message couldn't be read here. Open it in your usual mail app to read it.)"
+            .to_owned();
+    parsed
 }
 
 async fn fetch_messages(

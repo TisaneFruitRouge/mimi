@@ -484,6 +484,11 @@ impl Turn {
             serde_json::from_str(&call.arguments)
                 .map_err(|e| format!("The arguments weren't valid JSON: {e}"))
         };
+        // What the card shows is what runs: the arguments in the shape the tool reads.
+        let parsed = match (&tool, parsed) {
+            (Some(t), Ok(args)) if t.needs_approval(&args) => t.prepare(args),
+            (_, parsed) => parsed,
+        };
         let shown_args = parsed
             .clone()
             .unwrap_or(Value::String(call.arguments.clone()));
@@ -537,7 +542,13 @@ impl Turn {
             match decision {
                 Some(Decision::Approve(edited)) => {
                     if let Some(edited) = edited {
-                        args = edited;
+                        args = match tool.prepare(edited) {
+                            Ok(args) => args,
+                            Err(e) => {
+                                self.finish_action(idx, Err(e)).await;
+                                return true;
+                            }
+                        };
                         let a = &mut self.message.actions[idx];
                         a.summary = tool.summary(&args);
                         a.arguments = args.clone();

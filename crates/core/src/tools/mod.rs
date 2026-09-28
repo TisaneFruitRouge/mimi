@@ -44,8 +44,95 @@ pub trait Tool: Send + Sync {
     fn result_label(&self, args: &Value, _output: &Value) -> String {
         self.summary(args)
     }
+    /// Puts the arguments of a call that needs approval in the shape the tool reads,
+    /// before the card is shown, so the user approves exactly what will run. Defaults
+    /// to [`conform`] with [`Tool::parameters`].
+    fn prepare(&self, args: Value) -> Result<Value, String> {
+        conform(&self.parameters(), args)
+    }
     fn run<'a>(&'a self, ctx: &'a ToolContext, args: Value)
     -> BoxFuture<'a, Result<Value, String>>;
+}
+
+/// Checks arguments against a JSON Schema's declared types and converts the unambiguous
+/// mismatches models make (`"cc": "a@x"` becomes `["a@x"]`, `"3"` an integer, `null`
+/// dropped). Anything else that doesn't fit is refused, so a tool never reads a value in
+/// a shape the approval card didn't show. Arguments the schema doesn't list are kept as
+/// they are: the card shows them too.
+pub fn conform(schema: &Value, args: Value) -> Result<Value, String> {
+    let Value::Object(args) = args else {
+        return Err("The arguments should be a JSON object.".to_owned());
+    };
+    let mut out = serde_json::Map::new();
+    for (key, value) in args {
+        if value.is_null() {
+            continue;
+        }
+        let value = match &schema["properties"][&key] {
+            Value::Null => value,
+            property => conform_value(property, value).map_err(|expected| {
+                format!("`{key}` should be {expected}. Call the tool again with that.")
+            })?,
+        };
+        out.insert(key, value);
+    }
+    Ok(Value::Object(out))
+}
+
+/// One value against its schema; on a mismatch, what was expected ("a list").
+fn conform_value(schema: &Value, value: Value) -> Result<Value, &'static str> {
+    match (schema["type"].as_str(), value) {
+        (Some("string"), v @ Value::String(_)) => Ok(v),
+        (Some("string"), Value::Number(n)) => Ok(Value::String(n.to_string())),
+        (Some("string"), Value::Bool(b)) => Ok(Value::String(b.to_string())),
+        (Some("string"), _) => Err("text"),
+        (Some("integer"), Value::Number(n)) => n
+            .as_i64()
+            .or_else(|| {
+                n.as_f64()
+                    .filter(|f| f.fract() == 0.0 && f.abs() < 9e15)
+                    .map(|f| f as i64)
+            })
+            .map(Value::from)
+            .ok_or("a whole number"),
+        (Some("integer"), Value::String(s)) => s
+            .trim()
+            .parse::<i64>()
+            .map(Value::from)
+            .map_err(|_| "a whole number"),
+        (Some("integer"), _) => Err("a whole number"),
+        (Some("number"), v @ Value::Number(_)) => Ok(v),
+        (Some("number"), Value::String(s)) => s
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .and_then(serde_json::Number::from_f64)
+            .map(Value::Number)
+            .ok_or("a number"),
+        (Some("number"), _) => Err("a number"),
+        (Some("boolean"), v @ Value::Bool(_)) => Ok(v),
+        (Some("boolean"), Value::String(s)) => match s.trim() {
+            "true" => Ok(Value::Bool(true)),
+            "false" => Ok(Value::Bool(false)),
+            _ => Err("true or false"),
+        },
+        (Some("boolean"), _) => Err("true or false"),
+        (Some("array"), Value::Array(items)) => items
+            .into_iter()
+            .filter(|v| !v.is_null())
+            .map(|v| conform_value(&schema["items"], v))
+            .collect::<Result<_, _>>()
+            .map(Value::Array)
+            .map_err(|_| "a list"),
+        (Some("array"), Value::Object(_)) => Err("a list"),
+        (Some("array"), v) => conform_value(&schema["items"], v)
+            .map(|v| Value::Array(vec![v]))
+            .map_err(|_| "a list"),
+        (Some("object"), v @ Value::Object(_)) => conform(schema, v).map_err(|_| "an object"),
+        (Some("object"), _) => Err("an object"),
+        // No type declared, or one this doesn't know: taken as it is.
+        (_, v) => Ok(v),
+    }
 }
 
 /// Something that offers tools, typically one per integration.
@@ -147,5 +234,49 @@ impl Approvals {
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<Uuid, oneshot::Sender<Decision>>> {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::conform;
+
+    fn schema() -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "to": { "type": "array", "items": { "type": "string" } },
+                "subject": { "type": "string" },
+                "thread_id": { "type": "integer" },
+                "urgent": { "type": "boolean" }
+            }
+        })
+    }
+
+    #[test]
+    fn plain_mistakes_are_put_in_the_declared_shape() {
+        let args = json!({"to": "a@example.com", "subject": 42, "thread_id": "7",
+                          "urgent": "true", "cc": null, "extra": "kept"});
+        assert_eq!(
+            conform(&schema(), args).unwrap(),
+            json!({"to": ["a@example.com"], "subject": "42", "thread_id": 7,
+                   "urgent": true, "extra": "kept"})
+        );
+    }
+
+    #[test]
+    fn values_that_dont_fit_are_refused() {
+        for args in [
+            json!({"to": {"hidden": "x@evil.example"}}),
+            json!({"to": [["x@evil.example"]]}),
+            json!({"subject": ["a", "b"]}),
+            json!({"thread_id": "seven"}),
+            json!({"urgent": "yes"}),
+            json!(["not", "an", "object"]),
+        ] {
+            assert!(conform(&schema(), args.clone()).is_err(), "{args}");
+        }
     }
 }

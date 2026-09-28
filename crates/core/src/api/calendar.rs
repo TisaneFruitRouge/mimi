@@ -52,10 +52,12 @@ fn range(r: &Range, default_days: i64) -> Result<(DateTime<Utc>, DateTime<Utc>),
             .ok_or_else(|| AppError::bad_request("That date is out of range."))
     };
     let from = r.from.map(ms).transpose()?.unwrap_or_else(Utc::now);
-    let to =
-        r.to.map(ms)
-            .transpose()?
-            .unwrap_or(from + Duration::days(default_days));
+    let to = match r.to {
+        Some(to) => ms(to)?,
+        None => from
+            .checked_add_signed(Duration::days(default_days))
+            .ok_or_else(|| AppError::bad_request("That date is out of range."))?,
+    };
     if to <= from {
         return Err(AppError::bad_request("The end must be after the start."));
     }

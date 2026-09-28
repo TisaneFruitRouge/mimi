@@ -215,8 +215,8 @@ async fn find_event(state: &AppState, id: &str) -> Option<CalEvent> {
         &state.http,
         &state.connections.feeds,
         &accounts,
-        start - Duration::minutes(1),
-        start + Duration::minutes(1),
+        start.checked_sub_signed(Duration::minutes(1))?,
+        start.checked_add_signed(Duration::minutes(1))?,
     )
     .await;
     events

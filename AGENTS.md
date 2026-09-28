@@ -277,8 +277,9 @@ than inventing their own.
   and # mentions. Keep the phrases specific: mail *about* AI must not be flagged
   (`mail_about_assistants_is_not`).
 - **Sending from aliases**: `MailDraft.from` picks one of the account's addresses (its
-  own, or one mail arrived at); replies default to the conversation's `received_on`.
-  Anything else is refused. SMTP signs in as `smtp::user` (the account's username).
+  own, or one mail arrived at that `parse::is_own_address` accepts); replies default to
+  the conversation's `received_on`. Anything else is refused. SMTP signs in as
+  `smtp::user` (the account's username).
 - **Attachments** are not stored, only their names. `GET
   /mail/messages/{id}/attachments/{index}` fetches the message from the server and
   returns the file, always as an `application/octet-stream` download with `CSP:
@@ -298,13 +299,17 @@ than inventing their own.
 
 - **Received on** (migration 0014, `parse::received_on`): each incoming message records
   which of the user's addresses it arrived at: the top-most X-Original-To/Delivered-To
-  (believed when it's on the user's own domain, their address with a +tag, or also a
-  visible recipient), else a matching To/Cc, else the account's address. Mail stored
-  before the column is filled from To/Cc at the next sync. `store::Scope` (account or
-  address) narrows lists and counts (`?account=` / `?address=` on `/mail` and
-  `/mail/threads`); the Mail panel's "Received on" section shows each account's
-  addresses once there's more than one. Those addresses count as the user's own
-  (`my_addresses`).
+  that is plainly theirs (`parse::is_own_address`: the account's address, a +tag of it,
+  or any address on its own domain, never a shared one like gmail.com), else a matching
+  To/Cc, else the account's address. Anyone can write these headers, so an address on
+  another domain never counts, even when the mail was addressed to it (aliases there
+  show as the account's address). Mail stored before the column is filled from To/Cc
+  at the next sync, and older values that fail the rule are reset. `store::Scope`
+  (account or address) narrows lists and counts (`?account=` / `?address=` on `/mail`
+  and `/mail/threads`); the Mail panel's "Received on" section shows each account's
+  addresses once there's more than one. They are not "the user" elsewhere:
+  `my_addresses` (from_me, "(the user)" in transcripts, participants) is the accounts'
+  own addresses only, plus whatever was filed as outgoing (Sent).
 - **Finding servers** (`mail/discover.rs`): users only type their address and password.
   Order: known consumer domains → the domain's MX mapped to known hosts (Migadu, Google
   Workspace, iCloud custom domains, Fastmail, mailbox.org, Posteo, Infomaniak, OVH,
@@ -357,7 +362,13 @@ than inventing their own.
   fresh registry, so nothing else needs wiring.
 - Optionally add a formatter for the tool's arguments in
   `apps/desktop/src/features/chat/action-formatters.tsx` so its approval card reads
-  well; otherwise arguments show as a tidy key/value list.
+  well; otherwise arguments show as a tidy key/value list. Any argument a formatter
+  doesn't list in its `keys` is still shown after its rows.
+- **The card shows what runs:** before an approval card is shown, the call's arguments
+  go through `Tool::prepare` (default `tools::conform`: the schema's types, with plain
+  mistakes like a string for a list converted and anything else refused), and the
+  stored action holds the result. Override `prepare` when the tool reads arguments in
+  a further shape (e.g. `mail_send` splits recipients into one address each).
 - Tool output is given back to the model verbatim (cut at 16k characters) and stored
   with the message, so keep it compact and free of secrets.
 - Debug builds have two fake tools (`dev_lookup`, `dev_send_note`) enabled with

@@ -369,25 +369,16 @@ pub async fn account(state: &AppState, id: Uuid) -> Option<Account> {
     accounts(state).await.into_iter().find(|a| a.id == id)
 }
 
-/// The user's own addresses, to tell their messages apart.
+/// The user's own addresses, to tell their messages apart: the accounts' addresses
+/// only. Not the addresses mail arrived at: those come from headers anyone can write,
+/// and mail from an address there must not pass as the user's. What the user sent from
+/// an alias is still theirs, as it's filed as outgoing (Sent).
 pub async fn my_addresses(state: &AppState) -> Vec<String> {
-    let mut me: Vec<String> = accounts(state)
+    accounts(state)
         .await
         .into_iter()
         .map(|a| a.config.email.to_lowercase())
-        .collect();
-    // Aliases and catch-all addresses mail arrived at are the user's too.
-    let received = state
-        .db
-        .call(|c| store::received_addresses(c))
-        .await
-        .unwrap_or_default();
-    for address in received {
-        if !me.contains(&address) {
-            me.push(address);
-        }
-    }
-    me
+        .collect()
 }
 
 /// Tells clients that mail changed.
@@ -659,14 +650,16 @@ pub async fn send(state: &Arc<AppState>, draft: MailDraft) -> Result<(), String>
         .or(accounts.first())
         .ok_or("No email account is connected.")?;
     // From the address asked for, else the one the conversation arrived at: only ever
-    // one of this account's own.
+    // one of this account's own, and only an alias that's plainly the user's (on their
+    // own domain, or a +tag), whatever a message's headers claimed.
     let (conn, main) = (account.id, account.config.email.to_lowercase());
     let own = state
         .db
         .call(move |c| store::account_addresses(c, conn))
         .await
         .map_err(|e| e.to_string())?;
-    let is_own = |a: &str| a == main || own.iter().any(|o| o == a);
+    let is_own =
+        |a: &str| a == main || (own.iter().any(|o| o == a) && parse::is_own_address(a, &main));
     let from = match draft.from.as_deref().map(|f| f.trim().to_lowercase()) {
         Some(f) if !f.is_empty() && !is_own(&f) => {
             return Err(format!("{f} isn't one of this account's addresses."));

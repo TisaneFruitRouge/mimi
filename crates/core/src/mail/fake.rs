@@ -46,6 +46,10 @@ pub struct State {
     pub sent: Vec<Sent>,
     pub logins: u32,
     pub idle: bool,
+    /// A UID whose whole message the server refuses to hand over (a failing fetch).
+    pub unreadable: Option<u32>,
+    /// Whole messages handed over so far.
+    pub bodies_sent: u32,
 }
 
 pub struct FakeMail {
@@ -87,6 +91,8 @@ impl FakeMail {
                 sent: Vec::new(),
                 logins: 0,
                 idle: true,
+                unreadable: None,
+                bodies_sent: 0,
             }),
             imap_port: imap.local_addr().unwrap().port(),
             smtp_port: smtp.local_addr().unwrap().port(),
@@ -202,6 +208,15 @@ impl FakeMail {
     /// Whether the IMAP server advertises IDLE.
     pub fn set_idle(&self, on: bool) {
         self.lock().idle = on;
+    }
+
+    /// Makes fetching one message fail (`None`: none), as a flaky server might.
+    pub fn set_unreadable(&self, uid: Option<u32>) {
+        self.lock().unreadable = uid;
+    }
+
+    pub fn bodies_sent(&self) -> u32 {
+        self.lock().bodies_sent
     }
 
     fn exists(&self, mailbox: &str) -> usize {
@@ -327,6 +342,20 @@ impl FakeMail {
                         continue;
                     };
                     let (sub, rest) = args.split_once(' ').unwrap_or((&args, ""));
+                    // A message that can't be fetched: the connection drops.
+                    let unreadable = self.lock().unreadable;
+                    if sub.eq_ignore_ascii_case("FETCH")
+                        && rest.to_uppercase().contains("BODY.PEEK[]")
+                        && unreadable.is_some_and(|u| {
+                            rest.split(' ')
+                                .next()
+                                .unwrap_or("")
+                                .split(',')
+                                .any(|s| s == u.to_string())
+                        })
+                    {
+                        return Ok(());
+                    }
                     out += &self.uid_command(&tag, &sub.to_uppercase(), rest, &mb);
                 }
                 "EXPUNGE" => {
@@ -451,6 +480,14 @@ impl FakeMail {
                     }
                     line += ")\r\n";
                     out += &line;
+                }
+                if items.contains("BODY.PEEK[]") {
+                    let sent = mb
+                        .messages
+                        .iter()
+                        .filter(|m| in_set(set, m.uid, max_uid))
+                        .count() as u32;
+                    st.bodies_sent += sent;
                 }
                 out += &format!("{tag} OK done\r\n");
             }

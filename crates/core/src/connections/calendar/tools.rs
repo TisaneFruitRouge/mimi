@@ -260,7 +260,9 @@ fn parse_event(args: &Value) -> Result<NewEvent, String> {
         let start = parse_local(start_raw)?;
         let end = match args["end"].as_str() {
             Some(e) if !e.is_empty() => parse_local(e)?,
-            _ => start + Duration::hours(1),
+            _ => start
+                .checked_add_signed(Duration::hours(1))
+                .ok_or("That time is out of range.")?,
         };
         (start, end)
     };
