@@ -3,17 +3,23 @@ import { motion } from "motion/react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   Bell,
+  BellOff,
   CalendarDays,
+  CalendarPlus,
   ChevronLeft,
   ChevronRight,
   CircleAlert,
+  Copy,
   Eye,
+  EyeOff,
   Loader2,
   MapPin,
+  PanelRightOpen,
   Plus,
   Sparkles,
 } from "lucide-react";
 import { cn } from "cn";
+import { toast } from "sonner";
 
 import type { CalendarEvent } from "@/bindings/CalendarEvent";
 import type { CalendarInfo } from "@/bindings/CalendarInfo";
@@ -35,15 +41,31 @@ import {
   startOfDay,
   startOfWeek,
   timeRange,
+  whenLong,
 } from "@/features/calendar/dates";
-import { EventSheet, remindersFor } from "@/features/calendar/event-sheet";
+import { EventSheet, before, remindBefore, remindersFor } from "@/features/calendar/event-sheet";
 import { NewEventDialog } from "@/features/calendar/new-event-dialog";
-import { RemindersPanel, finished, useScheduleItems } from "@/features/reminders/reminders";
+import { DeleteItemDialog, ItemMenu, RemindersPanel, finished, useScheduleItems } from "@/features/reminders/reminders";
 import { clock } from "@/features/reminders/time";
 import type { Section } from "@/features/shell/top-bar";
 import { api, keys } from "@/lib/api";
 import { type Draft, mentionDraft } from "@/lib/draft";
-import { ThingMenu } from "@/components/app-context-menu";
+import { copyText } from "@/components/app-context-menu";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuRadioGroup,
+  ContextMenuRadioItem,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { useAssistantName } from "@/lib/queries";
 import { useScrollEdge } from "@/lib/scroll-edge";
 
 /** Height of one hour in the week grid. */
@@ -80,10 +102,37 @@ function useNow() {
   return now;
 }
 
-/** "Ask about this" for an event's right-click menu, from the panel to every view. */
-const AskAboutEvent = createContext<((e: CalendarEvent) => void) | null>(null);
+/**
+ * The half hour under a right-click on an empty part of the week grid, or `null`
+ * elsewhere (an event, the agenda, a header).
+ */
+function slotAt(target: EventTarget | null, clientY: number): number | null {
+  if (!(target instanceof HTMLElement) || !target.dataset.day) return null;
+  const y = clientY - target.getBoundingClientRect().top;
+  return Number(target.dataset.day) + Math.floor((y / HOUR) * 2) * 30 * 60_000;
+}
 
-/** Right-click on an event: open it, or start a chat about it. */
+/** "on Tue 14:30" for a slot's New event. */
+function slotLabel(at: number) {
+  return `on ${new Date(at).toLocaleDateString([], { weekday: "short" })} ${clock(at)}`;
+}
+
+/** What the right-click menus in every view can do, provided by the panel. */
+interface CalendarActions {
+  ask: (e: CalendarEvent) => void;
+  hide: (e: CalendarEvent) => void;
+  editItem: (i: ScheduleItem) => void;
+  deleteItem: (i: ScheduleItem) => void;
+  openConversation: (id: string) => void;
+}
+const CalendarActionsContext = createContext<CalendarActions | null>(null);
+
+/** An event's details as plain text, for Copy. */
+function eventText(e: CalendarEvent) {
+  return [e.title, whenLong(e), e.location].filter(Boolean).join("\n");
+}
+
+/** Right-click on an event: open it, be reminded, ask about it, copy it, hide its calendar. */
 function EventMenu({
   event: e,
   onOpen,
@@ -93,11 +142,77 @@ function EventMenu({
   onOpen: (e: CalendarEvent) => void;
   children: React.ReactElement;
 }) {
-  const ask = useContext(AskAboutEvent);
+  const actions = useContext(CalendarActionsContext);
+  const assistant = useAssistantName();
+  const reminders = remindersFor(useScheduleItems().data ?? [], e.id);
+  const removeReminders = () =>
+    Promise.all(reminders.map((r) => api.deleteSchedule(r.id)))
+      .then(() => toast.success(reminders.length > 1 ? "Reminders removed" : "Reminder removed"))
+      .catch((err) => toast.error((err as Error).message));
   return (
-    <ThingMenu onOpen={() => onOpen(e)} onAsk={ask ? () => ask(e) : undefined}>
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuContent className="w-[230px]">
+        <ContextMenuItem onSelect={() => onOpen(e)}>
+          <PanelRightOpen /> Open
+        </ContextMenuItem>
+        {/* Only before it starts: a reminder for something under way is refused. */}
+        {e.start > Date.now() && (
+          <ContextMenuSub>
+            <ContextMenuSubTrigger>
+              <Bell /> Remind me
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent className="w-[210px]">
+              <ContextMenuLabel className="type-footnote font-normal text-muted-foreground">
+                Follows the event if it moves
+              </ContextMenuLabel>
+              {before.map((b) => (
+                <ContextMenuItem key={b.minutes} onSelect={() => remindBefore(e, b.minutes)}>
+                  {b.label}
+                </ContextMenuItem>
+              ))}
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+        )}
+        {reminders.length > 0 && (
+          <ContextMenuItem onSelect={removeReminders}>
+            <BellOff /> {reminders.length > 1 ? "Remove its reminders" : "Remove its reminder"}
+          </ContextMenuItem>
+        )}
+        {actions && (
+          <ContextMenuItem onSelect={() => actions.ask(e)}>
+            <Sparkles /> Ask {assistant} about this
+          </ContextMenuItem>
+        )}
+        <ContextMenuItem onSelect={() => copyText(eventText(e))}>
+          <Copy /> Copy details
+        </ContextMenuItem>
+        {actions && (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuItem onSelect={() => actions.hide(e)}>
+              <EyeOff /> Hide “{e.calendar}”
+            </ContextMenuItem>
+          </>
+        )}
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
+/** Right-click on a reminder or routine shown in the calendar. */
+function CalendarItemMenu({ item, children }: { item: ScheduleItem; children: React.ReactElement }) {
+  const actions = useContext(CalendarActionsContext);
+  if (!actions) return children;
+  return (
+    <ItemMenu
+      item={item}
+      onEdit={() => actions.editItem(item)}
+      onDelete={() => actions.deleteItem(item)}
+      onOpenConversation={actions.openConversation}
+    >
       {children}
-    </ThingMenu>
+    </ItemMenu>
   );
 }
 
@@ -120,6 +235,9 @@ export function CalendarView({
   const [open, setOpen] = useState<CalendarEvent | null>(null);
   const [creating, setCreating] = useState<{ start: number | null } | null>(null);
   const [editing, setEditing] = useState<ScheduleItem | "new" | null>(null);
+  const [deletingItem, setDeletingItem] = useState<ScheduleItem | null>(null);
+  // Where the calendar was right-clicked: a time in the week grid, if on an empty slot.
+  const [slot, setSlot] = useState<number | null>(null);
   const [sideOpen, setSideOpen] = useState(false);
 
   const thisWeek = startOfWeek(now);
@@ -179,7 +297,18 @@ export function CalendarView({
   const noCalendars = calendars.isSuccess && calendars.data.length === 0;
 
   return (
-    <AskAboutEvent.Provider value={(e) => onAsk(mentionDraft("event", e.id, e.title))}>
+    <CalendarActionsContext.Provider
+      value={{
+        ask: (e) => onAsk(mentionDraft("event", e.id, e.title)),
+        hide: (e) => {
+          if (!hidden.includes(e.calendar_id)) toggle(e.calendar_id);
+          toast(`“${e.calendar}” is hidden`, { description: "Show it again from Calendars, at the top." });
+        },
+        editItem: setEditing,
+        deleteItem: setDeletingItem,
+        openConversation: onOpenConversation,
+      }}
+    >
       <div className="flex h-full flex-col px-6 pt-[68px] pb-5">
         <header className="flex flex-wrap items-center gap-x-3 gap-y-2 pb-4">
           <h1 className="min-w-[200px] type-title">{monthTitle(view === "week" ? weekStart : from)}</h1>
@@ -229,38 +358,65 @@ export function CalendarView({
         )}
 
         <div className="relative flex min-h-0 flex-1 gap-5">
-          <div className="min-w-0 flex-1">
-            {noCalendars ? (
-              <NoCalendars onConnect={() => onSection("connections")} />
-            ) : calendars.isLoading ? (
-              <Skeleton className="h-full rounded-[18px]" />
-            ) : view === "week" ? (
-              <WeekGrid
-                weekStart={weekStart}
-                now={now}
-                events={visible}
-                reminders={timed}
-                items={items}
-                loading={events.isLoading || events.isPlaceholderData}
-                colorOf={colorOf}
-                onOpen={setOpen}
-                onCreate={(start) => setCreating({ start })}
-                onReminder={setEditing}
-              />
-            ) : (
-              <Agenda
-                from={from}
-                to={to}
-                events={visible}
-                reminders={timed}
-                items={items}
-                loading={events.isLoading}
-                colorOf={colorOf}
-                onOpen={setOpen}
-                onReminder={setEditing}
-              />
-            )}
-          </div>
+          <ContextMenu>
+            <ContextMenuTrigger asChild onContextMenu={(ev) => setSlot(slotAt(ev.target, ev.clientY))}>
+              <div className="min-w-0 flex-1">
+                {noCalendars ? (
+                  <NoCalendars onConnect={() => onSection("connections")} />
+                ) : calendars.isLoading ? (
+                  <Skeleton className="h-full rounded-[18px]" />
+                ) : view === "week" ? (
+                  <WeekGrid
+                    weekStart={weekStart}
+                    now={now}
+                    events={visible}
+                    reminders={timed}
+                    items={items}
+                    loading={events.isLoading || events.isPlaceholderData}
+                    colorOf={colorOf}
+                    onOpen={setOpen}
+                    onCreate={(start) => setCreating({ start })}
+                    onReminder={setEditing}
+                  />
+                ) : (
+                  <Agenda
+                    from={from}
+                    to={to}
+                    events={visible}
+                    reminders={timed}
+                    items={items}
+                    loading={events.isLoading}
+                    colorOf={colorOf}
+                    onOpen={setOpen}
+                    onReminder={setEditing}
+                  />
+                )}
+              </div>
+            </ContextMenuTrigger>
+            <ContextMenuContent className="w-[240px]">
+              <ContextMenuItem disabled={!calendars.data?.length} onSelect={() => setCreating({ start: slot })}>
+                <CalendarPlus /> {slot === null ? "New event…" : `New event ${slotLabel(slot)}…`}
+              </ContextMenuItem>
+              <ContextMenuItem onSelect={() => setEditing("new")}>
+                <Bell /> New reminder…
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem onSelect={() => setWeekStart(thisWeek)}>
+                <CalendarDays /> Today <ContextMenuShortcut>T</ContextMenuShortcut>
+              </ContextMenuItem>
+              <ContextMenuItem onSelect={() => setWeekStart(addDays(weekStart, -7))}>
+                <ChevronLeft /> Previous week <ContextMenuShortcut>←</ContextMenuShortcut>
+              </ContextMenuItem>
+              <ContextMenuItem onSelect={() => setWeekStart(addDays(weekStart, 7))}>
+                <ChevronRight /> Next week <ContextMenuShortcut>→</ContextMenuShortcut>
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuRadioGroup value={view} onValueChange={(v) => setViewSaved(v as View)}>
+                <ContextMenuRadioItem value="week">Week</ContextMenuRadioItem>
+                <ContextMenuRadioItem value="agenda">Agenda</ContextMenuRadioItem>
+              </ContextMenuRadioGroup>
+            </ContextMenuContent>
+          </ContextMenu>
           <aside
             className={cn(
               "w-[300px] shrink-0 overflow-y-auto pb-2",
@@ -279,6 +435,7 @@ export function CalendarView({
           onAsk={onAsk}
           onOpenPerson={onOpenPerson}
         />
+        <DeleteItemDialog item={deletingItem} onClose={() => setDeletingItem(null)} />
         <NewEventDialog
           open={!!creating}
           start={creating?.start ?? null}
@@ -286,7 +443,7 @@ export function CalendarView({
           onClose={() => setCreating(null)}
         />
       </div>
-    </AskAboutEvent.Provider>
+    </CalendarActionsContext.Provider>
   );
 }
 
@@ -566,6 +723,7 @@ function DayColumn({
   const weekend = [0, 6].includes(new Date(day).getDay());
   return (
     <div
+      data-day={day}
       className={cn("relative shadow-[inset_0.5px_0_0_var(--separator)]", weekend && "bg-[rgb(118_118_128/0.03)]")}
       onDoubleClick={(e) => {
         if (e.target !== e.currentTarget) return;
@@ -607,20 +765,21 @@ function DayColumn({
         );
       })}
       {reminders.map((r) => (
-        <button
-          key={r.id}
-          onClick={() => onReminder(r)}
-          className="absolute inset-x-1 z-[1] flex h-5 items-center gap-1 rounded-full bg-background px-2 text-[11px] font-medium shadow-[0_0_0_0.5px_rgb(0_0_0/0.1),0_1px_2px_rgb(0_0_0/0.08)] hover:bg-subtle"
-          style={{ top: ((r.next_at! - day) / 3_600_000) * HOUR - 10 }}
-          title={`${r.title} · ${clock(r.next_at!)}`}
-        >
-          {r.kind === "routine" ? (
-            <Sparkles className="size-3 shrink-0 text-lime-deep" />
-          ) : (
-            <Bell className="size-3 shrink-0 text-muted-foreground" />
-          )}
-          <span className="truncate">{r.title}</span>
-        </button>
+        <CalendarItemMenu key={r.id} item={r}>
+          <button
+            onClick={() => onReminder(r)}
+            className="absolute inset-x-1 z-[1] flex h-5 items-center gap-1 rounded-full bg-background px-2 text-[11px] font-medium shadow-[0_0_0_0.5px_rgb(0_0_0/0.1),0_1px_2px_rgb(0_0_0/0.08)] hover:bg-subtle"
+            style={{ top: ((r.next_at! - day) / 3_600_000) * HOUR - 10 }}
+            title={`${r.title} · ${clock(r.next_at!)}`}
+          >
+            {r.kind === "routine" ? (
+              <Sparkles className="size-3 shrink-0 text-lime-deep" />
+            ) : (
+              <Bell className="size-3 shrink-0 text-muted-foreground" />
+            )}
+            <span className="truncate">{r.title}</span>
+          </button>
+        </CalendarItemMenu>
       ))}
       {today && (
         <div
@@ -684,19 +843,20 @@ function Agenda({
               <h2 className="section-label">{dayTitle(g.day)}</h2>
               <Grouped>
                 {g.reminders.map((r) => (
-                  <button
-                    key={r.id}
-                    onClick={() => onReminder(r)}
-                    className="flex min-h-[52px] items-center gap-3.5 px-4 py-2 text-left transition-colors hover:bg-[rgb(118_118_128/0.06)]"
-                  >
-                    <span className="w-24 shrink-0 type-subhead text-muted-foreground tabular-nums">{clock(r.next_at!)}</span>
-                    {r.kind === "routine" ? (
-                      <Sparkles className="size-4 shrink-0 text-lime-deep" />
-                    ) : (
-                      <Bell className="size-4 shrink-0 text-muted-foreground" />
-                    )}
-                    <span className="min-w-0 flex-1 truncate type-body">{r.title}</span>
-                  </button>
+                  <CalendarItemMenu key={r.id} item={r}>
+                    <button
+                      onClick={() => onReminder(r)}
+                      className="flex min-h-[52px] items-center gap-3.5 px-4 py-2 text-left transition-colors hover:bg-[rgb(118_118_128/0.06)]"
+                    >
+                      <span className="w-24 shrink-0 type-subhead text-muted-foreground tabular-nums">{clock(r.next_at!)}</span>
+                      {r.kind === "routine" ? (
+                        <Sparkles className="size-4 shrink-0 text-lime-deep" />
+                      ) : (
+                        <Bell className="size-4 shrink-0 text-muted-foreground" />
+                      )}
+                      <span className="min-w-0 flex-1 truncate type-body">{r.title}</span>
+                    </button>
+                  </CalendarItemMenu>
                 ))}
                 {g.events.map((e) => (
                   <EventMenu key={e.id} event={e} onOpen={onOpen}>

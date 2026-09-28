@@ -8,11 +8,16 @@ import {
   ChevronRight,
   CircleAlert,
   Clock,
+  MessageSquare,
   Monitor,
   MoreHorizontal,
+  Pause,
+  Pencil,
+  Play,
   Plus,
   Send,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 import { cn } from "cn";
 import { toast } from "sonner";
@@ -31,6 +36,13 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Grouped, IconTile, Page, PageHeader, Pill, Row, Section } from "@/components/page";
 import { Button } from "@/components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -231,6 +243,61 @@ export function NotificationsSettings({
   );
 }
 
+/**
+ * Right-click on a reminder or routine (in the side list or the calendar): the same
+ * choices as its "…" menu.
+ */
+export function ItemMenu({
+  item: i,
+  onEdit,
+  onDelete,
+  onOpenConversation,
+  children,
+}: {
+  item: ScheduleItem;
+  onEdit: () => void;
+  onDelete: () => void;
+  onOpenConversation: (id: string) => void;
+  children: React.ReactElement;
+}) {
+  const routine = i.kind === "routine";
+  const over = finished(i);
+  const run = (fn: () => Promise<unknown>) => () => void fn().catch(fail);
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuContent className="w-[200px]">
+        {!over && (
+          <ContextMenuItem onSelect={onEdit}>
+            <Pencil /> Edit…
+          </ContextMenuItem>
+        )}
+        {routine && !over && (
+          <ContextMenuItem
+            onSelect={run(() => api.runRoutine(i.id).then(() => toast.success(`${i.title} is running`)))}
+          >
+            <Play /> Run now
+          </ContextMenuItem>
+        )}
+        {routine && i.conversation_id && (
+          <ContextMenuItem onSelect={() => onOpenConversation(i.conversation_id!)}>
+            <MessageSquare /> Show results
+          </ContextMenuItem>
+        )}
+        {!over && (
+          <ContextMenuItem onSelect={run(() => api.updateSchedule(i.id, { paused: !i.paused }))}>
+            {i.paused ? <Play /> : <Pause />} {i.paused ? "Resume" : "Pause"}
+          </ContextMenuItem>
+        )}
+        <ContextMenuSeparator />
+        <ContextMenuItem variant="destructive" onSelect={onDelete}>
+          <Trash2 /> Delete…
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
 export function ItemRow({
   item: i,
   onEdit,
@@ -254,63 +321,67 @@ export function ItemRow({
 
   const run = (fn: () => Promise<unknown>) => () => void fn().catch(fail);
   return (
-    <Row
-      onClick={over ? undefined : onEdit}
-      className={cn(over && "opacity-70")}
-      icon={
-        <IconTile className={routine ? "bg-lime-soft text-lime-deep" : "bg-fill text-foreground"}>
-          {routine ? <Sparkles /> : <Bell />}
-        </IconTile>
-      }
-      title={
-        <span className="inline-flex max-w-full items-center gap-2">
-          <span className="truncate">{i.title}</span>
-          {i.paused && <Pill>Paused</Pill>}
-        </span>
-      }
-      detail={detail}
-      trailing={
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={`Options for ${i.title}`}
-              className="rounded-full text-muted-foreground"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <MoreHorizontal />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-            {routine && !over && (
-              <DropdownMenuItem
-                onSelect={run(() =>
-                  api.runRoutine(i.id).then(() => toast.success(`${i.title} is running`)),
+    <ItemMenu item={i} onEdit={onEdit} onDelete={onDelete} onOpenConversation={onOpenConversation}>
+      <div>
+        <Row
+          onClick={over ? undefined : onEdit}
+          className={cn(over && "opacity-70")}
+          icon={
+            <IconTile className={routine ? "bg-lime-soft text-lime-deep" : "bg-fill text-foreground"}>
+              {routine ? <Sparkles /> : <Bell />}
+            </IconTile>
+          }
+          title={
+            <span className="inline-flex max-w-full items-center gap-2">
+              <span className="truncate">{i.title}</span>
+              {i.paused && <Pill>Paused</Pill>}
+            </span>
+          }
+          detail={detail}
+          trailing={
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`Options for ${i.title}`}
+                  className="rounded-full text-muted-foreground"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <MoreHorizontal />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                {routine && !over && (
+                  <DropdownMenuItem
+                    onSelect={run(() =>
+                      api.runRoutine(i.id).then(() => toast.success(`${i.title} is running`)),
+                    )}
+                  >
+                    Run now
+                  </DropdownMenuItem>
                 )}
-              >
-                Run now
-              </DropdownMenuItem>
-            )}
-            {routine && i.conversation_id && (
-              <DropdownMenuItem onSelect={() => onOpenConversation(i.conversation_id!)}>
-                Show results
-              </DropdownMenuItem>
-            )}
-            {!over && <DropdownMenuItem onSelect={onEdit}>Edit</DropdownMenuItem>}
-            {!over && (
-              <DropdownMenuItem onSelect={run(() => api.updateSchedule(i.id, { paused: !i.paused }))}>
-                {i.paused ? "Resume" : "Pause"}
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onSelect={onDelete}>
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      }
-    />
+                {routine && i.conversation_id && (
+                  <DropdownMenuItem onSelect={() => onOpenConversation(i.conversation_id!)}>
+                    Show results
+                  </DropdownMenuItem>
+                )}
+                {!over && <DropdownMenuItem onSelect={onEdit}>Edit</DropdownMenuItem>}
+                {!over && (
+                  <DropdownMenuItem onSelect={run(() => api.updateSchedule(i.id, { paused: !i.paused }))}>
+                    {i.paused ? "Resume" : "Pause"}
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onSelect={onDelete}>
+                  Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          }
+        />
+      </div>
+    </ItemMenu>
   );
 }
 

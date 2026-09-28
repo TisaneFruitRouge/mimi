@@ -20,12 +20,26 @@ import { api } from "@/lib/api";
 import { type Draft, mentionDraft } from "@/lib/draft";
 import { useAssistantName } from "@/lib/queries";
 
-const before: { minutes: number; label: string }[] = [
+/** "Remind me" choices for an event (the reminder follows the event if it moves). */
+export const before: { minutes: number; label: string }[] = [
   { minutes: 10, label: "10 minutes before" },
   { minutes: 30, label: "30 minutes before" },
   { minutes: 60, label: "1 hour before" },
   { minutes: 24 * 60, label: "1 day before" },
 ];
+
+/** Adds a reminder `minutes` before an event. */
+export function remindBefore(e: CalendarEvent, minutes: number) {
+  return api
+    .addSchedule({
+      kind: "reminder",
+      title: e.title,
+      instruction: null,
+      schedule: { type: "before_event", event_id: e.id, event_title: e.title, minutes_before: minutes },
+    })
+    .then(() => toast.success(`You'll be reminded ${beforeLabel(minutes)}`))
+    .catch((err) => toast.error(err.message));
+}
 
 export const beforeLabel = (minutes: number) =>
   before.find((b) => b.minutes === minutes)?.label ??
@@ -84,16 +98,7 @@ function EventDetails({
   const people = guests(e);
   const assistant = useAssistantName();
 
-  const remind = (minutes: number) =>
-    api
-      .addSchedule({
-        kind: "reminder",
-        title: e.title,
-        instruction: null,
-        schedule: { type: "before_event", event_id: e.id, event_title: e.title, minutes_before: minutes },
-      })
-      .then(() => toast.success(`You'll be reminded ${beforeLabel(minutes)}`))
-      .catch((err) => toast.error(err.message));
+  const remind = (minutes: number) => remindBefore(e, minutes);
 
   return (
     <div className="flex max-h-[85vh] flex-col">

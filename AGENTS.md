@@ -154,8 +154,11 @@ than inventing their own.
 - **Right-click** (`components/app-context-menu.tsx`, `components/ui/context-menu.tsx`):
   every right-click opens one of Mimi's menus, never the webview's (Back, Reload…).
   Things with their own menu wrap themselves in `ContextMenu` (a mail conversation, a
-  message, a smart folder, a chat message, a person, an event; `ThingMenu` for "Open /
-  Ask about this"); the innermost wins, and `AppContextMenu` around the shell covers the
+  message, a smart folder, a chat message, a person; `ThingMenu` for "Open / Ask about
+  this"; in Calendar an event: open, remind me before (upcoming only), remove its
+  reminders, ask, copy details, hide its calendar; a reminder or routine: `ItemMenu`;
+  an empty slot of the week grid: new event at that time, new reminder, navigation,
+  view); the innermost wins, and `AppContextMenu` around the shell covers the
   rest (Copy / Ask about the selected text, New chat, Search, Settings). Text fields keep
   the system's editing menu. The email frame re-dispatches its right-clicks to the page
   (with the link or selection under them) so the message's menu opens there.
