@@ -7,6 +7,7 @@ import { LogoMark } from "@/components/brand";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { macOverlayTitleBar, mod } from "@/lib/platform";
 import { useSettings } from "@/lib/queries";
+import { useScrolled } from "@/lib/scroll-edge";
 import { windowAction, windowChrome } from "@/lib/transport";
 
 /** The panels used every day, in the top bar. */
@@ -36,18 +37,16 @@ export const paletteShortcut = `${mod}K`;
 
 /**
  * The translucent bar over every screen. Content scrolls under it; it gains its
- * material and hairline only once something is underneath (`scrolled`).
+ * material and hairline only once something is underneath (see `BarMaterial`).
  */
 export function TopBar({
   section,
-  scrolled,
   onSection,
   onNewChat,
   onPalette,
   onSettings,
 }: {
   section: Section;
-  scrolled: boolean;
   onSection: (s: Section) => void;
   onNewChat: () => void;
   onPalette: () => void;
@@ -58,11 +57,11 @@ export function TopBar({
     <header
       data-tauri-drag-region
       className={cn(
-        "absolute inset-x-0 top-0 z-30 grid h-[60px] grid-cols-[1fr_auto_1fr] items-center gap-4 px-4 transition-[background-color,box-shadow,backdrop-filter] duration-300",
-        scrolled ? "material shadow-[inset_0_-0.5px_0_var(--separator)]" : "bg-transparent",
+        "absolute inset-x-0 top-0 z-30 grid h-[60px] grid-cols-[1fr_auto_1fr] items-center gap-4 px-4",
         macOverlayTitleBar && "pl-[84px]",
       )}
     >
+      <BarMaterial />
       <div data-tauri-drag-region className="flex min-w-0 items-center gap-2">
         <LogoMark />
         <span data-tauri-drag-region className="truncate text-[15px] font-semibold tracking-[-0.016em]">
@@ -95,6 +94,19 @@ export function TopBar({
       </div>
     </header>
   );
+}
+
+/**
+ * The bar's material and hairline, behind its content, shown once the view under the
+ * bar is scrolled. The blur stays set and only the layer's opacity fades (see
+ * `bar-material` in index.css): transitioning `backdrop-filter`, background and shadow
+ * restyled and repainted the bar every frame, and adding the filter made a new layer
+ * just as scrolling started. Its own component, reading the scroll edge from a store,
+ * so crossing the edge re-renders this element and not the whole shell.
+ */
+export function BarMaterial() {
+  const scrolled = useScrolled();
+  return <div aria-hidden data-scrolled={scrolled || undefined} className="bar-material" />;
 }
 
 /**

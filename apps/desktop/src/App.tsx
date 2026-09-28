@@ -13,13 +13,13 @@ import { PeopleView } from "@/features/people/people-view";
 import { ConversationPalette } from "@/features/shell/conversation-palette";
 import { SettingsView, settingsPages } from "@/features/shell/settings-view";
 import { AppContextMenu } from "@/components/app-context-menu";
-import { type Section, type SettingsPage, TopBar, isTab, tabs } from "@/features/shell/top-bar";
+import { BarMaterial, type Section, type SettingsPage, TopBar, isTab, tabs } from "@/features/shell/top-bar";
 import type { DaemonError } from "@/lib/api";
 import { type Draft, setDraft } from "@/lib/draft";
 import { useConnected } from "@/lib/events";
 import { hasMod, macOverlayTitleBar } from "@/lib/platform";
 import { useSettings } from "@/lib/queries";
-import { ScrollEdgeContext } from "@/lib/scroll-edge";
+import { createScrollEdge, ScrollEdgeContext } from "@/lib/scroll-edge";
 
 export default function App() {
   const connected = useConnected();
@@ -135,7 +135,7 @@ function Shell() {
     setConversationId(null);
   };
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [scrolled, setScrolled] = useState(false);
+  const [scrollEdge] = useState(createScrollEdge);
 
   // The chat view is remounted (and animated) when the user opens another conversation,
   // but not when a new chat gets its id from its first message.
@@ -154,7 +154,7 @@ function Shell() {
   };
 
   // Each view starts at the top: the bar starts clear.
-  useEffect(() => setScrolled(false), [section, conversationId]);
+  useEffect(() => scrollEdge.set(false), [scrollEdge, section, conversationId]);
 
   // Keep the latest navigation in a ref so the key handler is registered once.
   const actions = useRef({ setSection, setConversationId, openSettings });
@@ -182,7 +182,7 @@ function Shell() {
   }, []);
 
   return (
-    <ScrollEdgeContext.Provider value={setScrolled}>
+    <ScrollEdgeContext.Provider value={scrollEdge}>
       <AppContextMenu
         onNewChat={() => setConversationId(null)}
         onSearch={() => setPaletteOpen(true)}
@@ -192,7 +192,6 @@ function Shell() {
         <div className="relative h-screen overflow-hidden">
           <TopBar
             section={section}
-            scrolled={scrolled}
             onSection={setSection}
             onNewChat={() => setConversationId(null)}
             onPalette={() => setPaletteOpen(true)}
@@ -262,18 +261,18 @@ function Shell() {
 
 /** First run: the Models page, until a model is chosen. */
 function Setup() {
-  const [scrolled, setScrolled] = useState(false);
+  const [scrollEdge] = useState(createScrollEdge);
   return (
-    <ScrollEdgeContext.Provider value={setScrolled}>
+    <ScrollEdgeContext.Provider value={scrollEdge}>
       <div className="relative h-screen overflow-hidden">
         <header
           data-tauri-drag-region
           className={cn(
-            "absolute inset-x-0 top-0 z-30 flex h-[60px] items-center gap-2 px-4 transition-[background-color,box-shadow] duration-300",
-            scrolled ? "material shadow-[inset_0_-0.5px_0_var(--separator)]" : "bg-transparent",
+            "absolute inset-x-0 top-0 z-30 flex h-[60px] items-center gap-2 px-4",
             macOverlayTitleBar && "pl-[84px]",
           )}
         >
+          <BarMaterial />
           <LogoMark />
           <span className="text-[15px] font-semibold tracking-[-0.016em]">Mimi</span>
         </header>

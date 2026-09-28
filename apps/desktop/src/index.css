@@ -223,6 +223,37 @@
   backdrop-filter: saturate(180%) blur(24px);
 }
 
+/*
+ * The top bar's material and hairline: a layer behind the bar's content that fades in
+ * once content is under the bar. The blur stays set and only `opacity` changes, which
+ * the compositor animates on its own in Chromium, WebKit and WebKitGTK: no style
+ * recalc, paint or new layer per frame, as transitioning `backdrop-filter`, background
+ * or shadow would. Once faded out it's also `visibility: hidden` (visibility stays
+ * visible for the whole fade either way), so nothing is blurred while the bar is clear:
+ * Chromium keeps drawing an opacity-0 backdrop filter. No `will-change`: the backdrop
+ * filter already gives it its own layer. Clicks pass through to the bar, the window's
+ * drag region.
+ */
+@utility bar-material {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--material);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  box-shadow: inset 0 -0.5px 0 var(--separator);
+  opacity: 0;
+  visibility: hidden;
+  transition-property: opacity, visibility;
+  transition-duration: 300ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  &[data-scrolled] {
+    opacity: 1;
+    visibility: visible;
+  }
+}
+
 /* A white card on the canvas. */
 @utility surface {
   background: var(--background);

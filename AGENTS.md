@@ -125,10 +125,12 @@ than inventing their own.
   `/newbot`).
 - **Surfaces**: `surface` (white, 18px radius, `--shadow-card`), `grouped` (iOS grouped
   list: white, 16px radius, hairline separators between children), `material` /
-  `material-thick` (translucent + blur, for bars and floating controls). Elevation comes
-  from `--shadow-card` < `--shadow-raised` < `--shadow-float` (popovers, sheets), never
-  from borders. Radii: controls 10, small cards 14, cards 18, sheets 22, composer 24. To
-  override a utility's background or shadow on the same element, use the important
+  `material-thick` (translucent + blur, for bars and floating controls). The top bar's
+  is `bar-material`, faded in by opacity only: never transition `backdrop-filter`, and
+  keep scroll state out of the shell's React state (`lib/scroll-edge.ts`). Elevation
+  comes from `--shadow-card` < `--shadow-raised` < `--shadow-float` (popovers, sheets),
+  never from borders. Radii: controls 10, small cards 14, cards 18, sheets 22, composer 24.
+  To override a utility's background or shadow on the same element, use the important
   suffix (`bg-subtle!`).
 - **Components** (`src/components/page.tsx`): `Page` (scroll container under the top bar;
   reports the scroll edge so the bar gains its material and hairline), `PageHeader`
