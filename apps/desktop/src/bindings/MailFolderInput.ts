@@ -3,4 +3,12 @@
 /**
  * Body of `POST /v1/mail/folders`, and of `PATCH` (fields left out stay as they are).
  */
-export type MailFolderInput = { name: string | null, description: string | null, };
+export type MailFolderInput = { name: string | null, description: string | null, 
+/**
+ * One of the daemon's icon names (`sparkles`, `receipt`, `plane`…).
+ */
+icon: string | null, 
+/**
+ * One of the daemon's colour names (`violet`, `blue`, `green`…).
+ */
+color: string | null, };

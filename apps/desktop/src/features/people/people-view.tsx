@@ -14,7 +14,8 @@ import { AddPersonDialog } from "@/features/people/person-dialogs";
 import { PersonPage } from "@/features/people/person-page";
 import type { Section as Place } from "@/features/shell/top-bar";
 import { api, keys } from "@/lib/api";
-import type { Draft } from "@/lib/draft";
+import { ThingMenu } from "@/components/app-context-menu";
+import { type Draft, mentionDraft } from "@/lib/draft";
 
 /** Everyone the assistant can mention and reach: a list, and the chosen person beside it. */
 export function PeopleView({
@@ -159,25 +160,30 @@ export function PeopleView({
           {everyone.map((p) => {
             const active = p.id === personId;
             return (
-              <button
+              <ThingMenu
                 key={p.id}
-                data-id={p.id}
-                role="option"
-                aria-selected={active}
-                tabIndex={active || (!personId && p === everyone[0]) ? 0 : -1}
-                onClick={() => onOpenPerson(p.id)}
-                className={cn(
-                  "flex min-h-12 items-center gap-3 rounded-[10px] px-2 py-1.5 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/45",
-                  active ? "bg-[rgb(118_118_128/0.14)]" : "hover:bg-[rgb(118_118_128/0.07)]",
-                )}
+                onOpen={() => onOpenPerson(p.id)}
+                onAsk={() => onAsk(mentionDraft("person", p.id, p.name))}
               >
-                <PersonAvatar id={p.id} name={p.name} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate type-callout font-medium">{p.name}</span>
-                  {p.nickname && <span className="block truncate type-footnote text-muted-foreground">{p.nickname}</span>}
-                </span>
-                <ChannelIcons channels={p.channels} />
-              </button>
+                <button
+                  data-id={p.id}
+                  role="option"
+                  aria-selected={active}
+                  tabIndex={active || (!personId && p === everyone[0]) ? 0 : -1}
+                  onClick={() => onOpenPerson(p.id)}
+                  className={cn(
+                    "flex min-h-12 items-center gap-3 rounded-[10px] px-2 py-1.5 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/45",
+                    active ? "bg-[rgb(118_118_128/0.14)]" : "hover:bg-[rgb(118_118_128/0.07)]",
+                  )}
+                >
+                  <PersonAvatar id={p.id} name={p.name} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate type-callout font-medium">{p.name}</span>
+                    {p.nickname && <span className="block truncate type-footnote text-muted-foreground">{p.nickname}</span>}
+                  </span>
+                  <ChannelIcons channels={p.channels} />
+                </button>
+              </ThingMenu>
             );
           })}
         </div>

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FolderPlus, Loader2, MoreHorizontal, Pencil, Sparkles, Trash2, X } from "lucide-react";
+import { FolderOpen, FolderPlus, Loader2, MoreHorizontal, Pencil, Trash2, X } from "lucide-react";
 import { cn } from "cn";
 import { toast } from "sonner";
 
@@ -26,6 +26,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -37,6 +44,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
+import { colorOf, FolderGlyph, FolderLooksPicker } from "@/features/mail/folder-looks";
 
 /**
  * Smart folders: the user names a folder and says what goes in it; their sorter (their
@@ -55,6 +63,8 @@ export function FolderList({
   onOpen: (id: number) => void;
 }) {
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<MailFolder | null>(null);
+  const [deleting, setDeleting] = useState<MailFolder | null>(null);
   return (
     <nav aria-label="Smart folders" className="flex flex-col gap-0.5">
       <div className="flex items-center justify-between pr-1 pb-1 pl-2.5">
@@ -79,29 +89,55 @@ export function FolderList({
       {o.folders.map((f) => {
         const active = f.id === current;
         return (
-          <button
-            key={f.id}
-            onClick={() => onOpen(f.id)}
-            aria-current={active ? "page" : undefined}
-            title={f.description}
-            className={cn(
-              "flex h-9 items-center gap-2.5 rounded-[8px] px-2.5 text-left type-callout transition-colors",
-              active ? "bg-fill font-medium" : "text-foreground/85 hover:bg-[rgb(118_118_128/0.07)]",
-            )}
-          >
-            <Sparkles className={cn("size-4 shrink-0", active ? "text-foreground" : "text-muted-foreground")} />
-            <span className="min-w-0 flex-1 truncate">{f.name}</span>
-            {f.to_check > 0 ? (
-              <Loader2 className="size-3 shrink-0 animate-spin text-faint" aria-label="Filing" />
-            ) : (
-              f.unread > 0 && (
-                <span className="type-footnote font-medium text-muted-foreground tabular-nums">{f.unread}</span>
-              )
-            )}
-          </button>
+          <ContextMenu key={f.id}>
+            <ContextMenuTrigger asChild>
+              <button
+                onClick={() => onOpen(f.id)}
+                aria-current={active ? "page" : undefined}
+                title={f.description}
+                className={cn(
+                  "flex h-9 items-center gap-2.5 rounded-[8px] px-2.5 text-left type-callout transition-colors",
+                  active ? "bg-fill font-medium" : "text-foreground/85 hover:bg-[rgb(118_118_128/0.07)]",
+                )}
+              >
+                <FolderGlyph icon={f.icon} color={f.color} />
+                <span className="min-w-0 flex-1 truncate">{f.name}</span>
+                {f.to_check > 0 ? (
+                  <Loader2 className="size-3 shrink-0 animate-spin text-faint" aria-label="Filing" />
+                ) : (
+                  f.unread > 0 && (
+                    <span className="type-footnote font-medium text-muted-foreground tabular-nums">{f.unread}</span>
+                  )
+                )}
+              </button>
+            </ContextMenuTrigger>
+            <ContextMenuContent className="w-[190px]">
+              <ContextMenuItem onSelect={() => onOpen(f.id)}>
+                <FolderOpen /> Open
+              </ContextMenuItem>
+              <ContextMenuItem onSelect={() => setEditing(f)}>
+                <Pencil /> Edit…
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem variant="destructive" onSelect={() => setDeleting(f)}>
+                <Trash2 /> Delete folder…
+              </ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
         );
       })}
       <FolderDialog open={creating} overview={o} onClose={() => setCreating(false)} onSaved={() => setCreating(false)} />
+      {editing && (
+        <FolderDialog
+          key={editing.id}
+          open
+          folder={editing}
+          overview={o}
+          onClose={() => setEditing(null)}
+          onSaved={() => setEditing(null)}
+        />
+      )}
+      <DeleteFolder folder={deleting} onClose={() => setDeleting(null)} />
     </nav>
   );
 }
@@ -122,6 +158,8 @@ export function FolderDialog({
 }) {
   const [name, setName] = useState(folder?.name ?? "");
   const [description, setDescription] = useState(folder?.description ?? "");
+  const [icon, setIcon] = useState(folder?.icon ?? "sparkles");
+  const [color, setColor] = useState(folder?.color ?? "violet");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const jev = o.sorter === "jev";
@@ -129,11 +167,13 @@ export function FolderDialog({
     setBusy(true);
     setError(null);
     try {
-      if (folder) await api.updateMailFolder(folder.id, { name, description });
-      else await api.createMailFolder({ name, description });
+      if (folder) await api.updateMailFolder(folder.id, { name, description, icon, color });
+      else await api.createMailFolder({ name, description, icon, color });
       if (!folder) {
         setName("");
         setDescription("");
+        setIcon("sparkles");
+        setColor("violet");
       }
       toast.success(folder ? "Folder saved" : `“${name.trim()}” is being filled`);
       onSaved();
@@ -174,6 +214,10 @@ export function FolderDialog({
             />
           </div>
           <div className="flex flex-col gap-1.5">
+            <span className="type-subhead font-medium">Look</span>
+            <FolderLooksPicker icon={icon} color={color} onIcon={setIcon} onColor={setColor} />
+          </div>
+          <div className="flex flex-col gap-1.5">
             <label htmlFor="folder-description" className="type-subhead font-medium">
               What goes in it?
             </label>
@@ -211,6 +255,35 @@ export function FolderDialog({
   );
 }
 
+/** Asks before deleting a folder (the mail in it stays). */
+function DeleteFolder({ folder, onClose, onDeleted }: { folder: MailFolder | null; onClose: () => void; onDeleted?: () => void }) {
+  const remove = () =>
+    folder &&
+    api
+      .deleteMailFolder(folder.id)
+      .then(() => {
+        toast.success(`“${folder.name}” deleted`);
+        onDeleted?.();
+      })
+      .catch((e) => toast.error((e as Error).message));
+  return (
+    <AlertDialog open={folder !== null} onOpenChange={(o) => !o && onClose()}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete “{folder?.name}”?</AlertDialogTitle>
+          <AlertDialogDescription>The folder goes away; the mail in it stays where it is.</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" onClick={remove}>
+            Delete folder
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 /** A folder's title area in the list: its description, filing progress, edit/delete. */
 export function FolderHeader({
   folder,
@@ -223,14 +296,6 @@ export function FolderHeader({
 }) {
   const [editing, setEditing] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const remove = () =>
-    api
-      .deleteMailFolder(folder.id)
-      .then(() => {
-        toast.success(`“${folder.name}” deleted`);
-        onDeleted();
-      })
-      .catch((e) => toast.error((e as Error).message));
   return (
     <div className="-mt-2 flex items-start gap-2 px-4 pb-3">
       <div className="flex min-w-0 flex-1 flex-col gap-0.5 type-subhead text-muted-foreground">
@@ -264,20 +329,7 @@ export function FolderHeader({
         onClose={() => setEditing(false)}
         onSaved={() => setEditing(false)}
       />
-      <AlertDialog open={confirming} onOpenChange={setConfirming}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete “{folder.name}”?</AlertDialogTitle>
-            <AlertDialogDescription>The folder goes away; the mail in it stays where it is.</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={remove}>
-              Delete folder
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <DeleteFolder folder={confirming ? folder : null} onClose={() => setConfirming(false)} onDeleted={onDeleted} />
     </div>
   );
 }
@@ -297,14 +349,15 @@ export function FolderChips({ thread, ids, folders }: { thread: number; ids: num
       {shown.map((f) => (
         <span
           key={f.id}
-          className="inline-flex h-[24px] items-center gap-1 rounded-full bg-mail-soft pr-1 pl-2.5 text-[12px] font-medium text-mail"
+          className="inline-flex h-[24px] items-center gap-1 rounded-full pr-1 pl-2.5 text-[12px] font-medium"
+          style={{ background: colorOf(f.color).soft, color: colorOf(f.color).ink }}
         >
-          <Sparkles className="size-3" />
+          <FolderGlyph icon={f.icon} color={f.color} className="size-3" />
           {f.name}
           <button
             onClick={() => move(thread, f, false)}
             aria-label={`Remove from ${f.name}`}
-            className="rounded-full p-0.5 hover:bg-[rgb(97_70_173/0.12)]"
+            className="rounded-full p-0.5 hover:bg-[rgb(0_0_0/0.06)]"
           >
             <X className="size-3" />
           </button>
@@ -326,7 +379,7 @@ export function AddToFolder({ thread, ids, folders }: { thread: number; ids: num
       <DropdownMenuSubContent>
         {open.map((f) => (
           <DropdownMenuItem key={f.id} onSelect={() => move(thread, f, true)}>
-            <Sparkles /> {f.name}
+            <FolderGlyph icon={f.icon} color={f.color} /> {f.name}
           </DropdownMenuItem>
         ))}
       </DropdownMenuSubContent>

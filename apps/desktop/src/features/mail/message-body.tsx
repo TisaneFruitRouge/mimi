@@ -135,7 +135,19 @@ function splitQuoted(body: string): [string, string | null] {
 }
 
 /** A message's body in the chosen mode, with quoted history folded (Text and Formatted). */
-export function MessageBody({ message: m }: { message: MailMessage }) {
+/** What a right-click inside the rendered email was on, for the message's menu. */
+export interface FrameContext {
+  link: string | null;
+  selection: string;
+}
+
+export function MessageBody({
+  message: m,
+  onFrameContext,
+}: {
+  message: MailMessage;
+  onFrameContext?: (c: FrameContext) => void;
+}) {
   const [mode] = useMailMode();
   const trusted = useSyncExternalStore(trustedStore.subscribe, trustedStore.get);
   const sender = m.from.email.toLowerCase();
@@ -183,7 +195,7 @@ export function MessageBody({ message: m }: { message: MailMessage }) {
             }
           />
         )}
-        <EmailFrame html={c.html} />
+        <EmailFrame html={c.html} onContext={onFrameContext} />
       </div>
     );
   }
@@ -318,7 +330,7 @@ function frameDocument(body: string) {
  * lift its own sandbox; never add `allow-scripts`.) No `allow-popups`,
  * `allow-top-navigation` or `allow-forms` either.
  */
-function EmailFrame({ html }: { html: string }) {
+function EmailFrame({ html, onContext }: { html: string; onContext?: (c: FrameContext) => void }) {
   const ref = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(0);
   const [hover, setHover] = useState<string | null>(null);
@@ -343,6 +355,22 @@ function EmailFrame({ html }: { html: string }) {
       openExternal(a.href);
     };
     const over = (e: MouseEvent) => setHover(linkOf(e)?.href ?? null);
+    // A right-click in the frame opens the message's menu in the page, where it is:
+    // note what was under it, then hand the page an equivalent right-click.
+    const menu = (e: MouseEvent) => {
+      e.preventDefault();
+      onContext?.({ link: linkOf(e)?.href ?? null, selection: d.getSelection()?.toString().trim() ?? "" });
+      const r = frame.getBoundingClientRect();
+      frame.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: r.left + e.clientX,
+          clientY: r.top + e.clientY,
+        }),
+      );
+    };
+    d.addEventListener("contextmenu", menu);
     const leave = () => setHover(null);
     d.addEventListener("click", click);
     d.addEventListener("auxclick", click);
@@ -360,6 +388,7 @@ function EmailFrame({ html }: { html: string }) {
       d.removeEventListener("auxclick", click);
       d.removeEventListener("mouseover", over);
       d.removeEventListener("mouseleave", leave);
+      d.removeEventListener("contextmenu", menu);
       d.removeEventListener("load", measure, true);
     };
   };

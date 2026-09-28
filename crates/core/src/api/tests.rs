@@ -2475,6 +2475,52 @@ mod mail_flow {
             .collect()
     }
 
+    /// Smart folders keep the icon and colour chosen for them, from the known sets only.
+    #[tokio::test]
+    async fn smart_folders_have_an_icon_and_a_colour() {
+        let h = Harness::new().await;
+        let (status, _) = h
+            .call(
+                reqwest::Method::POST,
+                "/mail/folders",
+                json!({"name": "Trips", "description": "Travel", "icon": "plane", "color": "blue"}),
+            )
+            .await;
+        assert_eq!(status, 200);
+        let (status, err) = h
+            .call(
+                reqwest::Method::POST,
+                "/mail/folders",
+                json!({"name": "X", "description": "Y", "icon": "<script>"}),
+            )
+            .await;
+        assert_eq!(status, 400, "{err}");
+        let (_, overview) = h.call(reqwest::Method::GET, "/mail", Value::Null).await;
+        let folder = &overview["folders"][0];
+        assert_eq!(
+            (&folder["icon"], &folder["color"]),
+            (&json!("plane"), &json!("blue"))
+        );
+
+        let id = folder["id"].as_i64().unwrap();
+        let (status, _) = h
+            .call(
+                reqwest::Method::PATCH,
+                &format!("/mail/folders/{id}"),
+                json!({"color": "green"}),
+            )
+            .await;
+        assert_eq!(status, 200);
+        let (_, overview) = h.call(reqwest::Method::GET, "/mail", Value::Null).await;
+        let folder = &overview["folders"][0];
+        assert_eq!(
+            (&folder["icon"], &folder["color"]),
+            (&json!("plane"), &json!("green"))
+        );
+        assert_eq!(folder["description"], "Travel");
+        assert_eq!(overview["folders"].as_array().unwrap().len(), 1);
+    }
+
     /// Jev can only be chosen with a key, and removing the key goes back to the user's
     /// own model.
     #[tokio::test]

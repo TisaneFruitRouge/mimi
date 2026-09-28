@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, CircleAlert, Copy } from "lucide-react";
+import { Check, CircleAlert, Copy, ExternalLink, Link } from "lucide-react";
 import { cn } from "cn";
 
 import type { Action } from "@/bindings/Action";
@@ -8,18 +8,74 @@ import { Actions } from "@/features/chat/actions";
 import { MentionText } from "@/features/chat/mentions/mention-text";
 import { LocalityIcon } from "@/components/locality-badge";
 import { Markdown } from "@/components/markdown";
+import { copyText, selectedText } from "@/components/app-context-menu";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { openExternal } from "@/lib/transport";
 
 export function MessageView({ message }: { message: Message }) {
   if (message.role === "user") {
     return (
-      <div className="flex justify-end pl-16">
-        <div className="rounded-[20px] rounded-br-[6px] bg-[#e9e9ee] px-4 py-2.5 type-body whitespace-pre-wrap">
-          <MentionText text={message.content} mentions={message.mentions} />
+      <MessageMenu text={message.content}>
+        <div className="flex justify-end pl-16">
+          <div className="rounded-[20px] rounded-br-[6px] bg-[#e9e9ee] px-4 py-2.5 type-body whitespace-pre-wrap">
+            <MentionText text={message.content} mentions={message.mentions} />
+          </div>
         </div>
-      </div>
+      </MessageMenu>
     );
   }
-  return <AssistantMessage message={message} />;
+  return (
+    <MessageMenu text={message.content}>
+      <AssistantMessage message={message} />
+    </MessageMenu>
+  );
+}
+
+/** Right-click on a message: copy it or the selected part, open or copy a link. */
+function MessageMenu({ text, children }: { text: string; children: React.ReactElement }) {
+  const [link, setLink] = useState<string | null>(null);
+  const [selection, setSelection] = useState("");
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger
+        asChild
+        onContextMenu={(e) => {
+          const a = (e.target as Element).closest?.("a[href]") as HTMLAnchorElement | null;
+          setLink(a?.href ?? null);
+          setSelection(selectedText());
+        }}
+      >
+        {children}
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-[210px]">
+        {link && (
+          <>
+            <ContextMenuItem onSelect={() => openExternal(link)}>
+              <ExternalLink /> Open link
+            </ContextMenuItem>
+            <ContextMenuItem onSelect={() => copyText(link)}>
+              <Link /> Copy link address
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+          </>
+        )}
+        {selection && (
+          <ContextMenuItem onSelect={() => copyText(selection)}>
+            <Copy /> Copy
+          </ContextMenuItem>
+        )}
+        <ContextMenuItem disabled={!text} onSelect={() => copyText(text)}>
+          <Copy /> Copy message
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
 }
 
 function AssistantMessage({ message }: { message: Message }) {

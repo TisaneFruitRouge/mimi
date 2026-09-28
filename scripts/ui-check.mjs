@@ -13,6 +13,7 @@
 //   {"wait": ms}
 //   {"eval": "js expression"}                      prints the JSON result
 //   {"click": {"css": "button", "text": "Save"}}   first match containing text
+//   {"rightclick": {"css": "…", "text": "…"}}      same, with the right button
 //   {"key": {"key": "k", "code": "KeyK", "vk": 75, "ctrl": true}}
 //   {"type": "text"}                               into the focused element
 //   {"shot": "/path/out.png"}
@@ -46,11 +47,13 @@ for (const s of steps) {
   }
   if (s.wait) await sleep(s.wait);
   if (s.eval) console.log(JSON.stringify(await evaluate(s.eval)));
-  if (s.click) {
-    const box = await evaluate(`(() => { const el = [...document.querySelectorAll(${JSON.stringify(s.click.css ?? "button")})].find(e => !${JSON.stringify(s.click.text ?? null)} || e.textContent.includes(${JSON.stringify(s.click.text ?? "")})); if (!el) return null; const r = el.getBoundingClientRect(); return {x: r.x + r.width/2, y: r.y + r.height/2}; })()`);
-    if (!box) { console.log("click target not found", JSON.stringify(s.click)); continue; }
+  for (const [key, button] of [["click", "left"], ["rightclick", "right"]]) {
+    const target = s[key];
+    if (!target) continue;
+    const box = await evaluate(`(() => { const el = [...document.querySelectorAll(${JSON.stringify(target.css ?? "button")})].find(e => !${JSON.stringify(target.text ?? null)} || e.textContent.includes(${JSON.stringify(target.text ?? "")})); if (!el) return null; const r = el.getBoundingClientRect(); return {x: r.x + r.width/2, y: r.y + r.height/2}; })()`);
+    if (!box) { console.log(`${key} target not found`, JSON.stringify(target)); continue; }
     for (const type of ["mouseMoved", "mousePressed", "mouseReleased"])
-      await send("Input.dispatchMouseEvent", { type, x: box.x, y: box.y, button: "left", clickCount: 1 });
+      await send("Input.dispatchMouseEvent", { type, x: box.x, y: box.y, button, clickCount: 1 });
     await sleep(400);
   }
   if (s.key) {

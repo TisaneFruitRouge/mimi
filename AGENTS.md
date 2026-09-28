@@ -151,6 +151,14 @@ than inventing their own.
   events as a tint of that colour with a 3px left bar, and the "now" line and today's
   date in red (#ff3b30), as calendar apps do. Anything read from a calendar (titles,
   places, notes, attendees) is plain text: never linkified, never markdown.
+- **Right-click** (`components/app-context-menu.tsx`, `components/ui/context-menu.tsx`):
+  every right-click opens one of Mimi's menus, never the webview's (Back, Reload…).
+  Things with their own menu wrap themselves in `ContextMenu` (a mail conversation, a
+  message, a smart folder, a chat message, a person, an event; `ThingMenu` for "Open /
+  Ask about this"); the innermost wins, and `AppContextMenu` around the shell covers the
+  rest (Copy / Ask about the selected text, New chat, Search, Settings). Text fields keep
+  the system's editing menu. The email frame re-dispatches its right-clicks to the page
+  (with the link or selection under them) so the message's menu opens there.
 - **Per-viewer conveniences** (calendar view, hidden calendars) go in `localStorage`
   wrapped in try/catch; the page must work without them.
 - **Motion** (`motion` library, `motion/react`): springs, not linear easing (typical
@@ -264,7 +272,9 @@ than inventing their own.
   off: making a folder asked for it), newest first, one conversation at a time. Rows in
   `mail_folder_threads` record each check (`source` auto | user); the user's choices are
   never overwritten, and a new description forgets only the sorter's. Suspicious mail
-  is never filed. Folders are labels in Mimi only. `?folder=` on `/mail/threads`.
+  is never filed. Folders are labels in Mimi only. `?folder=` on `/mail/threads`. Each
+  folder has an icon and a colour from fixed sets (`folders::ICONS`/`COLORS`, mirrored
+  in `features/mail/folder-looks.tsx`; migration 0019); the API refuses other names.
 - **Delete and forward**: `DELETE /mail/threads/{id}` moves every copy to the account's
   Trash (found by `\Trash` or name, made if missing) and forgets it here; `forward_of`
   on a draft re-attaches the original's attachments (fetched from the server). Thread

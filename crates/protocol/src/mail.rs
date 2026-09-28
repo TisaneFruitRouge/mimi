@@ -189,6 +189,9 @@ pub struct MailFolder {
     pub name: String,
     /// What goes in it, in the user's words.
     pub description: String,
+    /// How it looks: an icon and a colour, by name (see `MailFolderInput`).
+    pub icon: String,
+    pub color: String,
     /// Conversations in it, and how many of those are unread.
     pub threads: u32,
     pub unread: u32,
@@ -203,6 +206,10 @@ pub struct MailFolder {
 pub struct MailFolderInput {
     pub name: Option<String>,
     pub description: Option<String>,
+    /// One of the daemon's icon names (`sparkles`, `receipt`, `plane`…).
+    pub icon: Option<String>,
+    /// One of the daemon's colour names (`violet`, `blue`, `green`…).
+    pub color: Option<String>,
 }
 
 /// Body of `POST /v1/mail/threads/{id}/folders`: the user puts a conversation in a

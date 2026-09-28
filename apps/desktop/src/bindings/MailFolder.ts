@@ -9,6 +9,10 @@ export type MailFolder = { id: number, name: string,
  */
 description: string, 
 /**
+ * How it looks: an icon and a colour, by name (see `MailFolderInput`).
+ */
+icon: string, color: string, 
+/**
  * Conversations in it, and how many of those are unread.
  */
 threads: number, unread: number, 

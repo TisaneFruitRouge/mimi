@@ -20,6 +20,37 @@ pub const MAX_NAME: usize = 60;
 pub const MAX_DESCRIPTION: usize = 400;
 /// Folders a user can have (each one is a question per conversation).
 pub const MAX_FOLDERS: usize = 30;
+/// Icons a folder can have (the app draws them), the first being the default.
+pub const ICONS: &[&str] = &[
+    "sparkles",
+    "folder",
+    "receipt",
+    "plane",
+    "briefcase",
+    "heart",
+    "house",
+    "shopping-bag",
+    "graduation-cap",
+    "baby",
+    "paw-print",
+    "car",
+    "stethoscope",
+    "landmark",
+    "newspaper",
+    "users",
+    "star",
+    "gift",
+    "utensils",
+    "dumbbell",
+    "music",
+    "code",
+    "piggy-bank",
+    "calendar",
+];
+/// Colours a folder can have, the first being the default.
+pub const COLORS: &[&str] = &[
+    "violet", "blue", "teal", "green", "yellow", "orange", "red", "pink", "gray",
+];
 
 /// A folder as the sorter sees it: (id, name, description).
 pub type FolderSpec = (i64, String, String);
@@ -32,13 +63,19 @@ const ELIGIBLE: &str = "EXISTS (SELECT 1 FROM mail_messages x WHERE x.thread_id 
 // --- Storage --------------------------------------------------------------------------
 
 pub fn list(c: &Connection) -> rusqlite::Result<Vec<MailFolder>> {
-    let folders: Vec<FolderSpec> = c
-        .prepare("SELECT id, name, description FROM mail_folders ORDER BY name COLLATE NOCASE, id")?
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+    type Row = (i64, String, String, String, String);
+    let folders: Vec<Row> = c
+        .prepare(
+            "SELECT id, name, description, icon, color FROM mail_folders
+             ORDER BY name COLLATE NOCASE, id",
+        )?
+        .query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        })?
         .collect::<Result<_, _>>()?;
     folders
         .into_iter()
-        .map(|(id, name, description)| {
+        .map(|(id, name, description, icon, color)| {
             let threads: u32 = c.query_row(
                 "SELECT count(*) FROM mail_folder_threads WHERE folder_id = ?1 AND member = 1",
                 [id],
@@ -64,6 +101,8 @@ pub fn list(c: &Connection) -> rusqlite::Result<Vec<MailFolder>> {
                 id,
                 name,
                 description,
+                icon,
+                color,
                 threads,
                 unread,
                 to_check,
@@ -73,11 +112,44 @@ pub fn list(c: &Connection) -> rusqlite::Result<Vec<MailFolder>> {
 }
 
 pub fn create(c: &Connection, name: &str, description: &str) -> rusqlite::Result<i64> {
+    create_with(c, name, description, ICONS[0], COLORS[0])
+}
+
+pub fn create_with(
+    c: &Connection,
+    name: &str,
+    description: &str,
+    icon: &str,
+    color: &str,
+) -> rusqlite::Result<i64> {
     c.execute(
-        "INSERT INTO mail_folders (name, description, created_at) VALUES (?1, ?2, ?3)",
-        params![name, description, now_ms()],
+        "INSERT INTO mail_folders (name, description, icon, color, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![name, description, icon, color, now_ms()],
     )?;
     Ok(c.last_insert_rowid())
+}
+
+/// Changes a folder's icon or colour (names already checked against `ICONS`/`COLORS`).
+pub fn restyle(
+    c: &Connection,
+    id: i64,
+    icon: Option<&str>,
+    color: Option<&str>,
+) -> rusqlite::Result<()> {
+    if let Some(icon) = icon {
+        c.execute(
+            "UPDATE mail_folders SET icon = ?2 WHERE id = ?1",
+            params![id, icon],
+        )?;
+    }
+    if let Some(color) = color {
+        c.execute(
+            "UPDATE mail_folders SET color = ?2 WHERE id = ?1",
+            params![id, color],
+        )?;
+    }
+    Ok(())
 }
 
 /// Renames or re-describes a folder. A new description forgets the sorter's decisions

@@ -280,6 +280,21 @@ pub async fn jev_disconnect(State(state): State<Arc<AppState>>) -> ApiResult<()>
     Ok(Json(()))
 }
 
+/// A folder's icon and colour, checked against the names the app knows.
+fn folder_looks(
+    input: &mimi_protocol::MailFolderInput,
+) -> Result<(Option<String>, Option<String>), AppError> {
+    use mail::folders::{COLORS, ICONS};
+    let pick = |value: &Option<String>, allowed: &[&str], what: &str| match value.as_deref() {
+        Some(v) if !allowed.contains(&v) => Err(AppError::bad_request(format!("Unknown {what}."))),
+        v => Ok(v.map(str::to_owned)),
+    };
+    Ok((
+        pick(&input.icon, ICONS, "icon")?,
+        pick(&input.color, COLORS, "colour")?,
+    ))
+}
+
 /// A folder name and description, trimmed and checked.
 fn folder_fields(
     input: &mimi_protocol::MailFolderInput,
@@ -321,6 +336,9 @@ pub async fn create_folder(
 ) -> ApiResult<()> {
     let (name, description) = folder_fields(&input, true)?;
     let (name, description) = (name.unwrap_or_default(), description.unwrap_or_default());
+    let (icon, color) = folder_looks(&input)?;
+    let icon = icon.unwrap_or_else(|| mail::folders::ICONS[0].to_owned());
+    let color = color.unwrap_or_else(|| mail::folders::COLORS[0].to_owned());
     let created = state
         .db
         .call(move |c| {
@@ -328,7 +346,7 @@ pub async fn create_folder(
             if count >= mail::folders::MAX_FOLDERS as i64 {
                 return Ok(false);
             }
-            mail::folders::create(c, &name, &description).map(|_| true)
+            mail::folders::create_with(c, &name, &description, &icon, &color).map(|_| true)
         })
         .await
         .map_err(AppError::internal)?;
@@ -349,9 +367,16 @@ pub async fn update_folder(
     Json(input): Json<mimi_protocol::MailFolderInput>,
 ) -> ApiResult<()> {
     let (name, description) = folder_fields(&input, false)?;
+    let (icon, color) = folder_looks(&input)?;
     let found = state
         .db
-        .call(move |c| mail::folders::update(c, id, name.as_deref(), description.as_deref()))
+        .call(move |c| {
+            let found = mail::folders::update(c, id, name.as_deref(), description.as_deref())?;
+            if found {
+                mail::folders::restyle(c, id, icon.as_deref(), color.as_deref())?;
+            }
+            Ok(found)
+        })
         .await
         .map_err(AppError::internal)?;
     if !found {

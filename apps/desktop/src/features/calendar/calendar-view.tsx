@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
@@ -42,7 +42,8 @@ import { RemindersPanel, finished, useScheduleItems } from "@/features/reminders
 import { clock } from "@/features/reminders/time";
 import type { Section } from "@/features/shell/top-bar";
 import { api, keys } from "@/lib/api";
-import type { Draft } from "@/lib/draft";
+import { type Draft, mentionDraft } from "@/lib/draft";
+import { ThingMenu } from "@/components/app-context-menu";
 import { useScrollEdge } from "@/lib/scroll-edge";
 
 /** Height of one hour in the week grid. */
@@ -77,6 +78,27 @@ function useNow() {
     return () => clearInterval(t);
   }, []);
   return now;
+}
+
+/** "Ask about this" for an event's right-click menu, from the panel to every view. */
+const AskAboutEvent = createContext<((e: CalendarEvent) => void) | null>(null);
+
+/** Right-click on an event: open it, or start a chat about it. */
+function EventMenu({
+  event: e,
+  onOpen,
+  children,
+}: {
+  event: CalendarEvent;
+  onOpen: (e: CalendarEvent) => void;
+  children: React.ReactElement;
+}) {
+  const ask = useContext(AskAboutEvent);
+  return (
+    <ThingMenu onOpen={() => onOpen(e)} onAsk={ask ? () => ask(e) : undefined}>
+      {children}
+    </ThingMenu>
+  );
 }
 
 /** Every calendar merged into one week or agenda, with reminders beside and inside it. */
@@ -157,112 +179,114 @@ export function CalendarView({
   const noCalendars = calendars.isSuccess && calendars.data.length === 0;
 
   return (
-    <div className="flex h-full flex-col px-6 pt-[68px] pb-5">
-      <header className="flex flex-wrap items-center gap-x-3 gap-y-2 pb-4">
-        <h1 className="min-w-[200px] type-title">{monthTitle(view === "week" ? weekStart : from)}</h1>
-        <div className="flex items-center gap-0.5">
-          <NavButton label="Previous week" onClick={() => setWeekStart(addDays(weekStart, -7))}>
-            <ChevronLeft />
-          </NavButton>
+    <AskAboutEvent.Provider value={(e) => onAsk(mentionDraft("event", e.id, e.title))}>
+      <div className="flex h-full flex-col px-6 pt-[68px] pb-5">
+        <header className="flex flex-wrap items-center gap-x-3 gap-y-2 pb-4">
+          <h1 className="min-w-[200px] type-title">{monthTitle(view === "week" ? weekStart : from)}</h1>
+          <div className="flex items-center gap-0.5">
+            <NavButton label="Previous week" onClick={() => setWeekStart(addDays(weekStart, -7))}>
+              <ChevronLeft />
+            </NavButton>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="rounded-full px-3.5"
+              disabled={weekStart === thisWeek}
+              onClick={() => setWeekStart(thisWeek)}
+            >
+              Today
+            </Button>
+            <NavButton label="Next week" onClick={() => setWeekStart(addDays(weekStart, 7))}>
+              <ChevronRight />
+            </NavButton>
+          </div>
+          {events.isFetching && <Loader2 className="size-4 animate-spin text-faint" aria-label="Loading" />}
+          <div className="flex-1" />
+          <ViewSwitch value={view} onChange={setViewSaved} />
+          {(calendars.data?.length ?? 0) > 0 && (
+            <CalendarsPopover calendars={calendars.data!} hidden={hidden} onToggle={toggle} />
+          )}
           <Button
-            variant="secondary"
-            size="sm"
-            className="rounded-full px-3.5"
-            disabled={weekStart === thisWeek}
-            onClick={() => setWeekStart(thisWeek)}
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Reminders and routines"
+            aria-expanded={sideOpen}
+            className={cn("rounded-full text-muted-foreground min-[1100px]:hidden", sideOpen && "bg-fill text-foreground")}
+            onClick={() => setSideOpen((o) => !o)}
           >
-            Today
+            <Bell />
           </Button>
-          <NavButton label="Next week" onClick={() => setWeekStart(addDays(weekStart, 7))}>
-            <ChevronRight />
-          </NavButton>
-        </div>
-        {events.isFetching && <Loader2 className="size-4 animate-spin text-faint" aria-label="Loading" />}
-        <div className="flex-1" />
-        <ViewSwitch value={view} onChange={setViewSaved} />
-        {(calendars.data?.length ?? 0) > 0 && (
-          <CalendarsPopover calendars={calendars.data!} hidden={hidden} onToggle={toggle} />
+          <Button size="sm" disabled={!calendars.data?.length} onClick={() => setCreating({ start: null })}>
+            <Plus /> New event
+          </Button>
+        </header>
+
+        {(events.data?.unavailable.length ?? 0) > 0 && (
+          <p className="-mt-1 mb-3 flex items-center gap-1.5 type-subhead text-cloud">
+            <CircleAlert className="size-3.5 shrink-0" />
+            <span className="truncate">Couldn't read {events.data!.unavailable.join("; ")}</span>
+          </p>
         )}
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Reminders and routines"
-          aria-expanded={sideOpen}
-          className={cn("rounded-full text-muted-foreground min-[1100px]:hidden", sideOpen && "bg-fill text-foreground")}
-          onClick={() => setSideOpen((o) => !o)}
-        >
-          <Bell />
-        </Button>
-        <Button size="sm" disabled={!calendars.data?.length} onClick={() => setCreating({ start: null })}>
-          <Plus /> New event
-        </Button>
-      </header>
 
-      {(events.data?.unavailable.length ?? 0) > 0 && (
-        <p className="-mt-1 mb-3 flex items-center gap-1.5 type-subhead text-cloud">
-          <CircleAlert className="size-3.5 shrink-0" />
-          <span className="truncate">Couldn't read {events.data!.unavailable.join("; ")}</span>
-        </p>
-      )}
-
-      <div className="relative flex min-h-0 flex-1 gap-5">
-        <div className="min-w-0 flex-1">
-          {noCalendars ? (
-            <NoCalendars onConnect={() => onSection("connections")} />
-          ) : calendars.isLoading ? (
-            <Skeleton className="h-full rounded-[18px]" />
-          ) : view === "week" ? (
-            <WeekGrid
-              weekStart={weekStart}
-              now={now}
-              events={visible}
-              reminders={timed}
-              items={items}
-              loading={events.isLoading || events.isPlaceholderData}
-              colorOf={colorOf}
-              onOpen={setOpen}
-              onCreate={(start) => setCreating({ start })}
-              onReminder={setEditing}
-            />
-          ) : (
-            <Agenda
-              from={from}
-              to={to}
-              events={visible}
-              reminders={timed}
-              items={items}
-              loading={events.isLoading}
-              colorOf={colorOf}
-              onOpen={setOpen}
-              onReminder={setEditing}
-            />
-          )}
+        <div className="relative flex min-h-0 flex-1 gap-5">
+          <div className="min-w-0 flex-1">
+            {noCalendars ? (
+              <NoCalendars onConnect={() => onSection("connections")} />
+            ) : calendars.isLoading ? (
+              <Skeleton className="h-full rounded-[18px]" />
+            ) : view === "week" ? (
+              <WeekGrid
+                weekStart={weekStart}
+                now={now}
+                events={visible}
+                reminders={timed}
+                items={items}
+                loading={events.isLoading || events.isPlaceholderData}
+                colorOf={colorOf}
+                onOpen={setOpen}
+                onCreate={(start) => setCreating({ start })}
+                onReminder={setEditing}
+              />
+            ) : (
+              <Agenda
+                from={from}
+                to={to}
+                events={visible}
+                reminders={timed}
+                items={items}
+                loading={events.isLoading}
+                colorOf={colorOf}
+                onOpen={setOpen}
+                onReminder={setEditing}
+              />
+            )}
+          </div>
+          <aside
+            className={cn(
+              "w-[300px] shrink-0 overflow-y-auto pb-2",
+              "max-[1099px]:absolute max-[1099px]:top-0 max-[1099px]:right-0 max-[1099px]:z-20 max-[1099px]:max-h-full max-[1099px]:rounded-[18px] max-[1099px]:bg-canvas max-[1099px]:p-3 max-[1099px]:shadow-[var(--shadow-float)]",
+              !sideOpen && "max-[1099px]:hidden",
+            )}
+          >
+            <RemindersPanel onOpenConversation={onOpenConversation} editing={editing} onEdit={setEditing} />
+          </aside>
         </div>
-        <aside
-          className={cn(
-            "w-[300px] shrink-0 overflow-y-auto pb-2",
-            "max-[1099px]:absolute max-[1099px]:top-0 max-[1099px]:right-0 max-[1099px]:z-20 max-[1099px]:max-h-full max-[1099px]:rounded-[18px] max-[1099px]:bg-canvas max-[1099px]:p-3 max-[1099px]:shadow-[var(--shadow-float)]",
-            !sideOpen && "max-[1099px]:hidden",
-          )}
-        >
-          <RemindersPanel onOpenConversation={onOpenConversation} editing={editing} onEdit={setEditing} />
-        </aside>
-      </div>
 
-      <EventSheet
-        event={open}
-        color={open ? colorOf(open) : GREY}
-        onClose={() => setOpen(null)}
-        onAsk={onAsk}
-        onOpenPerson={onOpenPerson}
-      />
-      <NewEventDialog
-        open={!!creating}
-        start={creating?.start ?? null}
-        calendars={calendars.data ?? []}
-        onClose={() => setCreating(null)}
-      />
-    </div>
+        <EventSheet
+          event={open}
+          color={open ? colorOf(open) : GREY}
+          onClose={() => setOpen(null)}
+          onAsk={onAsk}
+          onOpenPerson={onOpenPerson}
+        />
+        <NewEventDialog
+          open={!!creating}
+          start={creating?.start ?? null}
+          calendars={calendars.data ?? []}
+          onClose={() => setCreating(null)}
+        />
+      </div>
+    </AskAboutEvent.Provider>
   );
 }
 
@@ -457,14 +481,15 @@ function WeekGrid({
           {allDay.map((list, i) => (
             <div key={days[i]} className="flex min-w-0 flex-col gap-0.5 px-0.5 py-1 shadow-[inset_0.5px_0_0_var(--separator)]">
               {list.slice(0, 3).map((e) => (
-                <button
-                  key={e.id}
-                  onClick={() => onOpen(e)}
-                  className="truncate rounded-[6px] border-l-[3px] px-1.5 py-[1px] text-left text-[12px] font-medium"
-                  style={tint(colorOf(e))}
-                >
-                  {e.title}
-                </button>
+                <EventMenu key={e.id} event={e} onOpen={onOpen}>
+                  <button
+                    onClick={() => onOpen(e)}
+                    className="truncate rounded-[6px] border-l-[3px] px-1.5 py-[1px] text-left text-[12px] font-medium"
+                    style={tint(colorOf(e))}
+                  >
+                    {e.title}
+                  </button>
+                </EventMenu>
               ))}
               {list.length > 3 && <span className="px-1.5 type-footnote text-muted-foreground">{list.length - 3} more</span>}
             </div>
@@ -555,29 +580,30 @@ function DayColumn({
         const height = ((p.bottom - p.top) / 60) * HOUR - 2;
         const reminded = remindersFor(items, e.id).length > 0;
         return (
-          <button
-            key={e.id}
-            onClick={() => onOpen(e)}
-            className="absolute flex flex-col overflow-hidden rounded-[7px] border-l-[3px] px-1.5 py-[3px] text-left transition-[filter] hover:brightness-[0.97] focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:outline-none"
-            style={{
-              ...tint(colorOf(e)),
-              top: (p.top / 60) * HOUR + 1,
-              height,
-              left: `calc(${(p.column / p.columns) * 100}% + 2px)`,
-              width: `calc(${100 / p.columns}% - 4px)`,
-            }}
-          >
-            <span className="flex items-center gap-1 text-[12px] leading-tight font-semibold">
-              <span className="truncate">{e.title}</span>
-              {reminded && <Bell className="size-2.5 shrink-0" aria-label="Reminder set" />}
-            </span>
-            {height > 32 && (
-              <span className="truncate text-[11px] leading-tight opacity-80">
-                {e.start >= day ? clock(e.start) : ""}
-                {e.location ? ` · ${e.location}` : ""}
+          <EventMenu key={e.id} event={e} onOpen={onOpen}>
+            <button
+              onClick={() => onOpen(e)}
+              className="absolute flex flex-col overflow-hidden rounded-[7px] border-l-[3px] px-1.5 py-[3px] text-left transition-[filter] hover:brightness-[0.97] focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:outline-none"
+              style={{
+                ...tint(colorOf(e)),
+                top: (p.top / 60) * HOUR + 1,
+                height,
+                left: `calc(${(p.column / p.columns) * 100}% + 2px)`,
+                width: `calc(${100 / p.columns}% - 4px)`,
+              }}
+            >
+              <span className="flex items-center gap-1 text-[12px] leading-tight font-semibold">
+                <span className="truncate">{e.title}</span>
+                {reminded && <Bell className="size-2.5 shrink-0" aria-label="Reminder set" />}
               </span>
-            )}
-          </button>
+              {height > 32 && (
+                <span className="truncate text-[11px] leading-tight opacity-80">
+                  {e.start >= day ? clock(e.start) : ""}
+                  {e.location ? ` · ${e.location}` : ""}
+                </span>
+              )}
+            </button>
+          </EventMenu>
         );
       })}
       {reminders.map((r) => (
@@ -673,35 +699,36 @@ function Agenda({
                   </button>
                 ))}
                 {g.events.map((e) => (
-                  <button
-                    key={e.id}
-                    onClick={() => onOpen(e)}
-                    className="flex min-h-[56px] items-center gap-3.5 px-4 py-2 text-left transition-colors hover:bg-[rgb(118_118_128/0.06)]"
-                  >
-                    <span className="w-24 shrink-0 type-subhead text-muted-foreground tabular-nums">
-                      {e.all_day ? "All day" : clock(e.start)}
-                    </span>
-                    <span className="h-8 w-1 shrink-0 rounded-full" style={{ background: colorOf(e) }} aria-hidden />
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-1.5 type-body font-medium">
-                        <span className="truncate">{e.title}</span>
-                        {remindersFor(items, e.id).length > 0 && (
-                          <Bell className="size-3 shrink-0 text-muted-foreground" aria-label="Reminder set" />
-                        )}
+                  <EventMenu key={e.id} event={e} onOpen={onOpen}>
+                    <button
+                      onClick={() => onOpen(e)}
+                      className="flex min-h-[56px] items-center gap-3.5 px-4 py-2 text-left transition-colors hover:bg-[rgb(118_118_128/0.06)]"
+                    >
+                      <span className="w-24 shrink-0 type-subhead text-muted-foreground tabular-nums">
+                        {e.all_day ? "All day" : clock(e.start)}
                       </span>
-                      <span className="flex items-center gap-1 truncate type-subhead text-muted-foreground">
-                        {timeRange(e)}
-                        {e.location && (
-                          <>
-                            <span className="text-faint">·</span>
-                            <MapPin className="size-3 shrink-0" />
-                            <span className="truncate">{e.location}</span>
-                          </>
-                        )}
+                      <span className="h-8 w-1 shrink-0 rounded-full" style={{ background: colorOf(e) }} aria-hidden />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-1.5 type-body font-medium">
+                          <span className="truncate">{e.title}</span>
+                          {remindersFor(items, e.id).length > 0 && (
+                            <Bell className="size-3 shrink-0 text-muted-foreground" aria-label="Reminder set" />
+                          )}
+                        </span>
+                        <span className="flex items-center gap-1 truncate type-subhead text-muted-foreground">
+                          {timeRange(e)}
+                          {e.location && (
+                            <>
+                              <span className="text-faint">·</span>
+                              <MapPin className="size-3 shrink-0" />
+                              <span className="truncate">{e.location}</span>
+                            </>
+                          )}
+                        </span>
                       </span>
-                    </span>
-                    <span className="hidden truncate type-footnote text-faint sm:block">{e.calendar}</span>
-                  </button>
+                      <span className="hidden truncate type-footnote text-faint sm:block">{e.calendar}</span>
+                    </button>
+                  </EventMenu>
                 ))}
               </Grouped>
             </section>

@@ -4,13 +4,14 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   Archive,
   AtSign,
-  Forward,
-  ReplyAll,
-  Trash2,
   ChevronDown,
   CircleAlert,
+  Copy,
+  ExternalLink,
+  Forward,
   Inbox,
   Layers,
+  Link,
   Loader2,
   Mail,
   MailOpen,
@@ -18,12 +19,14 @@ import {
   Paperclip,
   RefreshCw,
   Reply,
-  ShieldAlert,
+  ReplyAll,
   Search,
   Send,
+  ShieldAlert,
   Sparkles,
   SquarePen,
   Star,
+  Trash2,
   X,
 } from "lucide-react";
 import { cn } from "cn";
@@ -60,14 +63,26 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ConnectDialog } from "@/features/connections/connect-dialogs";
 import { DraftEditor, SendButton, useSendDraft } from "@/features/mail/draft-editor";
+import { FolderGlyph } from "@/features/mail/folder-looks";
 import { AddToFolder, FolderChips, FolderHeader, FolderList } from "@/features/mail/folders";
-import { MailModeSwitch, MessageBody } from "@/features/mail/message-body";
+import { type FrameContext, MailModeSwitch, MessageBody } from "@/features/mail/message-body";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { copyText, quoteDraft, selectedText } from "@/components/app-context-menu";
 import type { Section } from "@/features/shell/top-bar";
 import { api, keys, type MailScope } from "@/lib/api";
 import { type Draft, mentionDraft } from "@/lib/draft";
 import { useAssistantName, useConnections } from "@/lib/queries";
 import { useScrollEdge } from "@/lib/scroll-edge";
-import { openAttachment } from "@/lib/transport";
+import { openAttachment, openExternal } from "@/lib/transport";
 
 // --- Views ---------------------------------------------------------------------------
 
@@ -281,6 +296,8 @@ export function MailView({
     return id;
   });
   const [composing, setComposing] = useState<MailDraft | null>(null);
+  // Reply or Forward chosen from a conversation's menu in the list, done once it opens.
+  const [pendingAction, setPendingAction] = useState<{ id: number; action: ThreadAction } | null>(null);
   const [connecting, setConnecting] = useState(false);
 
   // First visit: what needs an answer, if anything does; else the inbox.
@@ -361,6 +378,11 @@ export function MailView({
           setComposing(null);
           setSelected(id);
         }}
+        onAction={(id, action) => {
+          setComposing(null);
+          setSelected(id);
+          setPendingAction({ id, action });
+        }}
         onCompose={compose}
       />
       <div className="h-full min-w-0 flex-1">
@@ -387,6 +409,8 @@ export function MailView({
                   setSelected(null);
                   setComposing(draft);
                 }}
+                action={pendingAction?.id === selected ? pendingAction.action : null}
+                onActionTaken={() => setPendingAction(null)}
               />
             ) : (
               <NothingOpen view={current} />
@@ -621,6 +645,7 @@ function ThreadList({
   overview,
   onFolder,
   onLeaveFolder,
+  onAction,
   scope,
   onScope,
   rows,
@@ -638,6 +663,7 @@ function ThreadList({
   overview: MailOverview;
   onFolder: (id: number) => void;
   onLeaveFolder: () => void;
+  onAction: (id: number, action: ThreadAction) => void;
   scope: MailScope;
   onScope: (s: MailScope) => void;
   rows: ScopeRow[];
@@ -663,6 +689,7 @@ function ThreadList({
   const checking = accounts.some((c) => c.detail.startsWith("Checking"));
   const list = threads.data ?? [];
   const box = useRef<HTMLDivElement>(null);
+  const [deleting, setDeleting] = useState<MailThread | null>(null);
 
   const select = (id: number) => {
     onSelect(id);
@@ -696,7 +723,7 @@ function ThreadList({
             {overview.folders.length > 0 && <DropdownMenuSeparator />}
             {overview.folders.map((f) => (
               <DropdownMenuItem key={f.id} onSelect={() => onFolder(f.id)}>
-                <Sparkles /> <span className="truncate">{f.name}</span>
+                <FolderGlyph icon={f.icon} color={f.color} /> <span className="truncate">{f.name}</span>
               </DropdownMenuItem>
             ))}
             {rows.length > 0 && (
@@ -803,18 +830,145 @@ function ThreadList({
           </div>
         )}
         {list.map((t) => (
-          <ThreadRow
+          <ThreadMenu
             key={t.id}
             thread={t}
-            active={t.id === selected}
-            focusable={t.id === selected || (selected === null && t === list[0])}
-            showCategory={searching || view === "inbox"}
-            showAddress={showAddress && !!t.received_on && !mainAddresses.has(t.received_on)}
-            onClick={() => onSelect(t.id)}
-          />
+            folder={folder}
+            folders={overview.folders}
+            onOpen={() => onSelect(t.id)}
+            onAction={(action) => onAction(t.id, action)}
+            onDelete={() => setDeleting(t)}
+          >
+            <ThreadRow
+              thread={t}
+              active={t.id === selected}
+              focusable={t.id === selected || (selected === null && t === list[0])}
+              showCategory={searching || view === "inbox"}
+              showAddress={showAddress && !!t.received_on && !mainAddresses.has(t.received_on)}
+              onClick={() => onSelect(t.id)}
+            />
+          </ThreadMenu>
         ))}
       </div>
+      <AlertDialog open={deleting !== null} onOpenChange={(o) => !o && setDeleting(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this conversation?</AlertDialogTitle>
+            <AlertDialogDescription>
+              “{deleting?.subject || "(no subject)"}” moves to the Trash in your mail account, where you
+              can still get it back from your usual mail app.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() =>
+                deleting &&
+                api
+                  .deleteMail(deleting.id)
+                  .then(() => toast.success("Moved to the Trash"))
+                  .catch((e) => toast.error((e as Error).message))
+              }
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
+  );
+}
+
+type ThreadAction = "reply" | "reply_all" | "forward";
+
+/** Right-click on a conversation in the list. */
+function ThreadMenu({
+  thread: t,
+  folder,
+  folders,
+  onOpen,
+  onAction,
+  onDelete,
+  children,
+}: {
+  thread: MailThread;
+  folder: MailFolder | null;
+  folders: MailFolder[];
+  onOpen: () => void;
+  onAction: (action: ThreadAction) => void;
+  onDelete: () => void;
+  children: React.ReactNode;
+}) {
+  const fail = (e: unknown) => toast.error((e as Error).message);
+  const addable = folders.filter((f) => !t.folders.includes(f.id));
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuContent className="w-[220px]">
+        <ContextMenuItem onSelect={onOpen}>
+          <MailOpen /> Open
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => onAction("reply")}>
+          <Reply /> Reply
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => onAction("forward")}>
+          <Forward /> Forward
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={() => api.markMailRead(t.id, t.unread).catch(fail)}>
+          {t.unread ? <MailOpen /> : <Mail />} {t.unread ? "Mark as read" : "Mark as unread"}
+        </ContextMenuItem>
+        {addable.length > 0 && (
+          <ContextMenuSub>
+            <ContextMenuSubTrigger>
+              <FolderGlyph icon="folder" color="gray" /> Add to folder
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              {addable.map((f) => (
+                <ContextMenuItem
+                  key={f.id}
+                  onSelect={() =>
+                    api
+                      .setMailThreadFolder(t.id, f.id, true)
+                      .then(() => toast.success(`Added to “${f.name}”`))
+                      .catch(fail)
+                  }
+                >
+                  <FolderGlyph icon={f.icon} color={f.color} /> {f.name}
+                </ContextMenuItem>
+              ))}
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+        )}
+        {folder && t.folders.includes(folder.id) && (
+          <ContextMenuItem
+            onSelect={() =>
+              api
+                .setMailThreadFolder(t.id, folder.id, false)
+                .then(() => toast.success(`Removed from “${folder.name}”`))
+                .catch(fail)
+            }
+          >
+            <X /> Remove from “{folder.name}”
+          </ContextMenuItem>
+        )}
+        <ContextMenuItem
+          onSelect={() =>
+            api
+              .archiveMail(t.id)
+              .then(() => toast.success("Archived"))
+              .catch(fail)
+          }
+        >
+          <Archive /> Archive
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem variant="destructive" onSelect={onDelete}>
+          <Trash2 /> Delete…
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
@@ -912,6 +1066,8 @@ function Reader({
   showAddress,
   onGone,
   onForward,
+  action,
+  onActionTaken,
   onAsk,
   onOpenPerson,
 }: {
@@ -920,6 +1076,9 @@ function Reader({
   showAddress: boolean;
   onGone: () => void;
   onForward: (draft: MailDraft) => void;
+  /** Reply or Forward asked for from the list, to start once the conversation is here. */
+  action: ThreadAction | null;
+  onActionTaken: () => void;
   onAsk: (draft: Draft) => void;
   onOpenPerson: (id: string) => void;
 }) {
@@ -932,6 +1091,15 @@ function Reader({
   const [archiving, setArchiving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const d = detail.data;
+
+  useEffect(() => {
+    if (!d || !action) return;
+    if (action === "forward") onForward(forwardOf(d));
+    else setReply(action === "reply_all" ? (replyAllTo(d, ownAddresses(overview)) ?? replyTo(d)) : replyTo(d));
+    onActionTaken();
+    // Once per request: the callbacks change on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [d, action]);
 
   // Opening an unread conversation marks it read, as mail apps do.
   const marked = useRef(false);
@@ -980,7 +1148,7 @@ function Reader({
       setArchiving(false);
     }
   };
-  const mine = new Set(overview.accounts.flatMap((a) => a.addresses.map((x) => x.email.toLowerCase())));
+  const mine = ownAddresses(overview);
   const startReply = () => setReply(replyTo(d));
   const replyAll = replyAllTo(d, mine);
   const remove = async () => {
@@ -1109,7 +1277,17 @@ function Reader({
           </div>
         )}
 
-        <Messages messages={d.messages} onPerson={openPerson} />
+        <Messages
+          messages={d.messages}
+          onPerson={openPerson}
+          actions={{
+            reply: startReply,
+            replyAll: replyAll ? () => setReply(replyAll) : null,
+            forward: (m) => onForward(forwardOf(d, m)),
+            ask,
+            askText: (text) => onAsk(quoteDraft(text)),
+          }}
+        />
 
         {reply ? (
           <ReplyBox threadId={id} draft={reply} onChange={setReply} onClose={() => setReply(null)} overview={overview} />
@@ -1142,8 +1320,12 @@ function replyAllTo(d: MailThreadDetail, mine: Set<string>): MailDraft | null {
 }
 
 /** A new message forwarding the latest one, quoted, with its attachments along. */
-function forwardOf(d: MailThreadDetail): MailDraft {
-  const m = d.messages.at(-1)!;
+/** The user's own addresses: their accounts' and the aliases mail arrived at. */
+function ownAddresses(o: MailOverview) {
+  return new Set(o.accounts.flatMap((a) => a.addresses.map((x) => x.email.toLowerCase())));
+}
+
+function forwardOf(d: MailThreadDetail, m: MailMessage = d.messages.at(-1)!): MailDraft {
   const who = (a: { name: string | null; email: string }) => (a.name ? `${a.name} <${a.email}>` : a.email);
   const subject = /^(fwd?|tr|wg)\s*:/i.test(d.thread.subject) ? d.thread.subject : `Fwd: ${d.thread.subject}`;
   const header = [
@@ -1184,14 +1366,31 @@ function replyTo(d: MailThreadDetail): MailDraft {
   };
 }
 
-function Messages({ messages, onPerson }: { messages: MailMessage[]; onPerson: (email: string) => void }) {
+/** What a message's right-click menu can do. */
+interface MessageActions {
+  reply: () => void;
+  replyAll: (() => void) | null;
+  forward: (m: MailMessage) => void;
+  ask: () => void;
+  askText: (text: string) => void;
+}
+
+function Messages({
+  messages,
+  onPerson,
+  actions,
+}: {
+  messages: MailMessage[];
+  onPerson: (email: string) => void;
+  actions: MessageActions;
+}) {
   // Long threads start with the older messages folded, like mail apps.
   const [open, setOpen] = useState<Set<number>>(() => new Set(messages.slice(-2).map((m) => m.id)));
   return (
     <div className="flex flex-col gap-3">
       {messages.map((m) =>
         open.has(m.id) ? (
-          <MessageCard key={m.id} message={m} onPerson={onPerson} />
+          <MessageCard key={m.id} message={m} onPerson={onPerson} actions={actions} />
         ) : (
           <button
             key={m.id}
@@ -1208,9 +1407,30 @@ function Messages({ messages, onPerson }: { messages: MailMessage[]; onPerson: (
   );
 }
 
-function MessageCard({ message: m, onPerson }: { message: MailMessage; onPerson: (email: string) => void }) {
+function MessageCard({
+  message: m,
+  onPerson,
+  actions,
+}: {
+  message: MailMessage;
+  onPerson: (email: string) => void;
+  actions: MessageActions;
+}) {
   const recipients = [...m.to, ...m.cc];
+  const assistant = useAssistantName();
+  // What the right-click was on: a link, selected text. Set by the page's own right-clicks,
+  // or by the email frame just before it hands one over.
+  const [context, setContext] = useState<FrameContext>({ link: null, selection: "" });
   return (
+    <ContextMenu>
+      <ContextMenuTrigger
+        asChild
+        onContextMenu={(e) => {
+          if (e.target instanceof HTMLIFrameElement) return;
+          const a = (e.target as Element).closest?.("a[href]") as HTMLAnchorElement | null;
+          setContext({ link: a?.href ?? null, selection: selectedText() });
+        }}
+      >
     <article className="surface flex flex-col gap-3 px-5 py-4">
       <header className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
@@ -1234,7 +1454,7 @@ function MessageCard({ message: m, onPerson }: { message: MailMessage; onPerson:
         </div>
         <span className="shrink-0 type-footnote text-faint">{longDate(m.date)}</span>
       </header>
-      <MessageBody message={m} />
+      <MessageBody message={m} onFrameContext={setContext} />
       {m.attachments.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
           {m.attachments.map((a, i) => (
@@ -1243,6 +1463,52 @@ function MessageCard({ message: m, onPerson }: { message: MailMessage; onPerson:
         </div>
       )}
     </article>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-[230px]">
+        {context.link && (
+          <>
+            <ContextMenuItem onSelect={() => openExternal(context.link!)}>
+              <ExternalLink /> Open link
+            </ContextMenuItem>
+            <ContextMenuItem onSelect={() => copyText(context.link!)}>
+              <Link /> Copy link address
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+          </>
+        )}
+        {context.selection && (
+          <>
+            <ContextMenuItem onSelect={() => copyText(context.selection)}>
+              <Copy /> Copy
+            </ContextMenuItem>
+            <ContextMenuItem onSelect={() => actions.askText(context.selection)}>
+              <Sparkles /> Ask {assistant} about this
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+          </>
+        )}
+        <ContextMenuItem onSelect={actions.reply}>
+          <Reply /> Reply
+        </ContextMenuItem>
+        {actions.replyAll && (
+          <ContextMenuItem onSelect={actions.replyAll}>
+            <ReplyAll /> Reply all
+          </ContextMenuItem>
+        )}
+        <ContextMenuItem onSelect={() => actions.forward(m)}>
+          <Forward /> Forward
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={() => copyText(m.body)}>
+          <Copy /> Copy message text
+        </ContextMenuItem>
+        {!context.selection && (
+          <ContextMenuItem onSelect={actions.ask}>
+            <Sparkles /> Ask {assistant} about this conversation
+          </ContextMenuItem>
+        )}
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 

@@ -12,6 +12,7 @@ import { Onboarding } from "@/features/onboarding/onboarding";
 import { PeopleView } from "@/features/people/people-view";
 import { ConversationPalette } from "@/features/shell/conversation-palette";
 import { SettingsView, settingsPages } from "@/features/shell/settings-view";
+import { AppContextMenu } from "@/components/app-context-menu";
 import { type Section, type SettingsPage, TopBar, isTab, tabs } from "@/features/shell/top-bar";
 import type { DaemonError } from "@/lib/api";
 import { type Draft, setDraft } from "@/lib/draft";
@@ -182,72 +183,79 @@ function Shell() {
 
   return (
     <ScrollEdgeContext.Provider value={setScrolled}>
-      <div className="relative h-screen overflow-hidden">
-        <TopBar
-          section={section}
-          scrolled={scrolled}
-          onSection={setSection}
-          onNewChat={() => setConversationId(null)}
-          onPalette={() => setPaletteOpen(true)}
-          onSettings={openSettings}
-        />
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.main
-            // Settings pages animate inside the Settings window, not as whole screens.
-            key={section === "chat" ? `chat:${chatKey}` : isTab(section) ? section : "settings"}
-            className="h-full"
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -4 }}
-            transition={{ type: "spring", stiffness: 420, damping: 36, mass: 0.8 }}
-          >
-            {section === "chat" && (
-              <ChatView
-                conversationId={conversationId}
-                onCreated={onCreated}
-                onNewConversation={() => setConversationId(null)}
-                onSection={setSection}
-              />
-            )}
-            {section === "calendar" && (
-              <CalendarView
-                onAsk={askMimi}
-                onOpenPerson={openPerson}
-                onOpenConversation={setConversationId}
-                onSection={setSection}
-              />
-            )}
-            {section === "mail" && <MailView onSection={setSection} onAsk={askMimi} onOpenPerson={openPerson} />}
-            {section === "people" && (
-              <PeopleView
-                personId={personId}
-                onOpenPerson={openPerson}
-                onAsk={askMimi}
-                onOpenConversation={setConversationId}
-                onSection={setSection}
-              />
-            )}
-            {!isTab(section) && (
-              <SettingsView page={section} onSection={setSection} onOpenConversation={setConversationId} />
-            )}
-          </motion.main>
-        </AnimatePresence>
+      <AppContextMenu
+        onNewChat={() => setConversationId(null)}
+        onSearch={() => setPaletteOpen(true)}
+        onSettings={openSettings}
+        onAsk={askMimi}
+      >
+        <div className="relative h-screen overflow-hidden">
+          <TopBar
+            section={section}
+            scrolled={scrolled}
+            onSection={setSection}
+            onNewChat={() => setConversationId(null)}
+            onPalette={() => setPaletteOpen(true)}
+            onSettings={openSettings}
+          />
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.main
+              // Settings pages animate inside the Settings window, not as whole screens.
+              key={section === "chat" ? `chat:${chatKey}` : isTab(section) ? section : "settings"}
+              className="h-full"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ type: "spring", stiffness: 420, damping: 36, mass: 0.8 }}
+            >
+              {section === "chat" && (
+                <ChatView
+                  conversationId={conversationId}
+                  onCreated={onCreated}
+                  onNewConversation={() => setConversationId(null)}
+                  onSection={setSection}
+                />
+              )}
+              {section === "calendar" && (
+                <CalendarView
+                  onAsk={askMimi}
+                  onOpenPerson={openPerson}
+                  onOpenConversation={setConversationId}
+                  onSection={setSection}
+                />
+              )}
+              {section === "mail" && <MailView onSection={setSection} onAsk={askMimi} onOpenPerson={openPerson} />}
+              {section === "people" && (
+                <PeopleView
+                  personId={personId}
+                  onOpenPerson={openPerson}
+                  onAsk={askMimi}
+                  onOpenConversation={setConversationId}
+                  onSection={setSection}
+                />
+              )}
+              {!isTab(section) && (
+                <SettingsView page={section} onSection={setSection} onOpenConversation={setConversationId} />
+              )}
+            </motion.main>
+          </AnimatePresence>
 
-        <ConversationPalette
-          open={paletteOpen}
-          onOpenChange={(open) => {
-            setPaletteOpen(open);
-            // Back to typing: return focus to the message box, if there is one.
-            if (!open)
-              requestAnimationFrame(() =>
-                document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]')?.focus(),
-              );
-          }}
-          onOpenConversation={setConversationId}
-          onNewConversation={() => setConversationId(null)}
-          onSection={setSection}
-        />
-      </div>
+          <ConversationPalette
+            open={paletteOpen}
+            onOpenChange={(open) => {
+              setPaletteOpen(open);
+              // Back to typing: return focus to the message box, if there is one.
+              if (!open)
+                requestAnimationFrame(() =>
+                  document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]')?.focus(),
+                );
+            }}
+            onOpenConversation={setConversationId}
+            onNewConversation={() => setConversationId(null)}
+            onSection={setSection}
+          />
+        </div>
+      </AppContextMenu>
     </ScrollEdgeContext.Provider>
   );
 }
