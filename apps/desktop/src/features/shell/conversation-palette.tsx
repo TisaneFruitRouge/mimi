@@ -4,12 +4,13 @@ import {
   Blocks,
   BookOpen,
   CalendarDays,
+  Hand,
   Lock,
   Mail,
   MessageSquare,
   Settings,
-  SquarePen,
   Sparkles,
+  SquarePen,
   Users,
 } from "lucide-react";
 
@@ -109,6 +110,12 @@ export function ConversationPalette({
           </CommandItem>
           <CommandItem keywords={["alerts", "telegram"]} onSelect={run(() => onSection("notifications"))}>
             <BellRing /> Reminders and notifications
+          </CommandItem>
+          <CommandItem
+            keywords={["approval", "approve", "automatic", "authorization", "send"]}
+            onSelect={run(() => onSection("permissions"))}
+          >
+            <Hand /> Permissions
           </CommandItem>
           <CommandItem onSelect={run(() => onSection("privacy"))}>
             <Lock /> Privacy

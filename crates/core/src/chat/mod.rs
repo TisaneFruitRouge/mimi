@@ -17,7 +17,7 @@ use crate::api::error::AppError;
 use crate::providers::{
     self, ChatChunk, ChatMessage, ProviderError, Role, ToolCall, store as provider_store,
 };
-use crate::tools::{Decision, ToolContext, ToolRegistry};
+use crate::tools::{Decision, ToolContext, ToolRegistry, permissions};
 use crate::{AppState, now_ms, settings};
 
 pub mod store;
@@ -290,7 +290,7 @@ const TOOL_OUTPUT_LIMIT: usize = 16_000;
 /// One assistant reply in progress: model rounds, tool calls and approvals.
 struct Turn {
     state: Arc<AppState>,
-    client: providers::OpenAiCompatible,
+    client: providers::ChatClient,
     model: String,
     prompt: Vec<ChatMessage>,
     message: Message,
@@ -424,6 +424,7 @@ impl Turn {
             };
 
             let mut calls = Vec::new();
+            let mut replay = None;
             let mut text = String::new();
             loop {
                 let chunk = tokio::select! {
@@ -439,6 +440,7 @@ impl Turn {
                     }
                     Some(Ok(ChatChunk::Reasoning(r))) => self.append(String::new(), r),
                     Some(Ok(ChatChunk::ToolCalls(c))) => calls = c,
+                    Some(Ok(ChatChunk::Replay(r))) => replay = Some(r),
                 }
             }
             // Calls when no tools were offered (after the round cap) are ignored.
@@ -446,7 +448,8 @@ impl Turn {
                 return Ok(());
             }
 
-            self.prompt.push(ChatMessage::tool_calls(text, &calls));
+            self.prompt
+                .push(ChatMessage::tool_calls(text, &calls).with_replay(replay));
             self.separate = true;
             for call in calls {
                 if !self.act(call, round).await {
@@ -484,16 +487,25 @@ impl Turn {
             serde_json::from_str(&call.arguments)
                 .map_err(|e| format!("The arguments weren't valid JSON: {e}"))
         };
+        let permissions = crate::settings::load(&self.state.db)
+            .await
+            .map(|s| s.permissions)
+            .unwrap_or_default();
         // What the card shows is what runs: the arguments in the shape the tool reads.
         let parsed = match (&tool, parsed) {
-            (Some(t), Ok(args)) if t.needs_approval(&args) => t.prepare(args),
+            (Some(t), Ok(args)) if permissions::may_ask(t.as_ref(), &args, &permissions) => {
+                t.prepare(args)
+            }
             (_, parsed) => parsed,
         };
         let shown_args = parsed
             .clone()
             .unwrap_or(Value::String(call.arguments.clone()));
         let (summary, requires_approval) = match (&tool, &parsed) {
-            (Some(t), Ok(args)) => (t.summary(args), t.needs_approval(args)),
+            (Some(t), Ok(args)) => (
+                t.summary(args),
+                permissions::requires_approval(&self.state, t.as_ref(), args, &permissions).await,
+            ),
             // Can't tell what it would do, and it won't run anyway.
             _ => (call.name.clone(), false),
         };

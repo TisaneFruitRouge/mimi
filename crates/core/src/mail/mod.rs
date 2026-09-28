@@ -25,6 +25,7 @@ pub mod discover;
 pub mod folders;
 pub mod images;
 pub mod jev;
+pub mod known;
 pub mod mentions;
 pub mod model;
 pub mod net;
@@ -46,7 +47,7 @@ mod tests;
 pub const EMAIL: &str = "email";
 
 /// A healthy account's one-line description.
-pub const DETAIL: &str = "Reads your mail. Sends only what you approve.";
+pub const DETAIL: &str = "Reads your mail. Sends as you allow in Permissions.";
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum MailError {

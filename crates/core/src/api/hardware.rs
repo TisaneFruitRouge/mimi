@@ -106,7 +106,7 @@ pub async fn recommendations(State(state): State<Arc<AppState>>) -> ApiResult<Re
                 continue;
             };
             if record.provider.kind == mimi_protocol::ProviderKind::OpenaiCompatible
-                && let Ok(client) = providers::connect(&state.http, &record)
+                && let Ok(client) = providers::connect_openai(&state.http, &record)
                 && client.is_ollama().await
             {
                 download_provider_id = Some(p.id);

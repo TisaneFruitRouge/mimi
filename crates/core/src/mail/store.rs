@@ -101,7 +101,8 @@ pub fn insert(c: &Connection, m: &NewMessage) -> rusqlite::Result<Option<i64>> {
             m.outgoing,
             p.automated,
             m.received_on,
-            p.suspicious && !m.outgoing,
+            // Only what's really the user's own: a From line naming them can be forged.
+            p.suspicious && m.folder != "sent",
             p.html,
         ],
     )?;
@@ -343,17 +344,18 @@ pub fn backfill_received_on(c: &Connection, conn: Uuid, account: &str) -> rusqli
 /// HTML wasn't kept). Flagged conversations leave "Needs a reply". Returns how many
 /// messages were checked.
 pub fn backfill_suspicious(c: &Connection, conn: Uuid) -> rusqlite::Result<usize> {
-    let rows: Vec<(i64, i64, String, bool)> = c
+    let rows: Vec<(i64, i64, String, String)> = c
         .prepare(
-            "SELECT id, thread_id, body, outgoing FROM mail_messages
+            "SELECT id, thread_id, body, folder FROM mail_messages
              WHERE connection_id = ?1 AND suspicious IS NULL",
         )?
         .query_map([conn.to_string()], |r| {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
         })?
         .collect::<Result<_, _>>()?;
-    for (id, thread, body, outgoing) in &rows {
-        let flagged = !outgoing && super::suspicious::aimed_at_assistants(body);
+    for (id, thread, body, folder) in &rows {
+        // The Sent folder is the user's own writing; anything else may only claim to be.
+        let flagged = folder != "sent" && super::suspicious::aimed_at_assistants(body);
         c.execute(
             "UPDATE mail_messages SET suspicious = ?2 WHERE id = ?1",
             params![id, flagged],

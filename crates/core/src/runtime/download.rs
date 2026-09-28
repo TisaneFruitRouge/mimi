@@ -44,7 +44,10 @@ pub fn installed(paths: &Paths) -> Vec<ModelInfo> {
         .filter(|(_, s)| dir.join(&s.file).is_file())
         .map(|(id, s)| ModelInfo {
             id,
+            name: None,
             size_bytes: Some(s.bytes),
+            supports_tools: None,
+            price: None,
         })
         .collect();
     models.sort_by(|a, b| a.id.cmp(&b.id));

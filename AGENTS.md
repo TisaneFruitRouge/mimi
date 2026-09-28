@@ -82,7 +82,7 @@ features go in the daemon plus the protocol types. Frontends only render them.
 - Navigation: the daily panels (Chat, Calendar, Mail, People) are a segmented control
   in the translucent top bar, ⌘/Ctrl 1–4. Everything set up once lives in the Settings
   window (gear button or ⌘/Ctrl ,): a System-Settings-style sidebar with General,
-  Connections, Models, Memory, Reminders & notifications, Privacy. Conversations are
+  Connections, Models, Memory, Reminders & notifications, Permissions, Privacy. Conversations are
   behind Search (⌘/Ctrl K), which also jumps to every panel and settings page. ⌘/Ctrl N
   is a new chat. The URL hash holds the route: `#/chat/<id>`, `#/calendar`, `#/mail`,
   `#/people/<id>`, `#/settings/<page>` (types `Tab`, `SettingsPage` in `top-bar.tsx`);
@@ -288,7 +288,9 @@ than inventing their own.
   message. Flagged conversations are never sorted or summarised by the model (filed as
   "other"), show a warning in the panel, and carry a `suspicious` note in tool output
   and # mentions. Keep the phrases specific: mail *about* AI must not be flagged
-  (`mail_about_assistants_is_not`).
+  (`mail_about_assistants_is_not`). Only the Sent folder is exempt: mail elsewhere is
+  checked even when its From line names the user, since anyone can write that
+  (`mail_that_only_claims_to_be_from_the_user_is_still_checked`, migration 0020).
 - **Sending from aliases**: `MailDraft.from` picks one of the account's addresses (its
   own, or one mail arrived at that `parse::is_own_address` accepts); replies default to
   the conversation's `received_on`. Anything else is refused. SMTP signs in as
@@ -380,6 +382,17 @@ than inventing their own.
 - **Approval rule:** anything that sends, changes or deletes something on the user's
   behalf needs approval (`Tool::needs_approval` returns true); reads don't. Never
   weaken this for convenience; it is the main defence against prompt injection.
+- **Permissions** (Settings › Permissions, `Settings.permissions`): the user may let
+  three kinds of action happen without asking: sending email, adding calendar events,
+  and setting reminders/routines (`Autonomy::Ask | Automatic`; defaults ask, ask,
+  automatic). A tool opts in with `Tool::governed_by`; `tools::permissions::
+  requires_approval` decides, in `chat::act`. Automatic email still asks unless every
+  recipient is known (`mail::known`: the user's own addresses, address-book or
+  hand-added handles, or someone in the Sent folder; never Mimi's correspondent cards
+  or mail that merely claims to be from the user). Keep that check, and don't add new
+  kinds without the same care. Automatic emails and events show in the chat as a card
+  with their details; `api/tests.rs › automatic_sending_only_writes_to_people_the_user_knows`
+  covers it.
 - **Adding a tool:** implement `tools::Tool` (crates/core/src/tools/mod.rs): a stable
   `snake_case` name, a description written for the model, a JSON Schema for the
   arguments, `summary()` as one plain-language line for the approval card, and

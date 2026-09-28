@@ -12,6 +12,8 @@ pub enum ProviderKind {
     /// Mimi's own runtime (llama.cpp), managed by the daemon: models are downloaded into
     /// Mimi and run on this computer. Created automatically when the runtime is present.
     Builtin,
+    /// Anthropic's Messages API (Claude models), with the user's own API key.
+    Anthropic,
 }
 
 /// Where a provider runs, and so where your conversations go when you use it.
@@ -84,24 +86,49 @@ pub struct ProviderPreset {
     pub id: String,
     pub name: String,
     pub description: String,
+    pub kind: ProviderKind,
     pub base_url: String,
     pub locality: Locality,
     pub needs_api_key: bool,
+    /// The service's page for creating an API key, for a "Get a key" button.
+    pub key_url: Option<String>,
+    /// The model to suggest once connected, when the service offers it.
+    pub recommended_model: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct ModelInfo {
     pub id: String,
+    /// The provider's own name for the model (e.g. "Claude Sonnet 5"), when it has one.
+    #[serde(default)]
+    pub name: Option<String>,
     /// On-disk size, when the provider reports it (Ollama does).
     #[ts(type = "number | null")]
     pub size_bytes: Option<u64>,
+    /// Whether the model can use tools (calendar, mail, reminders…), when the provider
+    /// says (OpenRouter and Anthropic do).
+    #[serde(default)]
+    pub supports_tools: Option<bool>,
+    /// What the provider charges, when it publishes prices (OpenRouter does).
+    #[serde(default)]
+    pub price: Option<ModelPrice>,
+}
+
+/// A cloud model's price, in US dollars per million tokens.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ModelPrice {
+    pub input: f64,
+    pub output: f64,
 }
 
 /// Checks a provider's connection details before saving them.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct ProbeRequest {
+    #[serde(default = "default_kind")]
+    pub kind: ProviderKind,
     pub base_url: String,
     #[serde(default)]
     pub api_key: Option<String>,

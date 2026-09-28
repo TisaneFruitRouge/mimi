@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use futures::stream::BoxStream;
 use futures::{StreamExt, TryStreamExt};
-use mimi_protocol::ModelInfo;
+use mimi_protocol::{ModelInfo, ModelPrice};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +41,10 @@ pub struct ChatMessage {
     /// For `Role::Tool`: which call this is the result of.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// The provider's own record of an assistant reply ([`ChatChunk::Replay`]), sent
+    /// back instead of `content` and `tool_calls` by providers that need it.
+    #[serde(skip)]
+    pub replay: Option<serde_json::Value>,
 }
 
 impl ChatMessage {
@@ -50,6 +54,7 @@ impl ChatMessage {
             content: content.into(),
             tool_calls: Vec::new(),
             tool_call_id: None,
+            replay: None,
         }
     }
 
@@ -69,7 +74,14 @@ impl ChatMessage {
                 })
                 .collect(),
             tool_call_id: None,
+            replay: None,
         }
+    }
+
+    /// Attaches the provider's record of this reply (see [`ChatChunk::Replay`]).
+    pub fn with_replay(mut self, replay: Option<serde_json::Value>) -> Self {
+        self.replay = replay;
+        self
     }
 
     pub fn tool_result(call_id: impl Into<String>, content: impl Into<String>) -> Self {
@@ -78,6 +90,7 @@ impl ChatMessage {
             content: content.into(),
             tool_calls: Vec::new(),
             tool_call_id: Some(call_id.into()),
+            replay: None,
         }
     }
 }
@@ -128,6 +141,9 @@ pub enum ChatChunk {
     Reasoning(String),
     /// The tools the model wants called. Arrives once, at the end of the stream.
     ToolCalls(Vec<ToolCall>),
+    /// The reply exactly as the provider must get it back in the next round, when it
+    /// needs that (Anthropic: thinking blocks are signed). Just before `ToolCalls`.
+    Replay(serde_json::Value),
 }
 
 /// How one request should be answered.
@@ -193,9 +209,19 @@ impl OpenAiCompatible {
         struct Models {
             data: Vec<Model>,
         }
+        /// OpenRouter adds a name, the request fields each model accepts and prices;
+        /// other servers send just the id.
         #[derive(Deserialize)]
         struct Model {
             id: String,
+            name: Option<String>,
+            supported_parameters: Option<Vec<String>>,
+            pricing: Option<Pricing>,
+        }
+        #[derive(Deserialize)]
+        struct Pricing {
+            prompt: Option<String>,
+            completion: Option<String>,
         }
 
         let res = self
@@ -214,7 +240,17 @@ impl OpenAiCompatible {
             .data
             .into_iter()
             .map(|m| ModelInfo {
+                name: m.name.filter(|n| !n.trim().is_empty()),
                 size_bytes: sizes.iter().find(|(n, _)| *n == m.id).map(|(_, s)| *s),
+                supports_tools: m
+                    .supported_parameters
+                    .map(|params| params.iter().any(|p| p == "tools")),
+                price: m.pricing.and_then(|p| {
+                    Some(ModelPrice {
+                        input: per_million(p.prompt.as_deref()?)?,
+                        output: per_million(p.completion.as_deref()?)?,
+                    })
+                }),
                 id: m.id,
             })
             .collect();
@@ -451,7 +487,7 @@ fn chat_request(
     body
 }
 
-async fn check(res: reqwest::Response) -> Result<reqwest::Response, ProviderError> {
+pub(super) async fn check(res: reqwest::Response) -> Result<reqwest::Response, ProviderError> {
     let status = res.status();
     if status.is_success() {
         return Ok(res);
@@ -461,6 +497,13 @@ async fn check(res: reqwest::Response) -> Result<reqwest::Response, ProviderErro
     }
     let body = res.text().await.unwrap_or_default();
     Err(ProviderError::Status(error_message(status, &body)))
+}
+
+/// A per-token price as OpenRouter writes it ("0.00000014"), per million tokens.
+/// Negative means "varies" (its automatic router), which isn't a price.
+fn per_million(per_token: &str) -> Option<f64> {
+    let price = per_token.trim().parse::<f64>().ok()?;
+    (price >= 0.0).then(|| (price * 1_000_000.0 * 1e6).round() / 1e6)
 }
 
 /// Pulls the human-readable message out of the error shapes providers use.
@@ -711,7 +754,7 @@ mod tests {
             match c {
                 ChatChunk::Content(s) => content += &s,
                 ChatChunk::Reasoning(s) => reasoning += &s,
-                ChatChunk::ToolCalls(_) => {}
+                ChatChunk::ToolCalls(_) | ChatChunk::Replay(_) => {}
             }
         }
         (content, reasoning)
@@ -913,6 +956,66 @@ mod tests {
         let seen = seen.lock().unwrap();
         assert_eq!(seen.len(), 2);
         assert!(seen[1].get("chat_template_kwargs").is_none());
+    }
+
+    #[tokio::test]
+    async fn reads_openrouter_model_details() {
+        use axum::Json;
+        use axum::routing::get;
+
+        let app = axum::Router::new().route(
+            "/api/v1/models",
+            get(|| async {
+                Json(serde_json::json!({"data": [
+                    {"id": "deepseek/deepseek-v4-flash", "name": "DeepSeek: DeepSeek V4 Flash",
+                     "supported_parameters": ["max_tokens", "tools", "tool_choice"],
+                     "pricing": {"prompt": "0.00000014", "completion": "0.00000028"}},
+                    {"id": "openrouter/auto", "name": "Auto Router",
+                     "supported_parameters": ["tools"],
+                     "pricing": {"prompt": "-1", "completion": "-1"}},
+                    {"id": "some/image-model", "name": "", "supported_parameters": ["seed"],
+                     "pricing": {"prompt": "0", "completion": "0"}},
+                    {"id": "plain"},
+                ]}))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = Url::parse(&format!("http://{}/api/v1", listener.local_addr().unwrap())).unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let models = OpenAiCompatible::new(reqwest::Client::new(), url, None)
+            .list_models()
+            .await
+            .unwrap();
+        let find = |id: &str| models.iter().find(|m| m.id == id).unwrap();
+        let deepseek = find("deepseek/deepseek-v4-flash");
+        assert_eq!(
+            deepseek.name.as_deref(),
+            Some("DeepSeek: DeepSeek V4 Flash")
+        );
+        assert_eq!(deepseek.supports_tools, Some(true));
+        assert_eq!(
+            deepseek.price,
+            Some(ModelPrice {
+                input: 0.14,
+                output: 0.28
+            })
+        );
+        // "Varies" isn't a price; free is.
+        assert_eq!(find("openrouter/auto").price, None);
+        let image = find("some/image-model");
+        assert_eq!(
+            image.price,
+            Some(ModelPrice {
+                input: 0.0,
+                output: 0.0
+            })
+        );
+        assert_eq!(image.supports_tools, Some(false));
+        assert_eq!(image.name, None);
+        // Other servers only send ids: nothing is guessed.
+        let plain = find("plain");
+        assert_eq!((plain.supports_tools, plain.price), (None, None));
     }
 
     #[tokio::test]

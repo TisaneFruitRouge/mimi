@@ -19,6 +19,7 @@ import type { ModelPull } from "@/bindings/ModelPull";
 import type { RuntimeStatus } from "@/bindings/RuntimeStatus";
 import type { ModelInfo } from "@/bindings/ModelInfo";
 import type { NewProvider } from "@/bindings/NewProvider";
+import type { ProbeRequest } from "@/bindings/ProbeRequest";
 import type { ProbeResult } from "@/bindings/ProbeResult";
 import type { Provider } from "@/bindings/Provider";
 import type { ProviderPreset } from "@/bindings/ProviderPreset";
@@ -111,8 +112,7 @@ export const api = {
 
   providers: () => call<Provider[]>("GET", "/providers"),
   presets: () => call<ProviderPreset[]>("GET", "/providers/presets"),
-  probe: (base_url: string, api_key: string | null) =>
-    call<ProbeResult>("POST", "/providers/probe", { base_url, api_key }),
+  probe: (req: ProbeRequest) => call<ProbeResult>("POST", "/providers/probe", req),
   addProvider: (p: NewProvider) => call<Provider>("POST", "/providers", p),
   updateProvider: (id: string, u: ProviderUpdate) =>
     call<Provider>("PATCH", `/providers/${id}`, u),

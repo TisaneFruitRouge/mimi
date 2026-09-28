@@ -451,6 +451,9 @@ impl Tool for AddReminder {
     fn needs_approval(&self, _: &Value) -> bool {
         false
     }
+    fn governed_by(&self) -> Option<crate::tools::Governs> {
+        Some(crate::tools::Governs::Schedule)
+    }
     fn summary(&self, _: &Value) -> String {
         "Set a reminder".to_owned()
     }
@@ -496,6 +499,9 @@ impl Tool for AddRoutine {
     }
     fn needs_approval(&self, _: &Value) -> bool {
         false
+    }
+    fn governed_by(&self) -> Option<crate::tools::Governs> {
+        Some(crate::tools::Governs::Schedule)
     }
     fn summary(&self, _: &Value) -> String {
         "Set up a routine".to_owned()
@@ -621,6 +627,9 @@ impl Tool for Change {
     fn needs_approval(&self, _: &Value) -> bool {
         false
     }
+    fn governed_by(&self) -> Option<crate::tools::Governs> {
+        Some(crate::tools::Governs::Schedule)
+    }
     fn summary(&self, _: &Value) -> String {
         "Change a reminder".to_owned()
     }
@@ -704,6 +713,9 @@ impl Tool for Cancel {
     }
     fn needs_approval(&self, _: &Value) -> bool {
         false
+    }
+    fn governed_by(&self) -> Option<crate::tools::Governs> {
+        Some(crate::tools::Governs::Schedule)
     }
     fn summary(&self, _: &Value) -> String {
         "Cancel a reminder".to_owned()

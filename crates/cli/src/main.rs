@@ -482,8 +482,10 @@ async fn providers(client: &Client, cmd: ProvidersCommand) -> anyhow::Result<()>
             let presets = client.provider_presets().await?;
             let preset = presets.iter().find(|p| p.id == preset_or_url);
             let base_url = preset.map_or(preset_or_url.clone(), |p| p.base_url.clone());
+            let kind = preset.map_or(mimi_protocol::ProviderKind::OpenaiCompatible, |p| p.kind);
             let probe = client
                 .probe_provider(&ProbeRequest {
+                    kind,
                     base_url,
                     api_key: api_key.clone(),
                 })
@@ -495,7 +497,7 @@ async fn providers(client: &Client, cmd: ProvidersCommand) -> anyhow::Result<()>
             let provider = client
                 .add_provider(&NewProvider {
                     name,
-                    kind: mimi_protocol::ProviderKind::OpenaiCompatible,
+                    kind,
                     base_url: probe.base_url,
                     api_key,
                     locality: None,

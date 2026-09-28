@@ -268,7 +268,7 @@ async fn backend(state: &AppState) -> Option<Backend> {
         let Ok(Some(record)) = providers::store::get(&state.db, source.id).await else {
             continue;
         };
-        let Ok(client) = providers::connect(&state.http, &record) else {
+        let Ok(client) = providers::connect_openai(&state.http, &record) else {
             continue;
         };
         if client.is_ollama().await {
@@ -281,7 +281,7 @@ async fn backend(state: &AppState) -> Option<Backend> {
 async fn installed(state: &AppState, backend: &Backend, model: &str) -> bool {
     match backend {
         Backend::Builtin(_) => download::installed_path(&state.paths, model).is_some(),
-        Backend::Ollama(record) => match providers::connect(&state.http, record) {
+        Backend::Ollama(record) => match providers::connect_openai(&state.http, record) {
             Ok(client) => client.list_models().await.is_ok_and(|models| {
                 models
                     .iter()
@@ -312,7 +312,7 @@ pub async fn embedder(state: &AppState) -> Result<Option<Arc<dyn Embedder>>, Str
             let endpoint = state.semantic.ensure_server(state, &model).await?;
             OpenAiCompatible::new(state.http.clone(), endpoint.url, Some(endpoint.key)).local(true)
         }
-        Backend::Ollama(record) => providers::connect(&state.http, record)?.local(true),
+        Backend::Ollama(record) => providers::connect_openai(&state.http, record)?.local(true),
     };
     Ok(Some(Arc::new(Remote {
         client,
@@ -366,7 +366,7 @@ pub async fn set_enabled(state: &Arc<AppState>, enabled: bool) -> Result<MemoryS
                     download::start(state.clone(), *id, model.clone())?;
                 }
                 Backend::Ollama(record) => {
-                    let client = providers::connect(&state.http, record)?;
+                    let client = providers::connect_openai(&state.http, record)?;
                     providers::pull::start(
                         state.clone(),
                         client,
