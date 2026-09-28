@@ -42,6 +42,7 @@ import {
   useProviders,
   usePulls,
   useRecommendations,
+  useAssistantName,
   useSettings,
 } from "@/lib/queries";
 import { openExternal } from "@/lib/transport";
@@ -161,6 +162,7 @@ function Welcome({ onNext }: { onNext: () => void }) {
     { icon: Eye, text: "You can see, change or delete everything I remember." },
   ];
   // A happy hello on arrival, then it settles into its calm idle.
+  const name = useAssistantName();
   const [mood, setMood] = useState<AvatarMood>("happy");
   useEffect(() => {
     const timer = setTimeout(() => setMood("idle"), 2400);
@@ -175,7 +177,7 @@ function Welcome({ onNext }: { onNext: () => void }) {
       >
         <AssistantAvatar size={112} mood={mood} />
       </motion.div>
-      <h1 className="mt-6 text-[34px] leading-[40px] font-semibold tracking-[-0.03em]">Hi, I'm Mimi.</h1>
+      <h1 className="mt-6 text-[34px] leading-[40px] font-semibold tracking-[-0.03em]">Hi, I'm {name}.</h1>
       <p className="mt-2 max-w-[460px] type-body text-muted-foreground">
         Your personal assistant. I live on this computer, not in someone else's cloud.
       </p>

@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 
 import type { Settings } from "@/bindings/Settings";
+import { AssistantAvatar } from "@/components/assistant-avatar";
 import { Grouped, Page, PageHeader, Section } from "@/components/page";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -25,6 +26,7 @@ type SaveState = "idle" | "saving" | "saved" | "error";
  */
 export function PersonalityView() {
   const name = useAssistantName();
+  const [attentive, setAttentive] = useState(false);
   const assistantName = useSavedText("assistant_name", { debounce: false, required: true });
   const personality = useSavedText("personality");
   const instructions = useSavedText("custom_instructions");
@@ -44,11 +46,14 @@ export function PersonalityView() {
 
   return (
     <Page>
-      {/* The assistant's avatar joins this header (as its `action`) when it lands. */}
       <PageHeader
         title="Personality"
         subtitle={`Who ${name} is, how it talks to you, and what it should always keep in mind.`}
+        action={<AssistantAvatar size={64} mood={attentive ? "listening" : "idle"} decorative />}
       />
+
+      {/* The avatar leans in while the user writes to it. */}
+      <div onFocus={() => setAttentive(true)} onBlur={() => setAttentive(false)} className="contents">
 
       <Section title="Name" action={<SaveNote state={assistantName.state} error={assistantName.error} />}>
         <Grouped>
@@ -132,6 +137,7 @@ export function PersonalityView() {
           other secrets.
         </p>
       </Section>
+      </div>
     </Page>
   );
 }
