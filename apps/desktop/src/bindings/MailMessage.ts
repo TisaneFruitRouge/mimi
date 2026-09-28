@@ -9,4 +9,9 @@ body: string, seen: boolean, from_me: boolean, attachments: Array<string>,
 /**
  * Contains instructions aimed at an AI assistant.
  */
-suspicious: boolean, };
+suspicious: boolean, 
+/**
+ * Whether it has an HTML version to show as it was sent. `None` until known (mail
+ * copied before Mimi kept it, found out the first time it's shown).
+ */
+has_html: boolean | null, };

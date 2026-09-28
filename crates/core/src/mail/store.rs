@@ -74,9 +74,10 @@ pub fn insert(c: &Connection, m: &NewMessage) -> rusqlite::Result<Option<i64>> {
     c.execute(
         "INSERT INTO mail_messages (connection_id, mailbox, folder, uid, thread_id, message_id,
             in_reply_to, refs, from_name, from_email, to_json, cc_json, subject, date, body,
-            snippet, attachments, seen, flagged, outgoing, automated, received_on, suspicious)
+            snippet, attachments, seen, flagged, outgoing, automated, received_on, suspicious,
+            html)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-            ?18, ?19, ?20, ?21, ?22, ?23)",
+            ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
         params![
             conn,
             m.mailbox,
@@ -101,6 +102,7 @@ pub fn insert(c: &Connection, m: &NewMessage) -> rusqlite::Result<Option<i64>> {
             p.automated,
             m.received_on,
             p.suspicious && !m.outgoing,
+            p.html,
         ],
     )?;
     Ok(Some(thread))
@@ -654,7 +656,7 @@ pub fn detail(
 pub fn messages(c: &Connection, thread: i64, me: &[String]) -> rusqlite::Result<Vec<MailMessage>> {
     let mut stmt = c.prepare(
         "SELECT id, from_name, from_email, to_json, cc_json, date, body, seen, outgoing, attachments,
-                message_id, coalesce(suspicious, 0)
+                message_id, coalesce(suspicious, 0), html IS NULL, html = ''
          FROM mail_messages WHERE thread_id = ?1 ORDER BY date, id",
     )?;
     let rows = stmt.query_map([thread], |r| {
@@ -676,6 +678,10 @@ pub fn messages(c: &Connection, thread: i64, me: &[String]) -> rusqlite::Result<
                 from_me: outgoing || me.iter().any(|e| e.eq_ignore_ascii_case(&from_email)),
                 attachments: serde_json::from_str(&r.get::<_, String>(9)?).unwrap_or_default(),
                 suspicious: r.get(11)?,
+                has_html: match r.get::<_, bool>(12)? {
+                    true => None,
+                    false => Some(!r.get::<_, bool>(13)?),
+                },
             },
         ))
     })?;
@@ -794,6 +800,25 @@ pub fn location(c: &Connection, message: i64) -> rusqlite::Result<Option<(Uuid, 
         },
     )
     .optional()
+}
+
+/// A message's HTML for display (`None`: not known yet) and its plain-text body.
+pub fn html(c: &Connection, message: i64) -> rusqlite::Result<Option<(Option<String>, String)>> {
+    c.query_row(
+        "SELECT html, body FROM mail_messages WHERE id = ?1",
+        [message],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+    .optional()
+}
+
+/// Keeps a message's HTML for display, fetched after it was copied.
+pub fn set_html(c: &Connection, message: i64, html: &str) -> rusqlite::Result<()> {
+    c.execute(
+        "UPDATE mail_messages SET html = ?2 WHERE id = ?1",
+        params![message, html],
+    )?;
+    Ok(())
 }
 
 /// Where a thread's messages live on the server: (connection, mailbox, uid).

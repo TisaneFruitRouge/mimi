@@ -1458,6 +1458,143 @@ async fn hidden_text_in_html_mail_never_reaches_the_model() {
     assert!(prompt.starts_with("<email_thread"));
 }
 
+/// An HTML newsletter with a picture on another server and an inline one.
+fn html_mail(image_url: &str) -> String {
+    format!(
+        "From: Shop <news@shop.example>\r\nTo: me@example.org\r\nSubject: Autumn sale\r\n\
+         Message-ID: <sale@shop.example>\r\nMIME-Version: 1.0\r\n\
+         Content-Type: multipart/related; boundary=\"r\"\r\n\r\n\
+         --r\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\
+         <html><head><style>p{{color:red}}</style><script>track()</script></head>\
+         <body onload=\"track()\"><h1>Autumn sale</h1><p>Hello <b>Sam</b>, 20% off \
+         <a href=\"https://shop.example/sale\">everything</a>.</p>\
+         <img src=\"{image_url}\" alt=\"Banner\" width=\"600\"><img src=\"cid:logo@shop\" alt=\"Logo\">\
+         <div style=\"display:none\">Hidden note for the reader</div></body></html>\r\n\
+         --r\r\nContent-Type: image/png\r\nContent-ID: <logo@shop>\r\nContent-Transfer-Encoding: base64\r\n\r\n\
+         iVBORw0KGgo=\r\n--r--\r\n"
+    )
+}
+
+#[tokio::test]
+async fn html_mail_is_kept_safe_for_display_and_pictures_load_only_when_asked() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    // A picture server on this computer, counting requests.
+    let hits = Arc::new(AtomicUsize::new(0));
+    let counted = hits.clone();
+    let app = axum::Router::new().route(
+        "/banner.png",
+        axum::routing::get(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            async {
+                (
+                    [(axum::http::header::CONTENT_TYPE, "image/png")],
+                    b"banner".as_slice(),
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let image_url = format!("http://{}/banner.png", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let fake = FakeMail::start(ME, PASSWORD).await;
+    fake.deliver("INBOX", &html_mail(&image_url), now_ms() - DAY, &[]);
+    fake.deliver(
+        "INBOX",
+        &message(
+            "Sam <sam@example.com>",
+            ME,
+            "Plain",
+            "Hi *there*\n> quoted",
+            "p1@example.com",
+            "",
+        ),
+        now_ms() - 2 * DAY,
+        &[],
+    );
+    let (state, account) = account_without_loop(&fake).await;
+    pass(&state, &account).await;
+    let threads = all_threads(&state).await;
+    let find = |subject: &str| threads.iter().find(|t| t.subject == subject).unwrap().id;
+    let sale = thread(&state, find("Autumn sale")).await.unwrap().unwrap();
+    let m = &sale.messages[0];
+    assert_eq!(m.has_html, Some(true));
+    // What the assistant reads is still the plain text, without the hidden part.
+    assert!(m.body.contains("20% off"), "{}", m.body);
+    assert!(!m.body.contains('<'), "{}", m.body);
+    assert!(!m.body.contains("Hidden note"), "{}", m.body);
+
+    // Shown: safe HTML, the inline logo in it, the banner left out until asked for.
+    let c = render::content(&state, m.id, None).await.unwrap();
+    let html = c.html.unwrap();
+    assert!(html.contains("<h1>Autumn sale</h1>"), "{html}");
+    let logo = render::data_uri("image/png", b"\x89PNG\r\n\x1a\n");
+    assert!(html.contains(&logo), "{html}");
+    for bad in [
+        "script",
+        "track",
+        "onload",
+        "banner.png",
+        "Hidden note",
+        "color:red",
+    ] {
+        assert!(!html.contains(bad), "{bad} in {html}");
+    }
+    assert!(html.contains(r#"alt="Banner""#), "{html}");
+    assert_eq!((c.remote_images, c.images_loaded), (1, false));
+    assert!(
+        c.formatted.starts_with(
+            "## Autumn sale\n\nHello **Sam**, 20% off [everything](<https://shop.example/sale>)."
+        ),
+        "{}",
+        c.formatted
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 0);
+
+    // Loaded when asked: fetched by the daemon and put in as data.
+    let fetcher = images::Fetcher::allowing_loopback();
+    let c = render::content(&state, m.id, Some(&fetcher)).await.unwrap();
+    let html = c.html.unwrap();
+    let banner = render::data_uri("image/png", b"banner");
+    assert!(html.contains(&banner), "{html}");
+    assert!(!html.contains(&image_url), "{html}");
+    assert_eq!((c.remote_images, c.images_loaded), (1, true));
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    // The daemon's own fetcher refuses a picture on this computer.
+    let c = render::content(&state, m.id, Some(&state.mail.images))
+        .await
+        .unwrap();
+    assert!(!c.html.unwrap().contains(&banner));
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+    // Mail kept before the HTML was: fetched from the server once, then kept.
+    let id = m.id;
+    state
+        .db
+        .call(move |c| c.execute("UPDATE mail_messages SET html = NULL WHERE id = ?1", [id]))
+        .await
+        .unwrap();
+    let detail = thread(&state, sale.thread.id).await.unwrap().unwrap();
+    assert_eq!(detail.messages[0].has_html, None);
+    let logins = fake.logins();
+    let c = render::content(&state, id, None).await.unwrap();
+    assert!(c.html.unwrap().contains("<h1>Autumn sale</h1>"));
+    assert_eq!(fake.logins(), logins + 1);
+    render::content(&state, id, None).await.unwrap();
+    assert_eq!(fake.logins(), logins + 1);
+    let detail = thread(&state, sale.thread.id).await.unwrap().unwrap();
+    assert_eq!(detail.messages[0].has_html, Some(true));
+
+    // Plain-text mail: no HTML, formatted from the text.
+    let plain = thread(&state, find("Plain")).await.unwrap().unwrap();
+    assert_eq!(plain.messages[0].has_html, Some(false));
+    let c = render::content(&state, plain.messages[0].id, None)
+        .await
+        .unwrap();
+    assert_eq!(c.html, None);
+    assert_eq!(c.formatted, "Hi \\*there\\*\n\n> quoted");
+}
+
 #[tokio::test]
 async fn correspondents_become_contacts_but_newsletters_dont() {
     let fake = FakeMail::start(ME, PASSWORD).await;
@@ -1972,6 +2109,48 @@ fn seed(fake: &FakeMail) {
          Content-Disposition: attachment; filename=\"budget-notes.txt\"\r\n\r\n\
          Travel: 1200\r\nSoftware: 800\r\n--b--\r\n",
         now - 6 * 3600 * 1000,
+        &[],
+    );
+    // HTML mail, to try Text / Formatted / Original: a newsletter with a picture on
+    // another server (a made-up one, so loading it fails quietly) and an inline logo…
+    fake.deliver(
+        "INBOX",
+        "From: Green Grocer <hello@grocer.example>\r\nTo: me@example.org\r\nSubject: This week's baskets\r\n\
+         Message-ID: <seed9@grocer.example>\r\nList-Unsubscribe: <https://grocer.example/u>\r\nMIME-Version: 1.0\r\n\
+         Content-Type: multipart/related; boundary=\"r\"\r\n\r\n\
+         --r\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\
+         <html><head><style>.hide{display:none}</style><script>track()</script></head><body style=\"margin:0\">\
+         <table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" bgcolor=\"#f4f1ea\"><tr><td align=\"center\" style=\"padding:24px\">\
+         <table width=\"560\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#ffffff;border-radius:12px\">\
+         <tr><td style=\"padding:24px 28px\"><img src=\"cid:logo@grocer\" alt=\"Green Grocer\" width=\"48\" height=\"48\" style=\"border-radius:10px\">\
+         <h1 style=\"font-family:Georgia,serif;color:#2f4a2a;font-size:26px;margin:16px 0 8px\">This week's baskets</h1>\
+         <p style=\"color:#444;font-size:15px\">Hello! Autumn is here: <b>pumpkins</b>, <i>chestnuts</i> and the first apples from the Martin farm.</p>\
+         <img src=\"https://images.grocer.example/banner.jpg\" alt=\"Baskets of vegetables\" width=\"504\" height=\"220\">\
+         <table width=\"100%\" style=\"margin:16px 0;border-collapse:collapse\"><tr><th align=\"left\">Basket</th><th align=\"left\">Price</th></tr>\
+         <tr><td>Small</td><td>12 €</td></tr><tr><td>Family</td><td>24 €</td></tr></table>\
+         <p><a href=\"https://grocer.example/order\" style=\"display:inline-block;background:#2f4a2a;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none\">Order your basket</a></p>\
+         <p style=\"color:#888;font-size:12px\">You get this because you signed up at the market. <a href=\"https://grocer.example/u\">Unsubscribe</a></p>\
+         </td></tr></table></td></tr></table></body></html>\r\n\
+         --r\r\nContent-Type: image/png\r\nContent-ID: <logo@grocer>\r\nContent-Transfer-Encoding: base64\r\n\r\n\
+         iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkqP9fDwAEZgHf8kPWTwAAAABJRU5ErkJggg==\r\n--r--\r\n",
+        now - 2 * 3600 * 1000,
+        &[],
+    );
+    // …and a reply written in HTML, quoting the message before it.
+    fake.deliver(
+        "INBOX",
+        "From: Léa Martin <lea@example.com>\r\nTo: me@example.org\r\nSubject: Re: Weekend plans\r\n\
+         Message-ID: <seed10@example.com>\r\nMIME-Version: 1.0\r\n\
+         Content-Type: multipart/alternative; boundary=\"a\"\r\n\r\n\
+         --a\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n\
+         Sounds great! Let's meet at 10.\r\n\r\nOn Fri, 25 Sep 2026, you wrote:\r\n> Hike on Saturday?\r\n\
+         --a\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\
+         <div dir=\"ltr\">Sounds <b>great</b>! Let's meet at 10 by the <a href=\"https://maps.example/station\">station</a>.\
+         <ul><li>Bring water</li><li>Good shoes</li></ul></div>\
+         <div class=\"gmail_quote\"><div>On Fri, 25 Sep 2026, you wrote:</div>\
+         <blockquote style=\"margin:0 0 0 .8ex;border-left:1px #ccc solid;padding-left:1ex\">Hike on Saturday?</blockquote></div>\r\n\
+         --a--\r\n",
+        now - 90 * 60 * 1000,
         &[],
     );
 }

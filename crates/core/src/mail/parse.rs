@@ -28,6 +28,8 @@ pub struct Parsed {
     /// Addresses the receiving server says it delivered to (X-Original-To,
     /// Delivered-To…), most telling first. See `received_on`.
     pub delivered_to: Vec<String>,
+    /// The HTML version, made safe, for display only (`render::stored_html`).
+    pub html: Option<String>,
 }
 
 pub fn parse(raw: &[u8]) -> Option<Parsed> {
@@ -90,6 +92,7 @@ pub fn parse(raw: &[u8]) -> Option<Parsed> {
             .filter_map(|name| top_most(&msg, name))
             .filter_map(bare_address)
             .collect(),
+        html: Some(super::render::stored_html(&msg)),
     })
 }
 

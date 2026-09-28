@@ -287,8 +287,22 @@ than inventing their own.
   the system's app; programs and scripts (`attachments::is_program`) are only saved to
   Downloads and revealed, never opened.
 - **UI**: `features/mail/` (`mail-view.tsx` panel: views, list, reader, reply box;
-  `draft-editor.tsx`; `draft-card.tsx` for chat drafts). Email text is plain text, never
-  linkified. The connect form is `EmailAccount` in `connect-dialogs.tsx`.
+  `message-body.tsx`: how a message is shown; `draft-editor.tsx`; `draft-card.tsx` for
+  chat drafts). In Text mode email is plain text, never linkified. The connect form is
+  `EmailAccount` in `connect-dialogs.tsx`.
+- **Rendering** (`render.rs`, `images.rs`, migration 0018; details in
+  `docs/architecture.md` › Email › Showing mail): Text · Formatted · Original, a
+  per-viewer choice (localStorage, default Original). Only for display: models, tools,
+  triage and mentions keep the plain-text `body`. The HTML is sanitized (ammonia
+  allow-list, hidden text removed, no `url()` or positioning in CSS, no relative
+  addresses) when kept at sync and again when served, with `cid:` pictures inlined and
+  remote pictures left out until the user clicks "Load images"; then the daemon fetches
+  only that message's pictures (public addresses only, checked after DNS and on every
+  redirect; pictures only, size-capped) and inlines them as `data:`. The panel shows it
+  in a `sandbox="allow-same-origin"` iframe (never add `allow-scripts`: with same origin
+  it would lift the sandbox) with its own CSP, and opens links with `openExternal`.
+  Formatted is Markdown made by the daemon with everything the sender wrote escaped.
+  Crates: ammonia (its cssparser is MPL-2.0), markup5ever_rcdom (MIT/Apache).
 - **Tests** fake the servers: `mail/fake.rs` is a small IMAP (IDLE, MOVE, APPEND…) and
   SMTP server; `mail/tests.rs` covers sync, UIDVALIDITY resets, flags, archive, send,
   hidden text, correspondents and sorting with a mock model. To try the app by hand,

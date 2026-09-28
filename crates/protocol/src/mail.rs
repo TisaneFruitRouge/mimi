@@ -128,6 +128,27 @@ pub struct MailMessage {
     pub attachments: Vec<String>,
     /// Contains instructions aimed at an AI assistant.
     pub suspicious: bool,
+    /// Whether it has an HTML version to show as it was sent. `None` until known (mail
+    /// copied before Mimi kept it, found out the first time it's shown).
+    pub has_html: Option<bool>,
+}
+
+/// One email ready to show: as it was sent (its HTML, made safe) and as formatted text.
+/// See `mail::render` in the daemon.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MailContent {
+    /// The email's own HTML, made safe: no scripts, forms, hidden text or anything loaded
+    /// from elsewhere. Pictures on other servers are left out unless `images_loaded`.
+    /// `None` when it has no HTML version (or it couldn't be fetched).
+    pub html: Option<String>,
+    /// Markdown made from the HTML, or from the plain text: headings, emphasis, lists,
+    /// links, quotes and simple tables. No raw HTML, no pictures.
+    pub formatted: String,
+    /// How many pictures in `html` come from other servers.
+    pub remote_images: u32,
+    /// Whether those pictures are in `html` (fetched by the daemon when the user asked).
+    pub images_loaded: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

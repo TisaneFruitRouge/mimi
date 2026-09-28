@@ -508,6 +508,7 @@ impl Fetched {
             parsed.body =
                 "(This message is too large to copy. Open it in your usual mail app to read it.)"
                     .to_owned();
+            parsed.html = None;
         }
         let outgoing = folder == "sent" || parsed.from.email.eq_ignore_ascii_case(me);
         Some(NewMessage {

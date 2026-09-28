@@ -23,11 +23,13 @@ use crate::connections::store as connection_store;
 pub mod contacts;
 pub mod discover;
 pub mod folders;
+pub mod images;
 pub mod jev;
 pub mod mentions;
 pub mod model;
 pub mod net;
 pub mod parse;
+pub mod render;
 pub mod smtp;
 pub mod store;
 pub mod suspicious;
@@ -93,6 +95,8 @@ pub struct Mail {
     pokes: Mutex<HashMap<Uuid, Arc<Notify>>>,
     /// Wakes the sorting queue when new mail arrives.
     pub triage_wake: Notify,
+    /// Fetches an email's pictures when the user asks for them.
+    pub images: images::Fetcher,
 }
 
 impl Mail {

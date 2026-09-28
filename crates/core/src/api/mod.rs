@@ -153,6 +153,8 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/mail/messages/{id}/attachments/{index}",
             get(mail::attachment),
         )
+        .route("/mail/messages/{id}/content", get(mail::content))
+        .route("/mail/messages/{id}/images", post(mail::images))
         .route("/web/login-link", post(web::login_link))
         .route("/web/logout", post(web::logout))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
