@@ -904,7 +904,10 @@ function ThreadMenu({
   const addable = folders.filter((f) => !t.folders.includes(f.id));
   return (
     <ContextMenu>
-      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      {/* A plain element: the row component doesn't pass the trigger's handlers on. */}
+      <ContextMenuTrigger asChild>
+        <div className="flex flex-col">{children}</div>
+      </ContextMenuTrigger>
       <ContextMenuContent className="w-[220px]">
         <ContextMenuItem onSelect={onOpen}>
           <MailOpen /> Open

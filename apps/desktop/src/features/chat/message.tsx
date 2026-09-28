@@ -32,7 +32,9 @@ export function MessageView({ message }: { message: Message }) {
   }
   return (
     <MessageMenu text={message.content}>
-      <AssistantMessage message={message} />
+      <div>
+        <AssistantMessage message={message} />
+      </div>
     </MessageMenu>
   );
 }
