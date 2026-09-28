@@ -6,7 +6,9 @@
 //!
 //! The approval rule: anything that sends, changes or deletes something on the user's
 //! behalf returns `true` from [`Tool::needs_approval`] and waits for the user; reads
-//! don't.
+//! don't. The user may let a few kinds of action happen on their own (Settings ›
+//! Permissions): a tool opts in with [`Tool::governed_by`], and
+//! [`permissions::requires_approval`] makes the final call.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
@@ -21,6 +23,9 @@ use crate::providers::{FunctionSpec, ToolSpec};
 
 #[cfg(debug_assertions)]
 pub mod dev;
+pub mod permissions;
+
+pub use permissions::Governs;
 
 /// What a tool gets to work with.
 pub struct ToolContext {
@@ -37,6 +42,11 @@ pub trait Tool: Send + Sync {
     fn parameters(&self) -> Value;
     /// Whether this call sends, changes or deletes something, so the user must approve.
     fn needs_approval(&self, args: &Value) -> bool;
+    /// The permission setting that decides instead of [`Tool::needs_approval`], for the
+    /// few kinds of action the user may let happen on their own.
+    fn governed_by(&self) -> Option<Governs> {
+        None
+    }
     /// One plain-language line for the approval card, e.g.
     /// "Create “Dentist” on Friday 10:00–10:45 in Personal".
     fn summary(&self, args: &Value) -> String;

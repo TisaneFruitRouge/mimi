@@ -17,7 +17,7 @@ use crate::api::error::AppError;
 use crate::providers::{
     self, ChatChunk, ChatMessage, ProviderError, Role, ToolCall, store as provider_store,
 };
-use crate::tools::{Decision, ToolContext, ToolRegistry};
+use crate::tools::{Decision, ToolContext, ToolRegistry, permissions};
 use crate::{AppState, now_ms, settings};
 
 pub mod store;
@@ -487,16 +487,25 @@ impl Turn {
             serde_json::from_str(&call.arguments)
                 .map_err(|e| format!("The arguments weren't valid JSON: {e}"))
         };
+        let permissions = crate::settings::load(&self.state.db)
+            .await
+            .map(|s| s.permissions)
+            .unwrap_or_default();
         // What the card shows is what runs: the arguments in the shape the tool reads.
         let parsed = match (&tool, parsed) {
-            (Some(t), Ok(args)) if t.needs_approval(&args) => t.prepare(args),
+            (Some(t), Ok(args)) if permissions::may_ask(t.as_ref(), &args, &permissions) => {
+                t.prepare(args)
+            }
             (_, parsed) => parsed,
         };
         let shown_args = parsed
             .clone()
             .unwrap_or(Value::String(call.arguments.clone()));
         let (summary, requires_approval) = match (&tool, &parsed) {
-            (Some(t), Ok(args)) => (t.summary(args), t.needs_approval(args)),
+            (Some(t), Ok(args)) => (
+                t.summary(args),
+                permissions::requires_approval(&self.state, t.as_ref(), args, &permissions).await,
+            ),
             // Can't tell what it would do, and it won't run anyway.
             _ => (call.name.clone(), false),
         };

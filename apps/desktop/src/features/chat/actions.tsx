@@ -17,6 +17,11 @@ const MEMORY_READS = new Set(["memory_search", "memory_read", "memory_list"]);
 const MEMORY_WRITES = new Set(["memory_write", "memory_update", "memory_forget"]);
 /** Reminders and routines set, changed or cancelled: also one quiet line with Undo. */
 const SCHEDULE_WRITES = new Set(["reminder_add", "routine_add", "schedule_change", "schedule_cancel"]);
+/**
+ * Actions that ask first unless the user allowed them in Settings › Permissions. Done
+ * on their own, they show as a card with what was sent or added, not as a quiet line.
+ */
+const MAY_BE_AUTOMATIC = new Set(["mail_send", "calendar_add_event"]);
 
 /** What the assistant did (reads) and asked to do (approval cards) in one reply. */
 export function Actions({ actions }: { actions: Action[] }) {
@@ -29,16 +34,20 @@ export function Actions({ actions }: { actions: Action[] }) {
   );
   // Email drafts show as the draft itself, to check and send.
   const drafts = actions.filter((a) => DRAFT_TOOLS.has(a.tool) && a.status === "done" && draftOf(a) !== null);
+  const automatic = actions.filter((a) => !a.requires_approval && MAY_BE_AUTOMATIC.has(a.tool));
   const reads = actions.filter(
     (a) =>
       !a.requires_approval &&
       !MEMORY_READS.has(a.tool) &&
       !MEMORY_WRITES.has(a.tool) &&
       !scheduled.includes(a) &&
-      !drafts.includes(a),
+      !drafts.includes(a) &&
+      !automatic.includes(a),
   );
-  const asks = actions.filter((a) => a.requires_approval);
-  if (reads.length + remembered.length + scheduled.length + asks.length + drafts.length === 0) return null;
+  // An approved reminder becomes its Undo line.
+  const asks = actions.filter((a) => a.requires_approval && !scheduled.includes(a));
+  if (reads.length + remembered.length + scheduled.length + asks.length + drafts.length + automatic.length === 0)
+    return null;
   return (
     <div className="flex flex-col gap-3">
       {reads.length > 0 && (
@@ -56,6 +65,9 @@ export function Actions({ actions }: { actions: Action[] }) {
       ))}
       {drafts.map((a) => (
         <DraftCard key={a.id} action={a} />
+      ))}
+      {automatic.map((a) => (
+        <DecidedCard key={a.id} action={a} automatic />
       ))}
       {asks.map((a) => (
         <ApprovalCard key={a.id} action={a} />
@@ -199,8 +211,13 @@ function ApprovalCard({ action: a }: { action: Action }) {
   );
 }
 
-/** An approval card after the decision: one compact line. */
-function DecidedCard({ action: a }: { action: Action }) {
+/**
+ * An approval card after the decision: one compact line. `automatic` is for an action
+ * the user let happen without asking; its details (who an email went to, what it said)
+ * open from the line.
+ */
+function DecidedCard({ action: a, automatic = false }: { action: Action; automatic?: boolean }) {
+  const [open, setOpen] = useState(false);
   const finishAt = a.status === "done" ? openUrlOf(a) : null;
   useEffect(() => {
     if (finishAt && approvedHere.has(a.id) && !openedHere.has(a.id)) {
@@ -234,21 +251,46 @@ function DecidedCard({ action: a }: { action: Action }) {
         : a.status === "failed"
           ? `Couldn't do it${a.error ? `: ${a.error}` : "."}`
           : `On it: ${lowerFirst(a.summary)}…`;
+  const rows = automatic ? describeArgs(a.tool, a.arguments) : [];
   return (
-    <div className="flex items-center gap-3 rounded-[14px] bg-background px-3.5 py-2.5 type-callout shadow-[var(--shadow-card)]">
-      <span className={cn("flex size-5 shrink-0 items-center justify-center rounded-full", tone)}>{icon}</span>
-      <span
-        className={cn(
-          "min-w-0 flex-1 break-words",
-          a.status === "failed" ? "text-destructive" : a.status === "done" ? "" : "text-muted-foreground",
+    <div className="flex flex-col rounded-[14px] bg-background px-3.5 py-2.5 type-callout shadow-[var(--shadow-card)]">
+      <div className="flex items-center gap-3">
+        <span className={cn("flex size-5 shrink-0 items-center justify-center rounded-full", tone)}>{icon}</span>
+        <span
+          className={cn(
+            "min-w-0 flex-1 break-words",
+            a.status === "failed" ? "text-destructive" : a.status === "done" ? "" : "text-muted-foreground",
+          )}
+        >
+          {text}
+          {automatic && <span className="text-faint"> · automatic</span>}
+        </span>
+        {rows.length > 0 && (
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={() => setOpen((o) => !o)}
+            aria-expanded={open}
+            className="-my-1 text-muted-foreground"
+          >
+            {open ? "Hide" : "Details"}
+          </Button>
         )}
-      >
-        {text}
-      </span>
-      {finishAt && (
-        <Button variant="lime" size="sm" onClick={() => openExternal(finishAt)} className="-my-1">
-          <ExternalLink /> Save in Google Calendar
-        </Button>
+        {finishAt && (
+          <Button variant="lime" size="sm" onClick={() => openExternal(finishAt)} className="-my-1">
+            <ExternalLink /> Save in Google Calendar
+          </Button>
+        )}
+      </div>
+      {open && (
+        <dl className="mt-2.5 mb-1 grid grid-cols-[auto_1fr] gap-x-5 gap-y-2 rounded-[12px] bg-subtle px-4 py-3">
+          {rows.map((r, i) => (
+            <div key={`${i}-${r.label}`} className="contents">
+              <dt className="text-muted-foreground">{r.label}</dt>
+              <dd className="min-w-0 break-words whitespace-pre-wrap">{r.value}</dd>
+            </div>
+          ))}
+        </dl>
       )}
     </div>
   );

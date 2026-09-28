@@ -150,6 +150,10 @@ impl Tool for AddEvent {
         true
     }
 
+    fn governed_by(&self) -> Option<crate::tools::Governs> {
+        Some(crate::tools::Governs::AddEvents)
+    }
+
     fn summary(&self, args: &Value) -> String {
         let title = args["title"].as_str().unwrap_or("an event");
         let when = parse_event(args)

@@ -12,7 +12,14 @@ import { windowAction, windowChrome } from "@/lib/transport";
 /** The panels used every day, in the top bar. */
 export type Tab = "chat" | "calendar" | "mail" | "people";
 /** Everything set up once, in the Settings window's sidebar. */
-export type SettingsPage = "general" | "connections" | "models" | "memory" | "notifications" | "privacy";
+export type SettingsPage =
+  | "general"
+  | "connections"
+  | "models"
+  | "memory"
+  | "notifications"
+  | "permissions"
+  | "privacy";
 /** Anywhere the app can go. */
 export type Section = Tab | SettingsPage;
 

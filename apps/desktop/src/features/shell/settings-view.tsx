@@ -6,6 +6,7 @@ import {
   BookOpen,
   ChevronRight,
   ExternalLink,
+  Hand,
   Loader2,
   Lock,
   LogOut,
@@ -38,6 +39,7 @@ import type { MailSorter } from "@/bindings/MailSorter";
 import { ConnectionsView } from "@/features/connections/connections-view";
 import { MemoryView } from "@/features/memory/memory-view";
 import { ModelsView } from "@/features/models/models-view";
+import { PermissionsView } from "@/features/permissions/permissions-view";
 import { NotificationsSettings } from "@/features/reminders/reminders";
 import type { Section as Place, SettingsPage } from "@/features/shell/top-bar";
 import { api, keys } from "@/lib/api";
@@ -64,6 +66,7 @@ export const settingsPages: {
   { id: "models", label: "Models", icon: Sparkles, tone: "bg-lime text-lime-ink" },
   { id: "memory", label: "Memory", icon: BookOpen, tone: "bg-[#bf5af2] text-white" },
   { id: "notifications", label: "Reminders & notifications", icon: BellRing, tone: "bg-[#ff3b30] text-white" },
+  { id: "permissions", label: "Permissions", icon: Hand, tone: "bg-[#ff9f0a] text-white" },
   { id: "privacy", label: "Privacy", icon: Lock, tone: "bg-private text-white" },
 ];
 
@@ -145,6 +148,7 @@ export function SettingsView({
             {page === "notifications" && (
               <NotificationsSettings onOpenConversation={onOpenConversation} onCalendar={() => onSection("calendar")} />
             )}
+            {page === "permissions" && <PermissionsView />}
             {page === "privacy" && <PrivacySettings onSection={onSection} />}
           </motion.div>
         </AnimatePresence>

@@ -32,6 +32,45 @@ pub struct Settings {
     /// What sorts it: the user's own model (the default), or a cloud decision model the
     /// user chose.
     pub mail_sorter: MailSorter,
+    /// What the assistant may do without asking first.
+    pub permissions: Permissions,
+}
+
+/// What the assistant may do on its own, per kind of action (Settings › Permissions).
+/// Anything not listed here keeps its own rule: reads never ask, and every other action
+/// that sends or changes something always does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct Permissions {
+    /// Sending email. Automatic still asks before writing to anyone the user doesn't
+    /// know (not in their contacts, never emailed): a hostile email can't make the
+    /// assistant mail a stranger.
+    pub send_mail: Autonomy,
+    /// Adding events to the user's own calendars.
+    pub add_events: Autonomy,
+    /// Setting, changing and cancelling reminders and routines.
+    pub schedule: Autonomy,
+}
+
+impl Default for Permissions {
+    fn default() -> Self {
+        Self {
+            send_mail: Autonomy::Ask,
+            add_events: Autonomy::Ask,
+            schedule: Autonomy::Automatic,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Autonomy {
+    /// Shown as a card the user approves or declines.
+    Ask,
+    /// Done straight away, and shown in the chat afterwards.
+    Automatic,
 }
 
 /// What sorts new mail.
@@ -60,6 +99,7 @@ impl Default for Settings {
             memory_semantic: false,
             mail_sorting: true,
             mail_sorter: MailSorter::Model,
+            permissions: Permissions::default(),
         }
     }
 }

@@ -454,8 +454,8 @@ impl Tool for Send {
 
     fn description(&self) -> &str {
         "Send an email from the user's account. Only when the user has asked for it to be sent. \
-         The user sees the whole message and must approve it first. For a reply, pass thread_id so \
-         it joins the conversation."
+         Depending on the user's settings it may go out straight away, so write it exactly as it \
+         should be sent. For a reply, pass thread_id so it joins the conversation."
     }
 
     fn parameters(&self) -> Value {
@@ -472,10 +472,14 @@ impl Tool for Send {
         })
     }
 
-    /// Always: sending is irreversible and the most direct thing a hostile email could
-    /// try to cause.
+    /// Unless the user lets their assistant send on its own: sending is irreversible and
+    /// the most direct thing a hostile email could try to cause.
     fn needs_approval(&self, _args: &Value) -> bool {
         true
+    }
+
+    fn governed_by(&self) -> Option<crate::tools::Governs> {
+        Some(crate::tools::Governs::SendMail)
     }
 
     /// Every recipient as its own entry, exactly as it will be sent: the card lists them
