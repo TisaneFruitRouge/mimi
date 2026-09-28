@@ -61,6 +61,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { ConnectDialog } from "@/features/connections/connect-dialogs";
 import { DraftEditor, SendButton, useSendDraft } from "@/features/mail/draft-editor";
 import { AddToFolder, FolderChips, FolderHeader, FolderList } from "@/features/mail/folders";
+import { MailModeSwitch, MessageBody } from "@/features/mail/message-body";
 import type { Section } from "@/features/shell/top-bar";
 import { api, keys, type MailScope } from "@/lib/api";
 import { type Draft, mentionDraft } from "@/lib/draft";
@@ -237,23 +238,6 @@ function who(t: MailThread) {
   const shown = names.slice(0, 2).join(", ");
   const text = names.length > 2 ? `${shown} +${names.length - 2}` : shown;
   return t.last_from_me ? `To ${text}` : text;
-}
-
-/** Where quoted history starts in a plain-text body, as the daemon finds it. */
-function splitQuoted(body: string): [string, string | null] {
-  const lines = body.split("\n");
-  const at = lines.findIndex((line, i) => {
-    const t = line.trim().toLowerCase();
-    return (
-      (t.startsWith(">") && lines.slice(i).every((l) => !l.trim() || l.trim().startsWith(">"))) ||
-      (t.startsWith("on ") && t.endsWith("wrote:")) ||
-      (t.startsWith("le ") && /a écrit ?:$/.test(t)) ||
-      (t.startsWith("am ") && t.endsWith("schrieb:")) ||
-      t.startsWith("-----original message-----")
-    );
-  });
-  if (at <= 0) return [body, null];
-  return [lines.slice(0, at).join("\n").trimEnd(), lines.slice(at).join("\n")];
 }
 
 // --- The panel -----------------------------------------------------------------------
@@ -1074,6 +1058,9 @@ function Reader({
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            <div className="ml-auto">
+              <MailModeSwitch original={d.messages.some((m) => m.has_html !== false)} />
+            </div>
             <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
               <AlertDialogContent>
                 <AlertDialogHeader>
@@ -1222,8 +1209,6 @@ function Messages({ messages, onPerson }: { messages: MailMessage[]; onPerson: (
 }
 
 function MessageCard({ message: m, onPerson }: { message: MailMessage; onPerson: (email: string) => void }) {
-  const [text, quoted] = splitQuoted(m.body);
-  const [showQuoted, setShowQuoted] = useState(false);
   const recipients = [...m.to, ...m.cc];
   return (
     <article className="surface flex flex-col gap-3 px-5 py-4">
@@ -1249,24 +1234,7 @@ function MessageCard({ message: m, onPerson }: { message: MailMessage; onPerson:
         </div>
         <span className="shrink-0 type-footnote text-faint">{longDate(m.date)}</span>
       </header>
-      {/* Plain text only: nothing in an email is turned into a link or formatting. */}
-      <div className="type-body leading-[1.55] break-words whitespace-pre-wrap">{text || " "}</div>
-      {quoted && (
-        <div>
-          <button
-            onClick={() => setShowQuoted((s) => !s)}
-            aria-label={showQuoted ? "Hide quoted text" : "Show quoted text"}
-            className="rounded-full bg-fill px-2.5 py-0.5 type-footnote font-semibold text-muted-foreground hover:text-foreground"
-          >
-            •••
-          </button>
-          {showQuoted && (
-            <div className="mt-2 border-l-2 border-separator pl-3 type-subhead break-words whitespace-pre-wrap text-muted-foreground">
-              {quoted}
-            </div>
-          )}
-        </div>
-      )}
+      <MessageBody message={m} />
       {m.attachments.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
           {m.attachments.map((a, i) => (

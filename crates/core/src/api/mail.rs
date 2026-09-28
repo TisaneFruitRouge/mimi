@@ -227,6 +227,30 @@ pub async fn attachment(
         .map_err(AppError::internal)
 }
 
+/// A message ready to show as sent or as formatted text, pictures from other servers
+/// left out.
+pub async fn content(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> ApiResult<mimi_protocol::MailContent> {
+    mail::render::content(&state, id, None)
+        .await
+        .map(Json)
+        .map_err(AppError::bad_request)
+}
+
+/// The same with its pictures from other servers, fetched now: the user asked to load
+/// them ("Load images").
+pub async fn images(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> ApiResult<mimi_protocol::MailContent> {
+    mail::render::content(&state, id, Some(&state.mail.images))
+        .await
+        .map(Json)
+        .map_err(AppError::bad_request)
+}
+
 /// Saves the user's TypeSafe key, after checking it with TypeSafe, so Jev can sort mail.
 pub async fn jev_connect(
     State(state): State<Arc<AppState>>,

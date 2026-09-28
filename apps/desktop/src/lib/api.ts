@@ -34,6 +34,7 @@ import type { Settings } from "@/bindings/Settings";
 import type { Status } from "@/bindings/Status";
 import type { CalendarEvent } from "@/bindings/CalendarEvent";
 import type { MailBox } from "@/bindings/MailBox";
+import type { MailContent } from "@/bindings/MailContent";
 import type { MailDraft } from "@/bindings/MailDraft";
 import type { MailOverview } from "@/bindings/MailOverview";
 import type { MailDiscovery } from "@/bindings/MailDiscovery";
@@ -171,6 +172,10 @@ export const api = {
     return call<MailThread[]>("GET", `/mail/threads?${params}`);
   },
   mailThread: (id: number) => call<MailThreadDetail>("GET", `/mail/threads/${id}`),
+  /** One email as it was sent (made safe) and as formatted text, pictures from other servers left out. */
+  mailContent: (id: number) => call<MailContent>("GET", `/mail/messages/${id}/content`),
+  /** The same with its pictures from other servers, fetched by the daemon now (the user asked). */
+  mailContentWithImages: (id: number) => call<MailContent>("POST", `/mail/messages/${id}/images`),
   markMailRead: (id: number, read: boolean) =>
     call<null>("POST", `/mail/threads/${id}/read`, { read }),
   archiveMail: (id: number) => call<null>("POST", `/mail/threads/${id}/archive`),
@@ -298,6 +303,9 @@ export const keys = {
   mailThreads: (view: MailBox | null, q: string, scope: MailScope = {}, folder: number | null = null) =>
     ["mail", "threads", view, q, scope.account ?? null, scope.address ?? null, folder] as const,
   mailThread: (id: number) => ["mail", "thread", id] as const,
+  // Not under "mail": an email's content never changes, and loading its pictures again at
+  // every mail change would tell the sender each time.
+  mailContent: (id: number, images: boolean) => ["mailContent", id, images] as const,
   /** Every calendar and event read. */
   calendar: ["calendar"] as const,
   calendars: ["calendar", "list"] as const,

@@ -317,6 +317,30 @@ so nothing from an email becomes a memory. `api/tests.rs` › `mail_flow` has a 
 email and a model that obeys it: the send waits on the approval card and nothing is sent
 when it's declined.
 
+**Showing mail** (`mail/render.rs`, `mail/images.rs`). The Mail panel shows a message
+three ways, chosen per viewer (Text · Formatted · Original, default Original): the
+plain-text body; Markdown the daemon makes from the HTML (or the text); or the email's
+own HTML. None of it ever reaches a model: the assistant reads only the plain-text body.
+The HTML is made safe and kept with the message at sync (`mail_messages.html`,
+migration 0018; `''` without an HTML part; `NULL` for mail copied earlier or too large,
+fetched from the server the first time it's shown, then kept), so mail opens offline.
+Making it safe: `parse::strip_hidden`, then ammonia with an allow-list of tags,
+attributes (no ids, classes, event handlers) and inline CSS (no `url()`, escapes,
+comments, positioning or functions but colours and `calc()`); links only http(s),
+mailto and tel; relative addresses dropped (they'd point at the app); inline `cid:`
+pictures put in as `data:` addresses. It runs again each time the HTML is served, with
+pictures from other servers left out: they tell the sender when and where the mail was
+opened. "Load images" (`POST /v1/mail/messages/{id}/images`) has the daemon fetch only
+that message's picture addresses: http(s) only, names resolved and every address on
+this computer, the local network or reserved ranges refused (also after redirects), no
+proxy, cookies or referrer, pictures only (no SVG), 5 MB each, 20 MB and 30 s per
+message; they come back as `data:` addresses, so the app's CSP (`img-src 'self' data:`)
+stays as is. The panel shows the HTML in an iframe with `sandbox="allow-same-origin"`
+(never `allow-scripts`) and its own CSP (`default-src 'none'; img-src data:;
+style-src 'unsafe-inline'`); the page sizes the frame to its content and opens clicked
+links with `openExternal`. `GET /v1/mail/messages/{id}/content` returns `MailContent`
+(safe HTML, Markdown, how many pictures are hidden).
+
 **Sorting.** `triage::run` wakes after a pass that changed something (and every 5
 minutes). While `Settings.mail_sorting` is on and a model is set up, it takes the newest
 unsorted Inbox thread from the last 14 days, one at a time, waiting while a chat reply

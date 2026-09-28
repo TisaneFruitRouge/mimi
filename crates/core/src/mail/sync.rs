@@ -522,6 +522,9 @@ impl Fetched {
                     parsed.body = "(This message is too large to copy. Open it in your usual \
                                    mail app to read it.)"
                         .to_owned();
+                    // Only the headers were fetched; the HTML comes from the server on
+                    // first view (`mail::content`).
+                    parsed.html = None;
                 }
                 parsed
             }
@@ -583,10 +586,13 @@ fn unreadable(raw: &[u8]) -> parse::Parsed {
         automated: false,
         suspicious: false,
         delivered_to: Vec::new(),
+        html: None,
     });
     parsed.body =
         "(This message couldn't be read here. Open it in your usual mail app to read it.)"
             .to_owned();
+    // "No HTML", not "unknown": showing it must not fetch and parse it again.
+    parsed.html = Some(String::new());
     parsed
 }
 
