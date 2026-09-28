@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
-import { Loader2, Unplug } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { cn } from "cn";
 
+import { AssistantAvatar } from "@/components/assistant-avatar";
 import { LogoMark } from "@/components/brand";
 import { CalendarView } from "@/features/calendar/calendar-view";
 import { ChatView } from "@/features/chat/chat-view";
@@ -302,7 +303,7 @@ function Splash() {
         animate={{ scale: 1, opacity: 1 }}
         transition={{ type: "spring", stiffness: 300, damping: 22 }}
       >
-        <LogoMark className="size-14 rounded-[16px] [&_svg]:size-7" />
+        <LogoMark className="size-14 rounded-[16px]" />
       </motion.div>
     </Centered>
   );
@@ -325,9 +326,8 @@ function SignedOut() {
 function Offline() {
   return (
     <Centered>
-      <div className="mb-2 flex size-14 items-center justify-center rounded-[16px] bg-fill text-muted-foreground">
-        <Unplug className="size-6" />
-      </div>
+      {/* Asleep while the daemon is away. */}
+      <AssistantAvatar size={76} mood="sleepy" decorative className="mb-1" />
       <h1 className="type-title">Your assistant isn't running</h1>
       <p className="max-w-[360px] type-body text-muted-foreground">
         Mimi reconnects on its own as soon as it's back.

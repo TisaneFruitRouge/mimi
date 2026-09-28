@@ -23,6 +23,7 @@ import { toast } from "sonner";
 import type { CatalogModel } from "@/bindings/CatalogModel";
 import type { ModelRef } from "@/bindings/ModelRef";
 import type { Settings } from "@/bindings/Settings";
+import { AssistantAvatar, type AvatarMood } from "@/components/assistant-avatar";
 import { LogoMark } from "@/components/brand";
 import { IconTile, Pill } from "@/components/page";
 import { Button } from "@/components/ui/button";
@@ -159,6 +160,12 @@ function Welcome({ onNext }: { onNext: () => void }) {
     { icon: WifiOff, text: "Nothing is sent anywhere unless a task needs it, and you'll always see when." },
     { icon: Eye, text: "You can see, change or delete everything I remember." },
   ];
+  // A happy hello on arrival, then it settles into its calm idle.
+  const [mood, setMood] = useState<AvatarMood>("happy");
+  useEffect(() => {
+    const timer = setTimeout(() => setMood("idle"), 2400);
+    return () => clearTimeout(timer);
+  }, []);
   return (
     <div className="flex flex-col items-center pt-[8vh] text-center">
       <motion.div
@@ -166,7 +173,7 @@ function Welcome({ onNext }: { onNext: () => void }) {
         animate={{ scale: 1, opacity: 1 }}
         transition={{ type: "spring", stiffness: 300, damping: 20 }}
       >
-        <LogoMark className="size-16 rounded-[18px]" />
+        <AssistantAvatar size={112} mood={mood} />
       </motion.div>
       <h1 className="mt-6 text-[34px] leading-[40px] font-semibold tracking-[-0.03em]">Hi, I'm Mimi.</h1>
       <p className="mt-2 max-w-[460px] type-body text-muted-foreground">

@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!--
+    Small-size app icon (16 and 32 px): the same character without shine, cheeks, mouth or
+    highlights, and slightly larger. macOS grid: an 824 px continuous-corner square (radius
+    185.4) centred on a 1024 px canvas, with a soft drop shadow. The character is the
+    resting pose of components/assistant-avatar.tsx; keep them in step.
+    Regenerate the icon set from apps/desktop (see icons/source/regenerate.sh).
+  -->
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e0f98f"/>
+      <stop offset="1" stop-color="#b4e140"/>
+    </linearGradient>
+    <radialGradient id="blush">
+      <stop offset=".35" stop-color="#ff8aa5" stop-opacity=".8"/>
+      <stop offset="1" stop-color="#ff8aa5" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fffefa"/>
+      <stop offset="1" stop-color="#f1efe6"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000" flood-opacity=".2"/>
+    </filter>
+  </defs>
+  <g transform="translate(100 100)">
+    <path d="M527.36 0c103.83 0 155.75 0 195.41 20.21a185.4 185.4 0 0 1 81.02 81.02c20.21 39.66 20.21 91.58 20.21 195.41L824 527.36c0 103.83 0 155.75 -20.21 195.41a185.4 185.4 0 0 1 -81.02 81.02c-39.66 20.21 -91.58 20.21 -195.41 20.21L296.64 824c-103.83 0 -155.75 0 -195.41 -20.21a185.4 185.4 0 0 1 -81.02 -81.02c-20.21 -39.66 -20.21 -91.58 -20.21 -195.41L0 296.64c0 -103.83 0 -155.75 20.21 -195.41a185.4 185.4 0 0 1 81.02 -81.02c39.66 -20.21 91.58 -20.21 195.41 -20.21Z" fill="url(#tile)" filter="url(#shadow)"/>
+    <path d="M527.36 0c103.83 0 155.75 0 195.41 20.21a185.4 185.4 0 0 1 81.02 81.02c20.21 39.66 20.21 91.58 20.21 195.41L824 527.36c0 103.83 0 155.75 -20.21 195.41a185.4 185.4 0 0 1 -81.02 81.02c-39.66 20.21 -91.58 20.21 -195.41 20.21L296.64 824c-103.83 0 -155.75 0 -195.41 -20.21a185.4 185.4 0 0 1 -81.02 -81.02c-20.21 -39.66 -20.21 -91.58 -20.21 -195.41L0 296.64c0 -103.83 0 -155.75 20.21 -195.41a185.4 185.4 0 0 1 81.02 -81.02c39.66 -20.21 91.58 -20.21 195.41 -20.21Z" fill="none" stroke="#000" stroke-opacity=".07" stroke-width="2"/>
+  </g>
+  <g transform="translate(122 120) scale(7.8)">
+      <path d="M50 19.5C50.4 14 49.4 10.5 47 7.5" fill="none" stroke="#6f9a1c" stroke-width="2.6" stroke-linecap="round"/>
+      <path d="M47.6 9.2C43 3 35 3 32 6C35.5 11.5 42.5 12 47.6 9.2Z" fill="#9ccc2e"/>
+      <path d="M48.6 10.4C51.6 3.6 59.4 2.2 62.8 4.6C60.4 10.8 53.6 12.6 48.6 10.4Z" fill="#b8e24a"/>
+      <path d="M50 18C76 18 91 38 91 60C91 80 74 88 50 88C26 88 9 80 9 60C9 38 24 18 50 18Z" fill="url(#body)"/>
+      <g transform="translate(37.5 54.75) scale(1.3)">
+        <path d="M -5 0 C -5 -9 5 -9 5 0 C 5 9 -5 9 -5 0 Z" fill="#1d1d1f" stroke="#1d1d1f" stroke-width="1.2" stroke-linejoin="round"/>
+      </g>
+      <g transform="translate(62.5 54.75) scale(1.3)">
+        <path d="M -5 0 C -5 -9 5 -9 5 0 C 5 9 -5 9 -5 0 Z" fill="#1d1d1f" stroke="#1d1d1f" stroke-width="1.2" stroke-linejoin="round"/>
+      </g>
+  </g>
+</svg>
