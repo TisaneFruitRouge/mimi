@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import type { ConversationDetail } from "@/bindings/ConversationDetail";
 import type { Mention } from "@/bindings/Mention";
 import type { Message } from "@/bindings/Message";
-import { LogoMark } from "@/components/brand";
+import { AssistantAvatar } from "@/components/assistant-avatar";
 import { LocalityBadge } from "@/components/locality-badge";
 import {
   AlertDialog,
@@ -281,7 +281,7 @@ function EmptyState({ bottom, onStarter }: { bottom: number; onStarter: (text: s
         variants={{ shown: { transition: { staggerChildren: 0.06 } } }}
       >
         <motion.div variants={rise} className="flex flex-col items-center gap-3 text-center">
-          <LogoMark className="mb-2 size-12 rounded-[14px] [&_svg]:size-6" />
+          <AssistantAvatar size={76} className="mb-1" />
           <h1 className="text-[32px] leading-[38px] font-semibold tracking-[-0.03em]">{greeting()}.</h1>
           <p className="type-body text-muted-foreground">What can I do for you?</p>
           {active && locality && (

@@ -176,6 +176,13 @@ than inventing their own.
   measured height). Its toolbar keeps round icon buttons on the left (`@` mentions, `+`
   more/actions, also opened by typing `/`) and the privacy chip plus the round send/stop
   button on the right. Model switching lives in Models, not in the composer.
+- **The assistant's character** (`components/assistant-avatar.tsx`): a lime mochi with a
+  sprout, never named or lettered. `AssistantAvatar` (`size`, `mood`: idle, thinking,
+  happy, listening, sleepy) is used sparingly: the welcome (happy, then idle), the empty
+  new chat, the "Thinking" status before a reply starts (gone once text arrives, so it's
+  not an avatar on messages) and the offline screen (sleepy). `AssistantGlyph` is the
+  still version inside `LogoMark`. The app icon is the same drawing:
+  `src-tauri/icons/source/` (master SVGs + `regenerate.sh`); change them together.
 - **Desktop window**: on macOS the title bar is an overlay (hidden title); the top bar
   leaves room for the traffic lights (`macOverlayTitleBar` in `lib/platform.ts`) and is a
   `data-tauri-drag-region`. On Linux the window has no system title bar at all

@@ -368,3 +368,60 @@
     background: none;
   }
 }
+
+/* --- Assistant avatar (components/assistant-avatar.tsx) -------------------------------
+ * The always-on motion is CSS, so no script runs per frame: a slow breath (a gentle
+ * squash and stretch from the bottom) with the ground shadow in step, and the sprout
+ * swaying on a longer rhythm so the two never line up mechanically. */
+.assistant-avatar .aa-breath {
+  transform-box: view-box;
+  transform-origin: 50px 88px;
+  animation: aa-breath var(--aa-breath, 4.2s) cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+.assistant-avatar .aa-shadow {
+  transform-box: view-box;
+  transform-origin: 50px 91px;
+  animation: aa-shadow var(--aa-breath, 4.2s) cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+.assistant-avatar .aa-leaf {
+  transform-box: view-box;
+  transform-origin: 50px 19.5px;
+  animation: aa-leaf 6.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+.assistant-avatar.aa-paused * {
+  animation-play-state: paused;
+}
+@keyframes aa-breath {
+  0%,
+  100% {
+    transform: scale(1, 1);
+  }
+  45% {
+    transform: scale(0.988, 1.03);
+  }
+}
+@keyframes aa-shadow {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(0.95);
+  }
+}
+@keyframes aa-leaf {
+  0%,
+  100% {
+    transform: rotate(-3deg);
+  }
+  50% {
+    transform: rotate(4deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .assistant-avatar .aa-breath,
+  .assistant-avatar .aa-shadow,
+  .assistant-avatar .aa-leaf {
+    animation: none;
+  }
+}

@@ -6,6 +6,7 @@ import type { Action } from "@/bindings/Action";
 import type { Message } from "@/bindings/Message";
 import { Actions } from "@/features/chat/actions";
 import { MentionText } from "@/features/chat/mentions/mention-text";
+import { AssistantAvatar } from "@/components/assistant-avatar";
 import { LocalityIcon } from "@/components/locality-badge";
 import { Markdown } from "@/components/markdown";
 import { copyText, selectedText } from "@/components/app-context-menu";
@@ -123,19 +124,12 @@ function AssistantMessage({ message }: { message: Message }) {
   );
 }
 
-/** Shown before the first words arrive. */
+/** Shown before the first words arrive: the assistant, small, mulling it over. It's a
+ * status, not an avatar on the message: it goes away as soon as the reply starts. */
 function Thinking() {
   return (
-    <div className="flex h-7 items-center gap-2.5" aria-label="Thinking">
-      <span className="flex gap-1">
-        {[0, 1, 2].map((i) => (
-          <span
-            key={i}
-            className="size-1.5 rounded-full bg-[#a1a1a6] motion-safe:animate-[caret-pulse_1.2s_ease-in-out_infinite]"
-            style={{ animationDelay: `${i * 0.18}s` }}
-          />
-        ))}
-      </span>
+    <div className="flex h-7 items-center gap-2" aria-label="Thinking">
+      <AssistantAvatar size={26} mood="thinking" decorative className="-ml-0.5" />
       <span className="shimmer type-callout">Thinking</span>
     </div>
   );
