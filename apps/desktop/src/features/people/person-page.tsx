@@ -54,12 +54,14 @@ export function PersonPage({
   onAsk,
   onOpenConversation,
   onSection,
+  onDelete,
 }: {
   id: string;
   onOpenPerson: (id: string | null) => void;
   onAsk: (draft: Draft) => void;
   onOpenConversation: (id: string) => void;
   onSection: (s: Place) => void;
+  onDelete: (p: Person) => void;
 }) {
   const onScroll = useScrollEdge();
   const person = useQuery({ queryKey: keys.person(id), queryFn: () => api.person(id), retry: false });
@@ -74,6 +76,7 @@ export function PersonPage({
             onAsk={onAsk}
             onOpenConversation={onOpenConversation}
             onSection={onSection}
+            onDelete={onDelete}
           />
         ) : person.isError ? (
           <p className="type-body text-muted-foreground">This person isn't in your contacts anymore.</p>
@@ -94,12 +97,14 @@ function Details({
   onAsk,
   onOpenConversation,
   onSection,
+  onDelete,
 }: {
   person: Person;
   onOpenPerson: (id: string | null) => void;
   onAsk: (draft: Draft) => void;
   onOpenConversation: (id: string) => void;
   onSection: (s: Place) => void;
+  onDelete: (p: Person) => void;
 }) {
   const assistant = useAssistantName();
   const [editing, setEditing] = useState(false);
@@ -139,22 +144,10 @@ function Details({
             <DropdownMenuItem onSelect={() => setAdding(true)}>
               <Plus /> Add a way to reach them
             </DropdownMenuItem>
-            {p.manual && p.sources.length === 0 && (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  variant="destructive"
-                  onSelect={() =>
-                    api
-                      .removePerson(p.id)
-                      .then(() => onOpenPerson(null))
-                      .catch((e) => toast.error(e.message))
-                  }
-                >
-                  <Trash2 /> Remove {p.name}
-                </DropdownMenuItem>
-              </>
-            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onSelect={() => onDelete(p)}>
+              <Trash2 /> Delete contact…
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

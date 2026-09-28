@@ -132,6 +132,16 @@ pub fn sync_source(
         })?
         .collect::<Result<_, _>>()?
     };
+    // Cards of people the user deleted (skipped) or brought back (they rejoin them).
+    let marks: HashMap<String, (Uuid, bool)> = {
+        let mut stmt = tx.prepare(
+            "SELECT record, person_id, restoring FROM person_records_removed WHERE source = ?1",
+        )?;
+        stmt.query_map([source], |r| {
+            Ok((r.get::<_, String>(0)?, (parse_uuid(r, 1)?, r.get(2)?)))
+        })?
+        .collect::<Result<_, _>>()?
+    };
     let mut changed = false;
     let mut seen = HashSet::new();
 
@@ -139,6 +149,21 @@ pub fn sync_source(
         if !seen.insert(card.record.clone()) {
             continue;
         }
+        let returning = match marks.get(&card.record) {
+            // Deleted from Mimi: the source keeps it, Mimi doesn't.
+            Some((_, false)) if !existing.contains_key(&card.record) => continue,
+            Some((person, restoring)) => {
+                tx.execute(
+                    "DELETE FROM person_records_removed WHERE source = ?1 AND record = ?2",
+                    params![source, card.record],
+                )?;
+                match *restoring && exists(&tx, *person)? {
+                    true => Some(*person),
+                    false => None,
+                }
+            }
+            None => None,
+        };
         let person = match existing.get(&card.record) {
             Some((person, old_name)) => {
                 let same = *old_name == card.name
@@ -153,7 +178,13 @@ pub fn sync_source(
                 *person
             }
             None => {
-                let person = match find_by_handles(&tx, &card.handles)? {
+                // A restored person gets their own cards back, whoever else shares a
+                // number with them by now.
+                let found = match returning {
+                    Some(p) => Some(p),
+                    None => find_by_handles(&tx, &card.handles)?,
+                };
+                let person = match found {
                     Some(p) => p,
                     None => insert_person(&tx, &card.name, card.nickname.as_deref(), false, now)?,
                 };
@@ -196,8 +227,42 @@ pub fn sync_source(
         )?;
         drop_if_empty(&tx, *person)?;
     }
+
+    // Removed cards the source no longer has: nothing left to skip or bring back.
+    for (record, (person, restoring)) in &marks {
+        if seen.contains(record) {
+            continue;
+        }
+        tx.execute(
+            "DELETE FROM person_records_removed WHERE source = ?1 AND record = ?2",
+            params![source, record],
+        )?;
+        if *restoring {
+            changed = true;
+            drop_if_empty(&tx, *person)?;
+        }
+    }
+    changed |= forget_empty_removals(&tx)?;
     tx.commit()?;
     Ok(changed)
+}
+
+/// Forgets removed people none of whose cards are left to bring back. Returns whether
+/// there were any.
+fn forget_empty_removals(c: &Connection) -> rusqlite::Result<bool> {
+    let gone: Vec<String> = {
+        let mut stmt = c.prepare(
+            "SELECT id FROM people_removed
+             WHERE id NOT IN (SELECT person_id FROM person_records_removed)",
+        )?;
+        stmt.query_map([], |r| r.get(0))?
+            .collect::<Result<_, _>>()?
+    };
+    for id in &gone {
+        c.execute("DELETE FROM people_removed WHERE id = ?1", [id])?;
+        c.execute("DELETE FROM people_apart WHERE a = ?1 OR b = ?1", [id])?;
+    }
+    Ok(!gone.is_empty())
 }
 
 /// An imported person's name follows their first card, unless the user renamed them.
@@ -224,12 +289,15 @@ fn refresh_name(c: &Connection, person: Uuid, now: i64) -> rusqlite::Result<()> 
     Ok(())
 }
 
-/// Removes an imported person once nothing is left of them.
+/// Removes an imported person once nothing is left of them (and nothing is on its way
+/// back to them after a restore).
 fn drop_if_empty(c: &Connection, person: Uuid) -> rusqlite::Result<()> {
     c.execute(
         "DELETE FROM people WHERE id = ?1 AND manual = 0
            AND NOT EXISTS (SELECT 1 FROM person_records WHERE person_id = ?1)
-           AND NOT EXISTS (SELECT 1 FROM person_handles WHERE person_id = ?1)",
+           AND NOT EXISTS (SELECT 1 FROM person_handles WHERE person_id = ?1)
+           AND NOT EXISTS (SELECT 1 FROM person_records_removed
+                           WHERE person_id = ?1 AND restoring = 1)",
         [person.to_string()],
     )?;
     Ok(())
@@ -250,11 +318,25 @@ pub fn purge_removed_sources(c: &mut Connection) -> rusqlite::Result<bool> {
         "DELETE FROM person_records WHERE source NOT IN (SELECT id FROM connections)",
         [],
     )?;
-    for p in &orphans {
+    // Removed and restored cards of those sources won't come back either.
+    let waiting: Vec<Uuid> = {
+        let mut stmt = tx.prepare(
+            "SELECT DISTINCT person_id FROM person_records_removed
+             WHERE restoring = 1 AND source NOT IN (SELECT id FROM connections)",
+        )?;
+        stmt.query_map([], |r| parse_uuid(r, 0))?
+            .collect::<Result<_, _>>()?
+    };
+    let marks = tx.execute(
+        "DELETE FROM person_records_removed WHERE source NOT IN (SELECT id FROM connections)",
+        [],
+    )?;
+    for p in orphans.iter().chain(&waiting) {
         drop_if_empty(&tx, *p)?;
     }
+    let forgot = forget_empty_removals(&tx)?;
     tx.commit()?;
-    Ok(!orphans.is_empty())
+    Ok(!orphans.is_empty() || marks > 0 || forgot)
 }
 
 pub fn create_manual(
@@ -318,14 +400,122 @@ pub fn remove_manual_handle(c: &Connection, person: Uuid, handle: Uuid) -> rusql
     .map(|n| n > 0)
 }
 
-/// Deletes a person the user added who has no imported cards.
-pub fn delete_manual(c: &Connection, person: Uuid) -> rusqlite::Result<bool> {
-    c.execute(
-        "DELETE FROM people WHERE id = ?1 AND manual = 1
-           AND NOT EXISTS (SELECT 1 FROM person_records WHERE person_id = ?1)",
-        [person.to_string()],
-    )
-    .map(|n| n > 0)
+/// Deletes a person from Mimi, whatever they're made of. What the user added (the
+/// person, their handles) goes; imported cards are remembered as removed, so syncs skip
+/// them and [`restore`] can bring them back. Sources are never changed.
+///
+/// Returns `None` if there's no such person, else whether they can be restored.
+pub fn delete(c: &mut Connection, person: Uuid, now: i64) -> rusqlite::Result<Option<bool>> {
+    let tx = c.transaction()?;
+    let id = person.to_string();
+    let row: Option<(String, Option<String>, bool, bool, i64)> = tx
+        .query_row(
+            "SELECT name, nickname, name_locked, manual, created_at FROM people WHERE id = ?1",
+            [&id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .optional()?;
+    let Some((name, nickname, name_locked, manual, created_at)) = row else {
+        return Ok(None);
+    };
+    tx.execute(
+        "INSERT OR REPLACE INTO person_records_removed (source, record, person_id, name, restoring)
+         SELECT source, record, person_id, name, 0 FROM person_records WHERE person_id = ?1",
+        [&id],
+    )?;
+    // Cards still on their way back from an earlier restore are removed again.
+    tx.execute(
+        "UPDATE person_records_removed SET restoring = 0 WHERE person_id = ?1",
+        [&id],
+    )?;
+    let restorable: bool = tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM person_records_removed WHERE person_id = ?1)",
+        [&id],
+        |r| r.get(0),
+    )?;
+    if restorable {
+        // A name the user chose (or gave, for someone they added) comes back with them.
+        tx.execute(
+            "INSERT OR REPLACE INTO people_removed (id, name, nickname, name_locked, created_at, removed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![id, name, nickname, name_locked || manual, created_at, now],
+        )?;
+    } else {
+        tx.execute("DELETE FROM people_apart WHERE a = ?1 OR b = ?1", [&id])?;
+    }
+    tx.execute("DELETE FROM person_handles WHERE person_id = ?1", [&id])?;
+    tx.execute("DELETE FROM person_records WHERE person_id = ?1", [&id])?;
+    tx.execute("DELETE FROM people WHERE id = ?1", [&id])?;
+    tx.commit()?;
+    Ok(Some(restorable))
+}
+
+/// Someone the user deleted, as "Removed contacts" lists them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Removed {
+    pub id: Uuid,
+    pub name: String,
+    pub nickname: Option<String>,
+    pub removed_at: i64,
+    /// Where their cards come from (source ids).
+    pub sources: Vec<String>,
+}
+
+/// Everyone deleted who can still be brought back, most recent first.
+pub fn removed(c: &Connection) -> rusqlite::Result<Vec<Removed>> {
+    let mut stmt = c.prepare(
+        "SELECT id, name, nickname, removed_at FROM people_removed
+         ORDER BY removed_at DESC, name COLLATE NOCASE",
+    )?;
+    let mut out: Vec<Removed> = stmt
+        .query_map([], |r| {
+            Ok(Removed {
+                id: parse_uuid(r, 0)?,
+                name: r.get(1)?,
+                nickname: r.get(2)?,
+                removed_at: r.get(3)?,
+                sources: Vec::new(),
+            })
+        })?
+        .collect::<Result<_, _>>()?;
+    let mut stmt = c.prepare(
+        "SELECT DISTINCT source FROM person_records_removed WHERE person_id = ?1 ORDER BY source",
+    )?;
+    for r in &mut out {
+        r.sources = stmt
+            .query_map([r.id.to_string()], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
+    }
+    Ok(out)
+}
+
+/// Brings a deleted person back under the same id. Their cards rejoin them at the next
+/// sync (run one right after). Returns `false` if there's no such removed person.
+pub fn restore(c: &mut Connection, person: Uuid, now: i64) -> rusqlite::Result<bool> {
+    let tx = c.transaction()?;
+    let id = person.to_string();
+    let row: Option<(String, Option<String>, bool, i64)> = tx
+        .query_row(
+            "SELECT name, nickname, name_locked, created_at FROM people_removed WHERE id = ?1",
+            [&id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()?;
+    let Some((name, nickname, name_locked, created_at)) = row else {
+        return Ok(false);
+    };
+    tx.execute(
+        "INSERT OR IGNORE INTO people (id, name, nickname, name_locked, manual, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6)",
+        params![id, name, nickname, name_locked, created_at, now],
+    )?;
+    tx.execute(
+        "UPDATE person_records_removed SET restoring = 1 WHERE person_id = ?1",
+        [&id],
+    )?;
+    tx.execute("DELETE FROM people_removed WHERE id = ?1", [&id])?;
+    tx.commit()?;
+    Ok(true)
 }
 
 /// Folds `other` into `keep`: every card and handle moves over.

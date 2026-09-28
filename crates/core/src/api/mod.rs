@@ -76,6 +76,8 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(people::dismiss_duplicate),
         )
         .route("/people/sync", post(people::sync))
+        .route("/people/removed", get(people::removed))
+        .route("/people/removed/{id}/restore", post(people::restore))
         .route(
             "/people/{id}",
             get(people::get)

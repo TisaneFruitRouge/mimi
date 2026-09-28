@@ -117,10 +117,13 @@ export function ThingMenu({
   children,
   onOpen,
   onAsk,
+  more,
 }: {
   children: React.ReactElement;
   onOpen: () => void;
   onAsk?: () => void;
+  /** Further items (e.g. a destructive one), shown after a separator. */
+  more?: React.ReactNode;
 }) {
   const assistant = useAssistantName();
   return (
@@ -134,6 +137,12 @@ export function ThingMenu({
           <ContextMenuItem onSelect={onAsk}>
             <Sparkles /> Ask {assistant} about this
           </ContextMenuItem>
+        )}
+        {more && (
+          <>
+            <ContextMenuSeparator />
+            {more}
+          </>
         )}
       </ContextMenuContent>
     </ContextMenu>

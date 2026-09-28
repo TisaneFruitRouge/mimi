@@ -499,6 +499,24 @@ sign-in, reads, writes, rules and revocation against `google_fake.rs`.
   same-name people become "possible duplicates" (`GET /v1/people/duplicates`), which
   the user merges or dismisses. A card, once placed, stays with its person, so a split
   (`POST /v1/people/{id}/split`) survives later syncs.
+- **Deleting** (`store::delete`, migration 0023): anyone can be deleted, from Mimi only;
+  address books and mail accounts are never changed. What the user added (the person
+  row, hand-added handles) goes. Each imported card is remembered in
+  `person_records_removed` (source + record, the ids sync knows it by) and the person's
+  name, nickname, renamed flag and `created_at` in `people_removed`, under their id.
+  `sync_source` skips removed cards, however they change later, so a deleted card can't
+  resurrect the person or join someone else through a new match key; a *new* card
+  sharing their old number is a new person. `POST /v1/people/removed/{id}/restore` puts
+  the person back with the same id and marks their cards `restoring`: the next sync
+  (run right away) attaches each one to that id rather than unifying it anew, and the
+  person isn't dropped as empty while cards are still on their way. Marks for cards a
+  source no longer has, and for removed connections (`purge_removed_sources`), are
+  forgotten, and so is a removal with no cards left (with its `people_apart` pairs,
+  which are otherwise kept for a restore). Memory notes are kept; the relink after
+  `PeopleChanged` clears their `subject`, and links them again after a restore when the
+  name is clear. Chat mentions keep their label and say the person "is no longer in
+  their contacts". `DELETE /v1/people/{id}` returns a `RemovedPerson`, or `null` for
+  someone added by hand (gone for good); `GET /v1/people/removed` lists them.
 - **Mentions:** `GET /v1/mentions?q=` suggests people and events (upcoming 30 days;
   with a query, the past month to six months ahead). Event ids encode calendar, uid and
   start (`ev:<ms>:<hex calendar>:<hex uid>`). `SendMessage.mentions` keeps those whose
@@ -548,6 +566,10 @@ the thing arrives as an @ pill the engine resolves like any other mention.
   them; recurring ones once), recent email (`GET /v1/mail/threads?person=<id>`), and
   chats where they were @-mentioned (`GET /v1/people/{id}/conversations`). Sections
   whose API isn't there (older daemon, no mailbox) say so quietly or stay hidden.
+  "Delete contact…" is in the person's "…" menu, their right-click menu and on the
+  Delete key (`features/people/delete-person.tsx`): a confirmation that says it's from
+  Mimi only, then the next person in the list is selected and a toast offers Undo. The
+  list's "…" menu opens "Removed contacts", where each can be brought back.
 - **Mail** (`features/mail/mail-view.tsx`): owned by the email feature.
 
 ## Running the daemon

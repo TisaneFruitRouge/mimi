@@ -3839,3 +3839,155 @@ mod google_flow {
         assert!(err["message"].as_str().unwrap().contains("isn't available"));
     }
 }
+
+mod people_removal {
+    use std::sync::{Arc, Mutex};
+
+    use futures::FutureExt;
+    use futures::future::BoxFuture;
+    use mimi_protocol::Channel;
+    use serde_json::{Value, json};
+
+    use super::Harness;
+    use crate::AppState;
+    use crate::people::{CardHandle, ContactCard, ContactSource, SourceBatch};
+
+    /// An address book whose cards the test changes as it goes.
+    struct Book(uuid::Uuid, Arc<Mutex<Vec<ContactCard>>>);
+
+    impl ContactSource for Book {
+        fn fetch<'a>(&'a self, _: &'a AppState) -> BoxFuture<'a, Vec<SourceBatch>> {
+            let cards = self.1.lock().unwrap().clone();
+            async move {
+                vec![SourceBatch {
+                    source: self.0.to_string(),
+                    cards: Ok(cards),
+                }]
+            }
+            .boxed()
+        }
+    }
+
+    fn card(record: &str, name: &str, email: &str) -> ContactCard {
+        ContactCard {
+            record: record.into(),
+            name: name.into(),
+            nickname: None,
+            handles: vec![CardHandle {
+                channel: Channel::Email,
+                value: email.into(),
+                label: None,
+            }],
+        }
+    }
+
+    #[tokio::test]
+    async fn anyone_can_be_deleted_from_mimi_and_brought_back() {
+        let h = Harness::new().await;
+        let book = uuid::Uuid::now_v7();
+        crate::connections::store::upsert(
+            &h.state.db,
+            crate::connections::store::ConnectionRow {
+                id: book,
+                integration: "test".to_owned(),
+                name: "iCloud".to_owned(),
+                config: json!({}),
+                created_at: 0,
+            },
+        )
+        .await
+        .unwrap();
+        let cards = Arc::new(Mutex::new(vec![
+            card("1", "Sam Carter", "sam@example.com"),
+            card("2", "Alex Kim", "alex@example.com"),
+        ]));
+        h.state
+            .people
+            .sources
+            .add(Arc::new(Book(book, cards.clone())));
+        h.call(reqwest::Method::POST, "/people/sync", Value::Null)
+            .await;
+        let (_, everyone) = h.call(reqwest::Method::GET, "/people", Value::Null).await;
+        let sam = everyone
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == "Sam Carter")
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        // Deleting says where they can be found again.
+        let (status, removed) = h
+            .call(
+                reqwest::Method::DELETE,
+                &format!("/people/{sam}"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(status, 200, "{removed}");
+        assert_eq!(removed["id"], sam.as_str());
+        assert_eq!(removed["sources"], json!(["iCloud"]));
+        let (status, _) = h
+            .call(reqwest::Method::GET, &format!("/people/{sam}"), Value::Null)
+            .await;
+        assert_eq!(status, 404);
+
+        // The address book still has Sam (it's never changed); Mimi doesn't.
+        h.call(reqwest::Method::POST, "/people/sync", Value::Null)
+            .await;
+        let (_, everyone) = h.call(reqwest::Method::GET, "/people", Value::Null).await;
+        assert_eq!(everyone.as_array().unwrap().len(), 1);
+        let (_, list) = h
+            .call(reqwest::Method::GET, "/people/removed", Value::Null)
+            .await;
+        assert_eq!(list[0]["name"], "Sam Carter");
+
+        // Brought back with the same id, and every way to reach them.
+        let (status, back) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/people/removed/{sam}/restore"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(status, 200, "{back}");
+        assert_eq!(back["id"], sam.as_str());
+        assert_eq!(back["handles"][0]["value"], "sam@example.com");
+        let (_, list) = h
+            .call(reqwest::Method::GET, "/people/removed", Value::Null)
+            .await;
+        assert_eq!(list, json!([]));
+        let (status, _) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/people/removed/{sam}/restore"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(status, 404);
+
+        // Someone added by hand is simply gone: nothing to bring back.
+        let (_, gran) = h
+            .call(reqwest::Method::POST, "/people", json!({"name": "Gran"}))
+            .await;
+        let gran = gran["id"].as_str().unwrap().to_owned();
+        let (status, removed) = h
+            .call(
+                reqwest::Method::DELETE,
+                &format!("/people/{gran}"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!((status, removed), (200, Value::Null));
+        let (status, _) = h
+            .call(
+                reqwest::Method::DELETE,
+                &format!("/people/{gran}"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(status, 404);
+    }
+}

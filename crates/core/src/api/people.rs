@@ -4,7 +4,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use mimi_protocol::{
     DismissDuplicate, DuplicateSuggestion, Event, MentionCandidate, MergePeople, NewHandle,
-    NewPerson, Person, PersonSummary, PersonUpdate, SplitPerson,
+    NewPerson, Person, PersonSummary, PersonUpdate, RemovedPerson, SplitPerson,
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -130,14 +130,78 @@ pub async fn update(
     found(people::get(&state, id).await?)
 }
 
-pub async fn delete(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>) -> ApiResult<()> {
-    if !state.db.call(move |c| store::delete_manual(c, id)).await? {
-        return Err(AppError::bad_request(
-            "Only people you added yourself can be removed. Others come from your address books.",
-        ));
+/// Deletes someone from Mimi only: their address books and mail are never touched, and
+/// syncs no longer bring them back. Returns how to find them under "Removed contacts",
+/// or `null` if nothing of them is left to bring back (someone the user added).
+pub async fn delete(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Option<RemovedPerson>> {
+    let restorable = state
+        .db
+        .call(move |c| store::delete(c, id, now_ms()))
+        .await?
+        .ok_or_else(|| AppError::not_found("Person"))?;
+    changed(&state);
+    if !restorable {
+        return Ok(Json(None));
+    }
+    Ok(Json(
+        removed_people(&state)
+            .await?
+            .into_iter()
+            .find(|r| r.id == id),
+    ))
+}
+
+async fn removed_people(state: &AppState) -> Result<Vec<RemovedPerson>, AppError> {
+    let names = people::source_names(state).await?;
+    let removed = state.db.call(|c| store::removed(c)).await?;
+    Ok(removed
+        .into_iter()
+        .map(|r| {
+            let mut sources: Vec<String> = Vec::new();
+            for s in &r.sources {
+                let name = names
+                    .get(s)
+                    .cloned()
+                    .unwrap_or_else(|| "A removed connection".to_owned());
+                if !sources.contains(&name) {
+                    sources.push(name);
+                }
+            }
+            RemovedPerson {
+                id: r.id,
+                name: r.name,
+                nickname: r.nickname,
+                removed_at: r.removed_at,
+                sources,
+            }
+        })
+        .collect())
+}
+
+/// People the user deleted who can be brought back, most recent first.
+pub async fn removed(State(state): State<Arc<AppState>>) -> ApiResult<Vec<RemovedPerson>> {
+    Ok(Json(removed_people(&state).await?))
+}
+
+/// Brings a deleted person back, with the same id, and refreshes contacts so their
+/// cards return to them.
+pub async fn restore(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Person> {
+    if !state
+        .db
+        .call(move |c| store::restore(c, id, now_ms()))
+        .await?
+    {
+        return Err(AppError::not_found("Removed contact"));
     }
     changed(&state);
-    Ok(Json(()))
+    people::sync_all(&state).await;
+    found(people::get(&state, id).await?)
 }
 
 pub async fn add_handle(
