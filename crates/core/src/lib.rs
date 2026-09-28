@@ -18,6 +18,7 @@ pub mod keys;
 pub mod mail;
 pub mod memory;
 pub mod people;
+pub mod persona;
 pub mod providers;
 pub mod runtime;
 pub mod schedule;

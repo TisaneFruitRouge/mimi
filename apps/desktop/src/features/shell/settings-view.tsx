@@ -16,6 +16,7 @@ import {
   Send,
   Settings,
   ShieldCheck,
+  Smile,
   Sparkles,
 } from "lucide-react";
 import { cn } from "cn";
@@ -40,11 +41,12 @@ import { ConnectionsView } from "@/features/connections/connections-view";
 import { MemoryView } from "@/features/memory/memory-view";
 import { ModelsView } from "@/features/models/models-view";
 import { PermissionsView } from "@/features/permissions/permissions-view";
+import { PersonalityView } from "@/features/personality/personality-view";
 import { NotificationsSettings } from "@/features/reminders/reminders";
 import type { Section as Place, SettingsPage } from "@/features/shell/top-bar";
 import { api, keys } from "@/lib/api";
 import { mod } from "@/lib/platform";
-import { useConnections, useProviders, useSettings } from "@/lib/queries";
+import { useAssistantName, useConnections, useProviders, useSettings } from "@/lib/queries";
 import {
   type BackgroundStatus,
   backgroundStatus,
@@ -62,6 +64,7 @@ export const settingsPages: {
   tone: string;
 }[] = [
   { id: "general", label: "General", icon: Settings, tone: "bg-[#8e8e93] text-white" },
+  { id: "personality", label: "Personality", icon: Smile, tone: "bg-[#ff2d55] text-white" },
   { id: "connections", label: "Connections", icon: Blocks, tone: "bg-[#0a84ff] text-white" },
   { id: "models", label: "Models", icon: Sparkles, tone: "bg-lime text-lime-ink" },
   { id: "memory", label: "Memory", icon: BookOpen, tone: "bg-[#bf5af2] text-white" },
@@ -141,7 +144,8 @@ export function SettingsView({
             exit={{ opacity: 0 }}
             transition={{ type: "spring", stiffness: 420, damping: 36, mass: 0.8 }}
           >
-            {page === "general" && <GeneralSettings />}
+            {page === "general" && <GeneralSettings onSection={onSection} />}
+            {page === "personality" && <PersonalityView />}
             {page === "connections" && <ConnectionsView onPeople={() => onSection("people")} />}
             {page === "models" && <ModelsView onChat={() => onSection("chat")} />}
             {page === "memory" && <MemoryView />}
@@ -157,50 +161,26 @@ export function SettingsView({
   );
 }
 
-function GeneralSettings() {
+function GeneralSettings({ onSection }: { onSection: (s: Place) => void }) {
   const settings = useSettings().data;
-  const [name, setName] = useState<string | null>(null);
-  const value = name ?? settings?.assistant_name ?? "";
-
-  const saveName = async () => {
-    if (!settings || name === null || !value.trim()) return;
-    try {
-      await api.putSettings({ ...settings, assistant_name: value });
-      setName(null);
-      toast.success("Saved");
-    } catch (e) {
-      toast.error((e as Error).message);
-    }
-  };
+  const assistant = useAssistantName();
 
   return (
     <Page>
-      <PageHeader title="General" subtitle="Your assistant's name, how it runs, and shortcuts." />
+      <PageHeader title="General" subtitle="How your assistant runs, and keyboard shortcuts." />
       <Section title="Assistant">
         <Grouped>
-          <form
-            className="flex items-center gap-3 px-4 py-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              saveName();
-            }}
-          >
-            <label htmlFor="assistant-name" className="w-20 shrink-0 type-body">
-              Name
-            </label>
-            <Input
-              id="assistant-name"
-              value={value}
-              onChange={(e) => setName(e.target.value)}
-              onBlur={saveName}
-              className="h-9 max-w-sm"
-            />
-            {name !== null && (
-              <Button type="submit" size="sm" disabled={!value.trim()}>
-                Save
-              </Button>
-            )}
-          </form>
+          <Row
+            icon={
+              <IconTile size="sm" className="bg-[#ff2d55] text-white">
+                <Smile />
+              </IconTile>
+            }
+            title="Name and personality"
+            detail={`${assistant}, how it talks and what it keeps in mind`}
+            trailing={<ChevronRight className="size-4 text-faint" />}
+            onClick={() => onSection("personality")}
+          />
           <Row
             icon={
               <IconTile size="sm" className="bg-fill text-muted-foreground">

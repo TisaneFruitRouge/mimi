@@ -2368,3 +2368,48 @@ fn seed(fake: &FakeMail) {
         &[],
     );
 }
+
+#[tokio::test]
+async fn reply_drafts_follow_custom_instructions_but_summaries_dont() {
+    let fake = FakeMail::start(ME, PASSWORD).await;
+    fake.deliver(
+        "INBOX",
+        &message(
+            "Sam <sam@example.com>",
+            ME,
+            "Dinner",
+            "Are you free on Friday?",
+            "d1@example.com",
+            "",
+        ),
+        now_ms(),
+        &[],
+    );
+    let (state, account) = account_without_loop(&fake).await;
+    pass(&state, &account).await;
+    let requests = mock_model(&state, |_| "Yes, Friday works.".to_owned()).await;
+    let mut settings = crate::settings::load(&state.db).await.unwrap();
+    settings.personality = "Playful, with dry jokes.".into();
+    settings.custom_instructions = "Sign my emails as Vincent.".into();
+    crate::settings::save(&state.db, &settings).await.unwrap();
+
+    let id = all_threads(&state).await[0].id;
+    let draft = triage::draft_reply(&state, id, None).await.unwrap();
+    assert_eq!(draft.body, "Yes, Friday works.");
+    triage::summarize(&state, id).await.unwrap();
+
+    let requests = requests.lock().unwrap().clone();
+    let system = |i: usize| {
+        requests[i]["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    // The draft is in the user's voice: their instructions apply, the assistant's
+    // personality doesn't.
+    assert!(system(0).contains("Sign my emails as Vincent."));
+    assert!(!system(0).contains("dry jokes"));
+    // Summaries have a fixed shape and see neither.
+    assert!(!system(1).contains("Vincent"));
+    assert!(!system(1).contains("dry jokes"));
+}

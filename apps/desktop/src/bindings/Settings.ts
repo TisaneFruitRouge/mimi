@@ -13,6 +13,17 @@ export type Settings = {
  */
 assistant_name: string, 
 /**
+ * Who the assistant is and how it talks, in the user's own words (Settings ›
+ * Personality). Empty means the default voice: helpful, direct and warm. At most
+ * [`PERSONALITY_LIMIT`] characters.
+ */
+personality: string, 
+/**
+ * Standing instructions the user gives for every conversation ("answer in French
+ * unless I write in English"). At most [`INSTRUCTIONS_LIMIT`] characters.
+ */
+custom_instructions: string, 
+/**
  * Model used for new messages. `None` until the user finishes setup.
  */
 default_model: ModelRef | null, 

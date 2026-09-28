@@ -14,6 +14,7 @@ export type Tab = "chat" | "calendar" | "mail" | "people";
 /** Everything set up once, in the Settings window's sidebar. */
 export type SettingsPage =
   | "general"
+  | "personality"
   | "connections"
   | "models"
   | "memory"

@@ -21,6 +21,7 @@ pub async fn put(
             "The assistant's name must be between 1 and 40 characters.",
         ));
     }
+    crate::persona::validate(&mut new).map_err(AppError::bad_request)?;
     for model in [&new.default_model, &new.pending_model]
         .into_iter()
         .flatten()

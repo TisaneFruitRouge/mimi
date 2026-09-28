@@ -9,6 +9,7 @@ import {
   Mail,
   MessageSquare,
   Settings,
+  Smile,
   Sparkles,
   SquarePen,
   Users,
@@ -95,9 +96,15 @@ export function ConversationPalette({
           </CommandItem>
         </CommandGroup>
         <CommandGroup heading="Settings">
-          <CommandItem keywords={["name", "shortcuts", "background"]} onSelect={run(() => onSection("general"))}>
+          <CommandItem keywords={["shortcuts", "background", "welcome"]} onSelect={run(() => onSection("general"))}>
             <Settings /> General
             <CommandShortcut>{mod},</CommandShortcut>
+          </CommandItem>
+          <CommandItem
+            keywords={["name", "instructions", "custom", "tone", "voice", "style", "soul", "language"]}
+            onSelect={run(() => onSection("personality"))}
+          >
+            <Smile /> Personality
           </CommandItem>
           <CommandItem keywords={["telegram", "google", "icloud", "apps"]} onSelect={run(() => onSection("connections"))}>
             <Blocks /> Connections
