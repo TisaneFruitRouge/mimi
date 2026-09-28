@@ -50,6 +50,7 @@ function apply(qc: QueryClient, event: Event) {
   switch (event.type) {
     case "settings_changed":
       qc.setQueryData(keys.settings, event.settings);
+      qc.invalidateQueries({ queryKey: keys.permissions });
       break;
     case "providers_changed":
       qc.setQueryData(keys.providers, event.providers);
@@ -97,6 +98,8 @@ function apply(qc: QueryClient, event: Event) {
       qc.setQueryData(keys.connections, event.connections);
       qc.invalidateQueries({ queryKey: keys.integrations });
       qc.invalidateQueries({ queryKey: keys.calendar });
+      // Exceptions name calendars.
+      qc.invalidateQueries({ queryKey: keys.permissions });
       qc.invalidateQueries({ queryKey: keys.mail });
       break;
     case "mail_changed":

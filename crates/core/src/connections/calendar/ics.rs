@@ -217,7 +217,7 @@ pub fn events_between(
     Ok(out)
 }
 
-fn to_utc(value: &DatePerhapsTime, local: &impl TimeZone) -> Option<DateTime<Utc>> {
+pub(crate) fn to_utc(value: &DatePerhapsTime, local: &impl TimeZone) -> Option<DateTime<Utc>> {
     match value {
         DatePerhapsTime::Date(date) => local_midnight(*date, local),
         DatePerhapsTime::DateTime(CalendarDateTime::Utc(dt)) => Some(*dt),

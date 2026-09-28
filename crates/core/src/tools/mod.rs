@@ -7,8 +7,9 @@
 //! The approval rule: anything that sends, changes or deletes something on the user's
 //! behalf returns `true` from [`Tool::needs_approval`] and waits for the user; reads
 //! don't. The user may let a few kinds of action happen on their own (Settings ›
-//! Permissions): a tool opts in with [`Tool::governed_by`], and
-//! [`permissions::requires_approval`] makes the final call.
+//! Permissions): a tool opts in with [`Tool::governed_by`] (and says who or what the call
+//! is about with [`Tool::call_targets`]), and [`permissions::requires_approval`] makes
+//! the final call.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
@@ -25,7 +26,7 @@ use crate::providers::{FunctionSpec, ToolSpec};
 pub mod dev;
 pub mod permissions;
 
-pub use permissions::Governs;
+pub use permissions::{CallTarget, Governs};
 
 /// What a tool gets to work with.
 pub struct ToolContext {
@@ -46,6 +47,23 @@ pub trait Tool: Send + Sync {
     /// few kinds of action the user may let happen on their own.
     fn governed_by(&self) -> Option<Governs> {
         None
+    }
+    /// Who or what this call is about, for the exceptions of its permission ("email Sam
+    /// without asking", "always ask before writing to the Family calendar"). Read from
+    /// the prepared (and resolved) arguments.
+    fn call_targets(&self, _args: &Value) -> Vec<CallTarget> {
+        Vec::new()
+    }
+    /// Looks up what the arguments refer to before anything is decided, e.g. the event a
+    /// change is about, and writes it into the arguments so the card (and the permission)
+    /// see the real thing, not the model's description of it. Values it writes replace
+    /// anything the model put under the same keys.
+    fn resolve<'a>(
+        &'a self,
+        _ctx: &'a ToolContext,
+        args: Value,
+    ) -> BoxFuture<'a, Result<Value, String>> {
+        Box::pin(std::future::ready(Ok(args)))
     }
     /// One plain-language line for the approval card, e.g.
     /// "Create “Dentist” on Friday 10:00–10:45 in Personal".
@@ -221,30 +239,54 @@ pub enum Decision {
 
 /// Approval cards waiting for an answer, by action id.
 #[derive(Default)]
-pub struct Approvals(Mutex<HashMap<Uuid, oneshot::Sender<Decision>>>);
+pub struct Approvals {
+    waiting: Mutex<HashMap<Uuid, oneshot::Sender<Decision>>>,
+    /// The exceptions a card's "Don't ask again for …" would add, decided by the daemon
+    /// when the card was shown (never taken from the request that approves it).
+    offers: Mutex<HashMap<Uuid, AlwaysOffer>>,
+}
+
+/// What choosing a card's "Don't ask again for …" adds to Settings › Permissions.
+#[derive(Debug, Clone)]
+pub struct AlwaysOffer {
+    pub kind: &'static str,
+    pub targets: Vec<mimi_protocol::PermissionTarget>,
+}
 
 impl Approvals {
     pub fn wait(&self, action_id: Uuid) -> oneshot::Receiver<Decision> {
         let (tx, rx) = oneshot::channel();
-        self.lock().insert(action_id, tx);
+        lock(&self.waiting).insert(action_id, tx);
         rx
+    }
+
+    /// Remembers what the card's second choice would allow from now on.
+    pub fn offer(&self, action_id: Uuid, offer: AlwaysOffer) {
+        lock(&self.offers).insert(action_id, offer);
+    }
+
+    /// The card's offer, if it had one.
+    pub fn offer_of(&self, action_id: Uuid) -> Option<AlwaysOffer> {
+        lock(&self.offers).get(&action_id).cloned()
     }
 
     /// Delivers the user's decision. Returns false if nothing is waiting for it.
     pub fn decide(&self, action_id: Uuid, decision: Decision) -> bool {
-        match self.lock().remove(&action_id) {
+        lock(&self.offers).remove(&action_id);
+        match lock(&self.waiting).remove(&action_id) {
             Some(tx) => tx.send(decision).is_ok(),
             None => false,
         }
     }
 
     pub fn forget(&self, action_id: Uuid) {
-        self.lock().remove(&action_id);
+        lock(&self.waiting).remove(&action_id);
+        lock(&self.offers).remove(&action_id);
     }
+}
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<Uuid, oneshot::Sender<Decision>>> {
-        self.0.lock().unwrap_or_else(|e| e.into_inner())
-    }
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 #[cfg(test)]

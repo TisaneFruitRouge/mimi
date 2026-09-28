@@ -176,7 +176,10 @@ impl Client {
         self.send(
             Method::POST,
             &format!("/actions/{id}/approve"),
-            Some(mimi_protocol::ApproveAction { arguments }),
+            Some(mimi_protocol::ApproveAction {
+                arguments,
+                always: false,
+            }),
         )
         .await
     }

@@ -1,5 +1,5 @@
 //! A small CalDAV client (RFC 4791): find a user's calendars, read events in a range,
-//! create events. Works with iCloud, Fastmail, Nextcloud, Radicale and friends using an
+//! create, replace and delete event objects. Works with iCloud, Fastmail, Nextcloud, Radicale and friends using an
 //! app-specific password.
 
 use std::time::Duration;
@@ -53,6 +53,15 @@ pub(crate) struct DavResponse {
     pub addressbook_home: Option<String>,
     calendar_data: Option<String>,
     pub address_data: Option<String>,
+    etag: Option<String>,
+}
+
+/// One stored event object: where it lives, its version, and its iCalendar data.
+#[derive(Debug, Clone)]
+pub struct DavObject {
+    pub url: Url,
+    pub etag: Option<String>,
+    pub data: String,
 }
 
 impl CalDav {
@@ -140,10 +149,26 @@ impl CalDav {
         from: DateTime<Utc>,
         to: DateTime<Utc>,
     ) -> Result<Vec<String>, DavError> {
+        Ok(self
+            .objects(calendar, from, to)
+            .await?
+            .into_iter()
+            .map(|o| o.data)
+            .collect())
+    }
+
+    /// Like [`CalDav::event_data`], with each object's address and version, for
+    /// changing or deleting it.
+    pub async fn objects(
+        &self,
+        calendar: &Url,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<Vec<DavObject>, DavError> {
         let body = format!(
             r#"<?xml version="1.0" encoding="utf-8"?>
 <C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
-  <D:prop><C:calendar-data/></D:prop>
+  <D:prop><D:getetag/><C:calendar-data/></D:prop>
   <C:filter>
     <C:comp-filter name="VCALENDAR">
       <C:comp-filter name="VEVENT">
@@ -155,12 +180,18 @@ impl CalDav {
             from.format("%Y%m%dT%H%M%SZ"),
             to.format("%Y%m%dT%H%M%SZ")
         );
-        let (_, responses) = self
+        let (base, responses) = self
             .dav(Method::from_bytes(b"REPORT").unwrap(), calendar, "1", body)
             .await?;
         Ok(responses
             .into_iter()
-            .filter_map(|r| r.calendar_data)
+            .filter_map(|r| {
+                Some(DavObject {
+                    url: base.join(&r.href).ok()?,
+                    etag: r.etag,
+                    data: r.calendar_data?,
+                })
+            })
             .collect())
     }
 
@@ -179,11 +210,39 @@ impl CalDav {
             .send()
             .await
             .map_err(unreachable)?;
-        match res.status() {
-            s if s.is_success() => Ok(()),
-            StatusCode::UNAUTHORIZED => Err(DavError::Unauthorized),
-            s => Err(DavError::Protocol(format!("saving the event failed ({s})"))),
+        written(res.status(), "saving the event")
+    }
+
+    /// Replaces an event object, only if it's still the version that was read.
+    pub async fn replace(&self, object: &DavObject, ics: String) -> Result<(), DavError> {
+        let mut req = self
+            .http
+            .put(object.url.clone())
+            .basic_auth(&self.username, Some(&self.password))
+            .header(CONTENT_TYPE, "text/calendar; charset=utf-8")
+            .body(ics);
+        if let Some(etag) = &object.etag {
+            req = req.header("If-Match", etag);
         }
+        let res = req.send().await.map_err(unreachable)?;
+        written(res.status(), "saving the change")
+    }
+
+    /// Deletes an event object, only if it's still the version that was read.
+    pub async fn delete(&self, object: &DavObject) -> Result<(), DavError> {
+        let mut req = self
+            .http
+            .delete(object.url.clone())
+            .basic_auth(&self.username, Some(&self.password));
+        if let Some(etag) = &object.etag {
+            req = req.header("If-Match", etag);
+        }
+        let res = req.send().await.map_err(unreachable)?;
+        if res.status() == StatusCode::NOT_FOUND {
+            // Already gone: what was asked for.
+            return Ok(());
+        }
+        written(res.status(), "removing the event")
     }
 
     pub(crate) async fn propfind(
@@ -378,6 +437,7 @@ fn record_text(current: Option<&mut DavResponse>, path: &[String], text: String)
         (_, Some("displayname")) => r.display_name = Some(text),
         (_, Some("calendar-color")) => r.color = Some(text),
         (_, Some("calendar-data")) => r.calendar_data = Some(text),
+        (_, Some("getetag")) => r.etag = Some(text),
         (_, Some("address-data")) => r.address_data = Some(text),
         _ => {}
     }
@@ -397,6 +457,18 @@ fn sanitize(uid: &str) -> String {
             }
         })
         .collect()
+}
+
+fn written(status: StatusCode, what: &str) -> Result<(), DavError> {
+    match status {
+        s if s.is_success() => Ok(()),
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(DavError::Unauthorized),
+        StatusCode::PRECONDITION_FAILED => Err(DavError::Protocol(
+            "the event was changed elsewhere in the meantime; look at it again and retry"
+                .to_owned(),
+        )),
+        s => Err(DavError::Protocol(format!("{what} failed ({s})"))),
+    }
 }
 
 fn proto(e: impl std::fmt::Display) -> DavError {

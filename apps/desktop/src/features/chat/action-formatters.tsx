@@ -22,6 +22,53 @@ export const formatters: Record<string, Formatter> = {
       return rows;
     },
   },
+  // The event as the calendar has it (looked up by the daemon), then what changes.
+  // `event` and `calendar_id` only point at it; `repeats` and `which` read as the scope.
+  calendar_change_event: {
+    keys: [
+      "event",
+      "event_title",
+      "event_when",
+      "calendar",
+      "calendar_id",
+      "repeats",
+      "which",
+      "new_time",
+      "title",
+      "start",
+      "end",
+      "location",
+      "notes",
+    ],
+    rows: (a) => {
+      const rows: ArgRow[] = [
+        { label: "Event", value: text(a.event_title) },
+        { label: "Now", value: upperFirst(text(a.event_when)) },
+        { label: "Calendar", value: text(a.calendar) },
+      ];
+      if (a.repeats === true)
+        rows.push({ label: "Repeats", value: a.which === "all" ? "Change every time" : "Change only this time" });
+      if (present(a.new_time)) rows.push({ label: "New time", value: upperFirst(text(a.new_time)) });
+      if (present(a.title)) rows.push({ label: "New name", value: text(a.title) });
+      if (typeof a.location === "string")
+        rows.push({ label: "Where", value: a.location.trim() ? a.location : "(removed)" });
+      if (typeof a.notes === "string") rows.push({ label: "Notes", value: a.notes.trim() ? a.notes : "(removed)" });
+      return rows;
+    },
+  },
+  calendar_delete_event: {
+    keys: ["event", "event_title", "event_when", "calendar", "calendar_id", "repeats", "which"],
+    rows: (a) => {
+      const rows: ArgRow[] = [
+        { label: "Event", value: text(a.event_title) },
+        { label: "When", value: upperFirst(text(a.event_when)) },
+        { label: "Calendar", value: text(a.calendar) },
+      ];
+      if (a.repeats === true)
+        rows.push({ label: "Repeats", value: a.which === "all" ? "Remove every time" : "Remove only this time" });
+      return rows;
+    },
+  },
   // The whole message, exactly as it will be sent. `thread_id` only threads the reply.
   mail_send: {
     keys: ["to", "cc", "subject", "body", "thread_id"],
@@ -46,6 +93,11 @@ function text(v: unknown): string {
 
 function present(v: unknown) {
   return text(v).trim() !== "";
+}
+
+/** "On Friday 2 Oct, 10:00–10:45" from the daemon's "on Friday…". */
+function upperFirst(s: string) {
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 /** "Friday 2 October, 10:00–10:45" from the tool's local-time strings. */

@@ -21,7 +21,12 @@ const SCHEDULE_WRITES = new Set(["reminder_add", "routine_add", "schedule_change
  * Actions that ask first unless the user allowed them in Settings › Permissions. Done
  * on their own, they show as a card with what was sent or added, not as a quiet line.
  */
-const MAY_BE_AUTOMATIC = new Set(["mail_send", "calendar_add_event"]);
+const MAY_BE_AUTOMATIC = new Set([
+  "mail_send",
+  "calendar_add_event",
+  "calendar_change_event",
+  "calendar_delete_event",
+]);
 
 /** What the assistant did (reads) and asked to do (approval cards) in one reply. */
 export function Actions({ actions }: { actions: Action[] }) {
@@ -156,16 +161,20 @@ function openUrlOf(a: Action): string | null {
 }
 
 function ApprovalCard({ action: a }: { action: Action }) {
-  const [busy, setBusy] = useState<null | "approve" | "reject">(null);
+  const [busy, setBusy] = useState<null | "approve" | "always" | "reject">(null);
   const rows = describeArgs(a.tool, a.arguments);
 
   if (a.status !== "pending_approval") return <DecidedCard action={a} />;
 
-  const decide = async (kind: "approve" | "reject") => {
+  const decide = async (kind: "approve" | "always" | "reject") => {
     setBusy(kind);
     try {
-      if (kind === "approve") approvedHere.add(a.id);
-      await (kind === "approve" ? api.approveAction(a.id) : api.rejectAction(a.id));
+      if (kind !== "reject") approvedHere.add(a.id);
+      await (kind === "approve"
+        ? api.approveAction(a.id)
+        : kind === "always"
+          ? api.approveAlways(a.id)
+          : api.rejectAction(a.id));
     } catch (e) {
       toast.error((e as Error).message);
       setBusy(null);
@@ -198,7 +207,19 @@ function ApprovalCard({ action: a }: { action: Action }) {
           ))}
         </dl>
       )}
-      <div className="mt-4 flex justify-end gap-2">
+      <div className="mt-4 flex items-center justify-end gap-2">
+        {a.always_allow && (
+          <Button
+            variant="ghost"
+            onClick={() => decide("always")}
+            disabled={busy !== null}
+            title="Approves this, and from now on does it without asking. You can change this in Settings › Permissions."
+            className="mr-auto -ml-2 text-muted-foreground"
+          >
+            {busy === "always" ? <Loader2 className="animate-spin" /> : null}
+            {a.always_allow}
+          </Button>
+        )}
         <Button variant="secondary" onClick={() => decide("reject")} disabled={busy !== null}>
           Not now
         </Button>

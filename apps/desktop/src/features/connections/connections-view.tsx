@@ -55,6 +55,7 @@ const repeatable = (id: string) =>
 
 const look: Record<string, { icon: typeof Plug; tone: string }> = {
   google_calendar: { icon: CalendarDays, tone: "bg-event-soft text-event" },
+  google: { icon: CalendarDays, tone: "bg-event-soft text-event" },
   caldav: { icon: CalendarDays, tone: "bg-event-soft text-event" },
   google_contacts: { icon: Users, tone: "bg-[#fbeedd] text-[#9a5a12]" },
   carddav: { icon: Users, tone: "bg-[#fbeedd] text-[#9a5a12]" },
@@ -81,6 +82,8 @@ export function ConnectionsView({ onPeople }: { onPeople: () => void }) {
   const connections = useConnections().data ?? [];
   const [open, setOpen] = useState<Integration | null>(null);
   const [connecting, setConnecting] = useState<ConnectKind | null>(null);
+  // A Google connection that needs signing in again.
+  const [reconnect, setReconnect] = useState<string | undefined>(undefined);
   const [removing, setRemoving] = useState<Connection | null>(null);
   const all = integrations.data ?? [];
   const available = all.filter(
@@ -119,7 +122,15 @@ export function ConnectionsView({ onPeople }: { onPeople: () => void }) {
         ) : (
           <Grouped>
             {connections.map((c) => (
-              <ConnectionRow key={c.id} connection={c} onRemove={() => setRemoving(c)} />
+              <ConnectionRow
+                key={c.id}
+                connection={c}
+                onRemove={() => setRemoving(c)}
+                onSignInAgain={() => {
+                  setReconnect(c.id);
+                  setConnecting("google_calendar");
+                }}
+              />
             ))}
           </Grouped>
         )}
@@ -169,7 +180,14 @@ export function ConnectionsView({ onPeople }: { onPeople: () => void }) {
       </p>
 
       <IntegrationSheet integration={open} onClose={() => setOpen(null)} onConnect={startConnect} />
-      <ConnectDialog kind={connecting} onClose={() => setConnecting(null)} />
+      <ConnectDialog
+        kind={connecting}
+        reconnect={reconnect}
+        onClose={() => {
+          setConnecting(null);
+          setReconnect(undefined);
+        }}
+      />
       <AlertDialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -232,7 +250,15 @@ function IntegrationCard({
   );
 }
 
-function ConnectionRow({ connection: c, onRemove }: { connection: Connection; onRemove: () => void }) {
+function ConnectionRow({
+  connection: c,
+  onRemove,
+  onSignInAgain,
+}: {
+  connection: Connection;
+  onRemove: () => void;
+  onSignInAgain: () => void;
+}) {
   const dot = { ok: "bg-private", needs_action: "bg-cloud", error: "bg-destructive" }[c.status];
   return (
     <Row
@@ -258,6 +284,11 @@ function ConnectionRow({ connection: c, onRemove }: { connection: Connection; on
           {c.action_url && (
             <Button size="sm" variant="lime" className="rounded-full px-3.5" onClick={() => openExternal(c.action_url!)}>
               Finish setup
+            </Button>
+          )}
+          {c.integration === "google" && c.status === "error" && (
+            <Button size="sm" variant="lime" className="rounded-full px-3.5" onClick={onSignInAgain}>
+              Sign in again
             </Button>
           )}
           <DropdownMenu>

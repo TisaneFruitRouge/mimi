@@ -22,6 +22,7 @@ mod hardware;
 mod mail;
 mod memory;
 mod people;
+mod permissions;
 mod providers;
 mod schedule;
 mod settings;
@@ -31,6 +32,8 @@ pub fn router(state: Arc<AppState>) -> Router {
     let authed = Router::new()
         .route("/status", get(status))
         .route("/settings", get(settings::get).put(settings::put))
+        .route("/permissions", get(permissions::list))
+        .route("/permissions/{kind}", axum::routing::put(permissions::put))
         .route("/events", get(events::subscribe))
         .route("/providers", get(providers::list).post(providers::create))
         .route("/providers/presets", get(providers::presets))
@@ -57,6 +60,14 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/connections/{id}",
             axum::routing::delete(connections::delete),
+        )
+        .route(
+            "/google/sign-in",
+            get(connections::google_info).post(connections::google_start),
+        )
+        .route(
+            "/google/sign-in/{id}",
+            get(connections::google_status).delete(connections::google_cancel),
         )
         .route("/people", get(people::list).post(people::create))
         .route("/people/duplicates", get(people::duplicates))

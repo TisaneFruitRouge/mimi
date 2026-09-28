@@ -27,11 +27,20 @@ import { openExternal } from "@/lib/transport";
 
 export type ConnectKind = "google_calendar" | "caldav" | "telegram" | "email";
 
-export function ConnectDialog({ kind, onClose }: { kind: ConnectKind | null; onClose: () => void }) {
+export function ConnectDialog({
+  kind,
+  reconnect,
+  onClose,
+}: {
+  kind: ConnectKind | null;
+  /** A Google connection to sign in again. */
+  reconnect?: string;
+  onClose: () => void;
+}) {
   return (
     <Dialog open={kind !== null} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="gap-6 sm:max-w-[500px]">
-        {kind === "google_calendar" && <GoogleCalendar onDone={onClose} />}
+        {kind === "google_calendar" && <GoogleCalendar onDone={onClose} reconnect={reconnect} />}
         {kind === "caldav" && <CalDav onDone={onClose} />}
         {kind === "telegram" && <Telegram onDone={onClose} />}
         {kind === "email" && <EmailAccount onDone={onClose} />}
@@ -106,7 +115,110 @@ function Done({ connection, onDone, extra }: { connection: Connection; onDone: (
   );
 }
 
-function GoogleCalendar({ onDone }: { onDone: () => void }) {
+/** Google Calendar: signing in with Google when this build can, else the private address. */
+function GoogleCalendar({ onDone, reconnect }: { onDone: () => void; reconnect?: string }) {
+  const info = useQuery({ queryKey: ["google-sign-in"], queryFn: api.googleSignInInfo });
+  const [address, setAddress] = useState(false);
+  if (info.isLoading) return <DialogTitle className="sr-only">Connect Google Calendar</DialogTitle>;
+  if (info.data?.available && !address)
+    return <GoogleSignInFlow onDone={onDone} reconnect={reconnect} onAddress={() => setAddress(true)} />;
+  return <GoogleAddress onDone={onDone} signInAvailable={!!info.data?.available} />;
+}
+
+function GoogleSignInFlow({
+  onDone,
+  reconnect,
+  onAddress,
+}: {
+  onDone: () => void;
+  reconnect?: string;
+  onAddress: () => void;
+}) {
+  const [signIn, setSignIn] = useState<{ id: string; url: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+  const status = useQuery({
+    queryKey: ["google-sign-in", signIn?.id],
+    queryFn: () => api.googleSignInStatus(signIn!.id),
+    enabled: !!signIn,
+    refetchInterval: (q) => (q.state.data?.state === "waiting" || !q.state.data ? 1000 : false),
+  });
+  const state = status.data;
+  useEffect(() => {
+    if (state?.state === "failed") {
+      setError(state.error);
+      setSignIn(null);
+    }
+  }, [state]);
+  // Closing the dialog midway stops listening for Google's answer (harmless once done).
+  useEffect(
+    () => () => {
+      if (signIn) api.cancelGoogleSignIn(signIn.id).catch(() => {});
+    },
+    [signIn],
+  );
+
+  if (state?.state === "done") return <Done connection={state.connection} onDone={onDone} />;
+
+  const start = async () => {
+    setStarting(true);
+    setError(null);
+    try {
+      const started = await api.startGoogleSignIn(reconnect);
+      setSignIn(started);
+      await openExternal(started.url);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>{reconnect ? "Sign in to Google again" : "Connect Google Calendar"}</DialogTitle>
+        <DialogDescription>
+          Sign in with Google so your assistant can read your calendars and add, move or remove events, always
+          with your OK unless you allow it in Permissions.
+        </DialogDescription>
+      </DialogHeader>
+      {signIn ? (
+        <div className="flex flex-col items-center gap-3 py-2 text-center">
+          <Loader2 className="size-7 animate-spin text-muted-foreground" />
+          <p className="type-callout">Finish signing in in your browser.</p>
+          <p className="type-subhead text-muted-foreground">
+            Choose your account, then allow both choices Google shows.
+          </p>
+          <Button variant="ghost" size="sm" onClick={() => openExternal(signIn.url)}>
+            <ExternalLink /> Open the Google page again
+          </Button>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          <Button size="lg" onClick={start} disabled={starting}>
+            {starting && <Loader2 className="animate-spin" />} Sign in with Google
+          </Button>
+          {error && <p className="type-subhead text-destructive">{error}</p>}
+        </div>
+      )}
+      <Note>
+        Google sends its answer straight back to this computer, and the sign-in is stored encrypted here. Your
+        events go only between this computer and Google.
+      </Note>
+      {!reconnect && !signIn && (
+        <button
+          onClick={onAddress}
+          className="-mt-2 self-center type-subhead text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+        >
+          Or read a calendar through its private address, without signing in
+        </button>
+      )}
+    </>
+  );
+}
+
+function GoogleAddress({ onDone, signInAvailable }: { onDone: () => void; signInAvailable: boolean }) {
   const [url, setUrl] = useState("");
   const { busy, error, created, connect, reset } = useConnect();
 
@@ -135,7 +247,9 @@ function GoogleCalendar({ onDone }: { onDone: () => void }) {
       <DialogHeader>
         <DialogTitle>Connect Google Calendar</DialogTitle>
         <DialogDescription>
-          No Google sign-in: your assistant reads the calendar through its private address.
+          {signInAvailable
+            ? "No Google sign-in: your assistant reads the calendar through its private address."
+            : "Your assistant reads the calendar through its private address. Signing in with Google isn't available in this version of the app."}
         </DialogDescription>
       </DialogHeader>
       <Steps>
@@ -240,7 +354,7 @@ function CalDav({ onDone }: { onDone: () => void }) {
     <>
       <DialogHeader>
         <DialogTitle>Connect a calendar account</DialogTitle>
-        <DialogDescription>Read and add events in iCloud, Fastmail, Nextcloud and other calendars.</DialogDescription>
+        <DialogDescription>Read, add and change events in iCloud, Fastmail, Nextcloud and other calendars.</DialogDescription>
       </DialogHeader>
       <div className="grid grid-cols-4 rounded-[10px] bg-fill p-[3px]">
         {caldavServices.map((s) => (

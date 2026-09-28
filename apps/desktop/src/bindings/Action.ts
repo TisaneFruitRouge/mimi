@@ -41,4 +41,10 @@ round: number,
  * How much of the reply's text, in Unicode characters, came before this action,
  * so clients can show it in place.
  */
-content_offset: number, };
+content_offset: number, 
+/**
+ * While it waits for approval: the text of a second choice that also stops asking
+ * for this person or calendar from now on (e.g. "Don't ask again for Sam"), when
+ * that would make a difference.
+ */
+always_allow: string | null, };

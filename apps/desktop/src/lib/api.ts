@@ -49,6 +49,11 @@ import type { CalendarInfo } from "@/bindings/CalendarInfo";
 import type { CreatedEvent } from "@/bindings/CreatedEvent";
 import type { NewCalendarEvent } from "@/bindings/NewCalendarEvent";
 import type { PersonConversation } from "@/bindings/PersonConversation";
+import type { GoogleSignIn } from "@/bindings/GoogleSignIn";
+import type { GoogleSignInInfo } from "@/bindings/GoogleSignInInfo";
+import type { GoogleSignInStatus } from "@/bindings/GoogleSignInStatus";
+import type { KindPermission } from "@/bindings/KindPermission";
+import type { PermissionKind } from "@/bindings/PermissionKind";
 import { type TransportError, request } from "@/lib/transport";
 
 /**
@@ -109,6 +114,10 @@ export const api = {
   status: () => call<Status>("GET", "/status"),
   settings: () => call<Settings>("GET", "/settings"),
   putSettings: (s: Settings) => call<Settings>("PUT", "/settings", s),
+  /** What the assistant may do without asking, kind by kind, with the user's choices. */
+  permissions: () => call<PermissionKind[]>("GET", "/permissions"),
+  setPermission: (kind: string, choice: KindPermission) =>
+    call<PermissionKind[]>("PUT", `/permissions/${encodeURIComponent(kind)}`, choice),
 
   providers: () => call<Provider[]>("GET", "/providers"),
   presets: () => call<ProviderPreset[]>("GET", "/providers/presets"),
@@ -132,6 +141,13 @@ export const api = {
   connections: () => call<Connection[]>("GET", "/connections"),
   connect: (setup: ConnectionSetup) => call<Connection>("POST", "/connections", setup),
   disconnect: (id: string) => call<null>("DELETE", `/connections/${id}`),
+  /** Whether "Sign in with Google" works in this build. */
+  googleSignInInfo: () => call<GoogleSignInInfo>("GET", "/google/sign-in"),
+  /** Starts signing in; open `url` in the browser, then poll the status. */
+  startGoogleSignIn: (reconnect?: string) =>
+    call<GoogleSignIn>("POST", "/google/sign-in", { reconnect: reconnect ?? null }),
+  googleSignInStatus: (id: string) => call<GoogleSignInStatus>("GET", `/google/sign-in/${id}`),
+  cancelGoogleSignIn: (id: string) => call<null>("DELETE", `/google/sign-in/${id}`),
 
   people: (q = "") => call<PersonSummary[]>("GET", `/people?q=${encodeURIComponent(q)}`),
   person: (id: string) => call<Person>("GET", `/people/${id}`),
@@ -221,7 +237,10 @@ export const api = {
     call<SendMessageResult>("POST", `/conversations/${id}/messages`, msg),
   cancel: (id: string) => call<null>("POST", `/conversations/${id}/cancel`),
   approveAction: (id: string, args?: Record<string, unknown>) =>
-    call<null>("POST", `/actions/${id}/approve`, { arguments: args ?? null }),
+    call<null>("POST", `/actions/${id}/approve`, { arguments: args ?? null, always: false }),
+  /** Approves, and stops asking for the person or calendar the card offered. */
+  approveAlways: (id: string) =>
+    call<null>("POST", `/actions/${id}/approve`, { arguments: null, always: true }),
   rejectAction: (id: string) => call<null>("POST", `/actions/${id}/reject`),
 
   memory: () => call<MemoryOverview>("GET", "/memory"),
@@ -266,6 +285,7 @@ export const api = {
 /** Query keys, shared by queries and the event sync so they stay in step. */
 export const keys = {
   settings: ["settings"] as const,
+  permissions: ["permissions"] as const,
   status: ["status"] as const,
   providers: ["providers"] as const,
   presets: ["presets"] as const,

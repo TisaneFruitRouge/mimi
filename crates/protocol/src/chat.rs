@@ -108,6 +108,11 @@ pub struct Action {
     /// so clients can show it in place.
     #[serde(default)]
     pub content_offset: u32,
+    /// While it waits for approval: the text of a second choice that also stops asking
+    /// for this person or calendar from now on (e.g. "Don't ask again for Sam"), when
+    /// that would make a difference.
+    #[serde(default)]
+    pub always_allow: Option<String>,
 }
 
 /// Body of `POST /v1/actions/{id}/approve`.
@@ -118,6 +123,9 @@ pub struct ApproveAction {
     /// Replaces the model's arguments, when the user edited them.
     #[ts(type = "Record<string, unknown> | null")]
     pub arguments: Option<serde_json::Value>,
+    /// The user chose the card's `always_allow`: approve, and add the matching exception
+    /// in Settings › Permissions. Not with edited arguments.
+    pub always: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

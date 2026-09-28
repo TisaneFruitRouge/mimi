@@ -5,17 +5,26 @@ use mimi_protocol::{Integration, IntegrationCategory, IntegrationStatus};
 /// Integrations whose connection flow exists.
 const AVAILABLE: &[&str] = &["google_calendar", "caldav", "carddav", "telegram", "email"];
 
-/// Address books come with the same account connection as calendars (CalDAV and
-/// CardDAV share the app password), so connecting one connects both.
-fn connected_as(id: &str) -> &str {
-    if id == "carddav" { "caldav" } else { id }
+/// The kinds of connection that make an integration connected. Address books come with
+/// the same account connection as calendars (CalDAV and CardDAV share the app password),
+/// so connecting one connects both; Google Calendar is connected by signing in with
+/// Google or through a calendar's private address.
+fn connected_as(id: &str) -> Vec<&str> {
+    match id {
+        "carddav" => vec!["caldav"],
+        "google_calendar" => vec!["google_calendar", "google"],
+        other => vec![other],
+    }
 }
 
 /// The catalog, with each entry's status for this user.
 pub fn catalog_for(connected: &[String]) -> Vec<Integration> {
     let mut all = catalog();
     for i in &mut all {
-        i.status = if connected.iter().any(|c| c == connected_as(&i.id)) {
+        i.status = if connected
+            .iter()
+            .any(|c| connected_as(&i.id).contains(&c.as_str()))
+        {
             IntegrationStatus::Connected
         } else if AVAILABLE.contains(&i.id.as_str()) {
             IntegrationStatus::Available
@@ -42,10 +51,10 @@ pub fn catalog() -> Vec<Integration> {
             "google_calendar",
             "Google Calendar",
             Calendar,
-            "Your schedule, read straight from Google. No Google sign-in needed.",
+            "Your schedule from Google: sign in with Google, or use a calendar's private address.",
             &[
                 "Read your events",
-                "Prepare new events for you to save in Google Calendar",
+                "Add, move and remove events, after you approve (when signed in)",
             ],
         ),
         item(
@@ -53,7 +62,10 @@ pub fn catalog() -> Vec<Integration> {
             "iCloud & other calendars",
             Calendar,
             "Apple iCloud, Fastmail, Nextcloud or any CalDAV calendar.",
-            &["Read your events", "Add events, after you approve"],
+            &[
+                "Read your events",
+                "Add, move and remove events, after you approve",
+            ],
         ),
         item(
             "google_contacts",

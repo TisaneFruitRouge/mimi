@@ -190,10 +190,18 @@ than inventing their own.
   optional `action_url` for "finish setup"). `ConnectionsChanged` events keep them live.
 - Every connection is checked against the real service before it's saved (fetch the
   feed, discover CalDAV calendars, Telegram `getMe`), so a saved connection works.
-- No registered app identities: calendars use Google's secret iCal address (read) plus
-  pre-filled "Add to Google Calendar" pages the user saves (write), and CalDAV with
-  app-specific passwords (iCloud, Fastmail, Nextcloud, Radicale). Recurrence is
-  expanded locally (`calendar/ics.rs`), for Google and CalDAV alike.
+- Calendars: **Sign in with Google** (`calendar/google.rs`, integration `google`), the
+  one registered app identity: OAuth for installed apps, owned by the daemon (it returns
+  the consent URL, the client opens it with `openExternal`, a listener on 127.0.0.1
+  exists only during sign-in; PKCE, `state` check, scopes `calendar.events` +
+  `calendar.calendarlist.readonly`). Data goes only between the machine and Google; the
+  refresh token stays in the connection config. Client ID from
+  `MIMI_GOOGLE_CLIENT_ID`/`_SECRET` at build or run time; without one the dialog offers
+  only Google's secret iCal address (read-only, new events through a pre-filled page).
+  CalDAV with app-specific passwords (iCloud, Fastmail, Nextcloud, Radicale), written
+  with ETags; one occurrence of a series is changed with an override or `EXDATE`
+  (`calendar/edit.rs`). Recurrence is expanded locally (`calendar/ics.rs`) for iCal and
+  CalDAV, by Google itself for signed-in Google. Setup notes: `docs/google-oauth.md`.
 - Telegram is a bot the user creates with @BotFather, long-polled (nothing listens for
   inbound connections). A one-time `/start <code>` pairs it with its owner; every other
   chat is ignored. Messages go into a "Telegram" conversation; approval cards are sent as
@@ -201,15 +209,19 @@ than inventing their own.
 - **Calendar panel APIs** (`api/calendar.rs`): `GET /v1/calendars` (id, name, colour,
   writable), `GET /v1/calendar/events?from&to` (ms, at most ~a year; events of every
   calendar merged, recurrence expanded, organizer/guests matched to People by email),
-  `POST /v1/calendar/events` (CalDAV: saved; Google: returns the pre-filled page to
-  open). Calendar ids are stable (`calendar::calendar_id`: connection id, plus a hash of
-  the collection for CalDAV); every `CalEvent` carries its `calendar_id`. Adding an event
-  from the panel is the user's own action, so it needs no approval card; the
-  assistant's `calendar_add_event` tool still does.
+  `POST /v1/calendar/events` (CalDAV and signed-in Google: saved; Google by address:
+  returns the pre-filled page to open). Calendar ids are stable
+  (`calendar::calendar_id`: connection id, plus a hash of the collection or Google
+  calendar id); every `CalEvent` carries its `calendar_id`. Adding an event from the
+  panel is the user's own action, so it needs no approval card; the assistant's
+  `calendar_add_event`, `calendar_change_event` and `calendar_delete_event` do, unless
+  Permissions allow them.
 - Never log feed URLs, tokens or passwords (reqwest errors include URLs: map them).
-- Tests fake the outside world: Radicale (`uvx radicale --auth-type=none`) for CalDAV by
-  hand, `fake_telegram` in `api/tests.rs` for the bot, public Google holiday feeds for
-  iCal parsing.
+- Tests fake the outside world: Radicale (`uvx radicale --auth-type=none`) for CalDAV
+  (`MIMI_TEST_CALDAV=http://127.0.0.1:5232/ cargo test -p mimi-core live_caldav --
+  --ignored`), `calendar/google_fake.rs` for Google (sign-in, tokens, Calendar API),
+  `fake_telegram` in `api/tests.rs` for the bot, public Google holiday feeds for iCal
+  parsing. Never point tests at Google.
 
 ## Email
 
@@ -382,17 +394,25 @@ than inventing their own.
 - **Approval rule:** anything that sends, changes or deletes something on the user's
   behalf needs approval (`Tool::needs_approval` returns true); reads don't. Never
   weaken this for convenience; it is the main defence against prompt injection.
-- **Permissions** (Settings › Permissions, `Settings.permissions`): the user may let
-  three kinds of action happen without asking: sending email, adding calendar events,
-  and setting reminders/routines (`Autonomy::Ask | Automatic`; defaults ask, ask,
-  automatic). A tool opts in with `Tool::governed_by`; `tools::permissions::
-  requires_approval` decides, in `chat::act`. Automatic email still asks unless every
-  recipient is known (`mail::known`: the user's own addresses, address-book or
-  hand-added handles, or someone in the Sent folder; never Mimi's correspondent cards
-  or mail that merely claims to be from the user). Keep that check, and don't add new
-  kinds without the same care. Automatic emails and events show in the chat as a card
-  with their details; `api/tests.rs › automatic_sending_only_writes_to_people_the_user_knows`
-  covers it.
+- **Permissions** (Settings › Permissions; design in `docs/architecture.md` › Tools
+  and approvals › Permissions): the kinds of action the user may let happen without
+  asking are descriptors in `tools::permissions::KINDS` (send email, add events, change
+  or remove events, reminders & routines), served by `GET /v1/permissions`; the page
+  renders only that. Each kind has a default (`Autonomy::Ask | Automatic`) plus
+  exceptions for people or calendars; most specific wins, and a call about several
+  (an email to three people) is automatic only if every one allows it. A tool opts in
+  with `Tool::governed_by` and says who or what a call is about with
+  `Tool::call_targets`; `requires_approval` decides, in `chat::act`. Choices change only
+  through the user's own calls (`PUT /v1/permissions/{kind}`, or "Don't ask again for …"
+  on a card: `always` on approve, taking the exception the daemon offered), never
+  through a tool; `PUT /v1/settings` keeps the stored ones. Automatic email still asks
+  unless every recipient is known (`mail::known`: the user's own addresses, address-book
+  or hand-added handles, or someone in the Sent folder; never Mimi's correspondent cards
+  or mail that merely claims to be from the user), even for a person with an exception.
+  Keep that check, and don't add new kinds without the same care. Automatic actions
+  show in the chat as a card with their details; `api/tests.rs ›
+  automatic_sending_only_writes_to_people_the_user_knows`, `mail_flow ›
+  people_exceptions_and_dont_ask_again` and `permission_api` cover it.
 - **Adding a tool:** implement `tools::Tool` (crates/core/src/tools/mod.rs): a stable
   `snake_case` name, a description written for the model, a JSON Schema for the
   arguments, `summary()` as one plain-language line for the approval card, and
@@ -404,10 +424,12 @@ than inventing their own.
   `apps/desktop/src/features/chat/action-formatters.tsx` so its approval card reads
   well; otherwise arguments show as a tidy key/value list. Any argument a formatter
   doesn't list in its `keys` is still shown after its rows.
-- **The card shows what runs:** before an approval card is shown, the call's arguments
-  go through `Tool::prepare` (default `tools::conform`: the schema's types, with plain
-  mistakes like a string for a list converted and anything else refused), and the
-  stored action holds the result. Override `prepare` when the tool reads arguments in
+- **The card shows what runs:** a tool whose arguments point at something (an event to
+  change) looks it up in `Tool::resolve` and writes the real thing into the arguments,
+  over anything the model put there. Then, before an approval card is shown, the
+  call's arguments go through `Tool::prepare` (default `tools::conform`: the schema's
+  types, with plain mistakes like a string for a list converted and anything else
+  refused), and the stored action holds the result. Override `prepare` when the tool reads arguments in
   a further shape (e.g. `mail_send` splits recipients into one address each).
 - Tool output is given back to the model verbatim (cut at 16k characters) and stored
   with the message, so keep it compact and free of secrets.

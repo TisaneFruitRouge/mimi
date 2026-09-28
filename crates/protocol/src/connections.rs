@@ -36,7 +36,8 @@ pub enum ConnectionStatus {
 #[serde(tag = "integration", rename_all = "snake_case")]
 #[ts(export)]
 pub enum ConnectionSetup {
-    /// A Google calendar read through its secret iCal address. No Google sign-in.
+    /// A Google calendar read through its secret iCal address. No Google sign-in (for
+    /// that, see `POST /v1/google/sign-in`).
     GoogleCalendar { ics_url: String },
     /// Any CalDAV account: iCloud, Fastmail, Nextcloud, Radicale…
     Caldav {
@@ -56,5 +57,48 @@ pub enum ConnectionSetup {
         /// Server details for "Other"; ignored when a preset applies.
         #[serde(default)]
         servers: Option<crate::MailServers>,
+    },
+}
+
+/// `GET /v1/google/sign-in`: whether "Sign in with Google" works in this build. It needs
+/// an app identity (OAuth client) compiled in or set in the environment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct GoogleSignInInfo {
+    pub available: bool,
+}
+
+/// Body of `POST /v1/google/sign-in`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct StartGoogleSignIn {
+    /// Signs an existing Google connection in again (after Google stopped accepting it),
+    /// keeping its calendars' ids and everything that refers to them.
+    pub reconnect: Option<Uuid>,
+}
+
+/// A sign-in in progress: the client opens `url` in the browser, then polls
+/// `GET /v1/google/sign-in/{id}` until it's done.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct GoogleSignIn {
+    pub id: Uuid,
+    /// Google's consent page. It sends the browser back to this computer only.
+    pub url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "state", rename_all = "snake_case")]
+#[ts(export)]
+pub enum GoogleSignInStatus {
+    /// Waiting for the user to finish in the browser.
+    Waiting,
+    Done {
+        connection: Connection,
+    },
+    /// Refused, cancelled, timed out or failed; `error` says what to do, plainly.
+    Failed {
+        error: String,
     },
 }
