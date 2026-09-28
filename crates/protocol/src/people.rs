@@ -125,6 +125,23 @@ pub struct DismissDuplicate {
     pub b: Uuid,
 }
 
+/// Someone the user deleted from Mimi (not from their address book), who can be
+/// brought back. `DELETE /people/{id}` returns this, or `null` when nothing is left to
+/// bring back (someone the user had added themselves).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RemovedPerson {
+    /// The id they had, and get back when restored.
+    pub id: Uuid,
+    pub name: String,
+    pub nickname: Option<String>,
+    /// When they were deleted (ms since the epoch).
+    #[ts(type = "number")]
+    pub removed_at: i64,
+    /// Plain-language names of where their cards come from, e.g. "iCloud".
+    pub sources: Vec<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]

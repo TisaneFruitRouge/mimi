@@ -362,6 +362,13 @@ than inventing their own.
   username). Never on names: those become "possible duplicates" for the user. Never
   guess a phone's country code. Once placed, a card stays with its person (so user
   splits survive syncs); imported handles are read-only, "change it in the address book".
+- **Deleting** (`store::delete`/`restore`, migration 0023): anyone can be deleted, from
+  Mimi only; sources are never written to. Imported cards are remembered by source +
+  record in `person_records_removed` and skipped by `sync_source` however they change;
+  "Removed contacts" (`GET /people/removed`, `POST /people/removed/{id}/restore`) brings
+  a person back under the same id. Hand-added people and handles are simply deleted.
+  Memory notes are kept (their link clears and comes back on restore). Tests in
+  `people/tests.rs` cover the edge cases; keep a deleted card from resurrecting anyone.
 - **Mentions:** `Mention { kind: person | event | mail_thread | mail_message, id, label }`,
   with `@label` in the message text for people and events and `#label` for email
   (`MentionKind::sigil`, `mentionSigil` in `lib/draft.ts`). The engine resolves them

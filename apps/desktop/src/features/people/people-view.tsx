@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { Plus, RefreshCw, Search, Users } from "lucide-react";
+import { MoreHorizontal, Plus, RefreshCw, Search, Trash2, UserX, Users } from "lucide-react";
 import { cn } from "cn";
 import { toast } from "sonner";
 
@@ -8,8 +8,16 @@ import type { DuplicateSuggestion } from "@/bindings/DuplicateSuggestion";
 import { Grouped, IconTile, Page, PageHeader, Row, Section } from "@/components/page";
 import { ChannelIcons, PersonAvatar } from "@/components/people";
 import { Button } from "@/components/ui/button";
+import { ContextMenuItem } from "@/components/ui/context-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { DeletePersonDialog, type Doomed, RemovedContactsDialog } from "@/features/people/delete-person";
 import { AddPersonDialog } from "@/features/people/person-dialogs";
 import { PersonPage } from "@/features/people/person-page";
 import type { Section as Place } from "@/features/shell/top-bar";
@@ -34,6 +42,8 @@ export function PeopleView({
   const [query, setQuery] = useState("");
   const [adding, setAdding] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [deleting, setDeleting] = useState<Doomed | null>(null);
+  const [showRemoved, setShowRemoved] = useState(false);
   const list = useRef<HTMLDivElement>(null);
   const people = useQuery({
     queryKey: keys.peopleList(query),
@@ -64,6 +74,19 @@ export function PeopleView({
     const i = everyone.findIndex((p) => p.id === personId);
     const next = i === -1 ? (by > 0 ? 0 : everyone.length - 1) : Math.min(everyone.length - 1, Math.max(0, i + by));
     select(everyone[next].id);
+  };
+
+  /** After someone is deleted, the one below them (or above, at the end) takes their place. */
+  const afterDelete = (id: string) => {
+    if (id !== personId) return;
+    const i = everyone.findIndex((p) => p.id === id);
+    const next = everyone[i + 1] ?? everyone[i - 1];
+    if (next) select(next.id);
+    else onOpenPerson(null);
+  };
+  const askDelete = (id: string) => {
+    const p = everyone.find((x) => x.id === id);
+    if (p) setDeleting({ id: p.id, name: p.name });
   };
 
   const noOne = !people.isLoading && everyone.length === 0 && !query;
@@ -103,6 +126,23 @@ export function PeopleView({
               </TooltipTrigger>
               <TooltipContent>Add someone</TooltipContent>
             </Tooltip>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="More"
+                  className="rounded-full text-muted-foreground"
+                >
+                  <MoreHorizontal />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => setShowRemoved(true)}>
+                  <UserX /> Removed contacts…
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
         <div className="px-3 pb-2">
@@ -144,6 +184,9 @@ export function PeopleView({
             if (e.key === "ArrowDown" || e.key === "ArrowUp") {
               e.preventDefault();
               step(e.key === "ArrowDown" ? 1 : -1);
+            } else if (personId && (e.key === "Delete" || (e.key === "Backspace" && (e.metaKey || e.ctrlKey)))) {
+              e.preventDefault();
+              askDelete(personId);
             }
           }}
         >
@@ -164,6 +207,11 @@ export function PeopleView({
                 key={p.id}
                 onOpen={() => onOpenPerson(p.id)}
                 onAsk={() => onAsk(mentionDraft("person", p.id, p.name))}
+                more={
+                  <ContextMenuItem variant="destructive" onSelect={() => setDeleting({ id: p.id, name: p.name })}>
+                    <Trash2 /> Delete contact…
+                  </ContextMenuItem>
+                }
               >
                 <button
                   data-id={p.id}
@@ -198,6 +246,7 @@ export function PeopleView({
             onAsk={onAsk}
             onOpenConversation={onOpenConversation}
             onSection={onSection}
+            onDelete={(p) => setDeleting({ id: p.id, name: p.name })}
           />
         ) : (
           <Page className="max-w-[720px]">
@@ -245,6 +294,13 @@ export function PeopleView({
       </div>
 
       <AddPersonDialog open={adding} onOpenChange={setAdding} onAdded={(id) => onOpenPerson(id)} />
+      <DeletePersonDialog
+        person={deleting}
+        onClose={() => setDeleting(null)}
+        onDeleted={afterDelete}
+        onRestored={(id) => onOpenPerson(id)}
+      />
+      <RemovedContactsDialog open={showRemoved} onOpenChange={setShowRemoved} onRestored={(id) => onOpenPerson(id)} />
     </div>
   );
 }

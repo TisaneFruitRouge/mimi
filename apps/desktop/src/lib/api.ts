@@ -15,6 +15,7 @@ import type { NewPerson } from "@/bindings/NewPerson";
 import type { Person } from "@/bindings/Person";
 import type { PersonSummary } from "@/bindings/PersonSummary";
 import type { PersonUpdate } from "@/bindings/PersonUpdate";
+import type { RemovedPerson } from "@/bindings/RemovedPerson";
 import type { ModelPull } from "@/bindings/ModelPull";
 import type { RuntimeStatus } from "@/bindings/RuntimeStatus";
 import type { ModelInfo } from "@/bindings/ModelInfo";
@@ -137,7 +138,10 @@ export const api = {
   person: (id: string) => call<Person>("GET", `/people/${id}`),
   addPerson: (p: NewPerson) => call<Person>("POST", "/people", p),
   updatePerson: (id: string, u: PersonUpdate) => call<Person>("PATCH", `/people/${id}`, u),
-  removePerson: (id: string) => call<null>("DELETE", `/people/${id}`),
+  /** Deletes someone from Mimi only; says how to bring them back, or null if they were added by hand. */
+  removePerson: (id: string) => call<RemovedPerson | null>("DELETE", `/people/${id}`),
+  removedPeople: () => call<RemovedPerson[]>("GET", "/people/removed"),
+  restorePerson: (id: string) => call<Person>("POST", `/people/removed/${id}/restore`),
   addHandle: (id: string, h: NewHandle) => call<Person>("POST", `/people/${id}/handles`, h),
   removeHandle: (id: string, handle: string) =>
     call<Person>("DELETE", `/people/${id}/handles/${handle}`),
@@ -285,6 +289,7 @@ export const keys = {
   personExtra: (id: string, what: "events" | "conversations" | "memory" | "mail") =>
     ["people", "person", id, what] as const,
   duplicates: ["people", "duplicates"] as const,
+  removedPeople: ["people", "removed"] as const,
   // Under "mail" for #, so new mail refreshes the suggestions.
   mentions: (q: string, kind: MentionSigil = "@") =>
     kind === "#" ? (["mail", "mentions", q] as const) : (["people", "mentions", q] as const),
