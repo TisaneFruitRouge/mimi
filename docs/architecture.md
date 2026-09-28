@@ -508,7 +508,7 @@ sign-in, reads, writes, rules and revocation against `google_fake.rs`.
   same-name people become "possible duplicates" (`GET /v1/people/duplicates`), which
   the user merges or dismisses. A card, once placed, stays with its person, so a split
   (`POST /v1/people/{id}/split`) survives later syncs.
-- **Deleting** (`store::delete`, migration 0023): anyone can be deleted, from Mimi only;
+- **Deleting** (`store::delete`, migration 0021): anyone can be deleted, from Mimi only;
   address books and mail accounts are never changed. What the user added (the person
   row, hand-added handles) goes. Each imported card is remembered in
   `person_records_removed` (source + record, the ids sync knows it by) and the person's

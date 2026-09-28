@@ -376,7 +376,7 @@ than inventing their own.
   username). Never on names: those become "possible duplicates" for the user. Never
   guess a phone's country code. Once placed, a card stays with its person (so user
   splits survive syncs); imported handles are read-only, "change it in the address book".
-- **Deleting** (`store::delete`/`restore`, migration 0023): anyone can be deleted, from
+- **Deleting** (`store::delete`/`restore`, migration 0021): anyone can be deleted, from
   Mimi only; sources are never written to. Imported cards are remembered by source +
   record in `person_records_removed` and skipped by `sync_source` however they change;
   "Removed contacts" (`GET /people/removed`, `POST /people/removed/{id}/restore`) brings
