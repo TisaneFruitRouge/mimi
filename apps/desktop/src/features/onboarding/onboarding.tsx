@@ -504,13 +504,25 @@ function Connect({ onNext, onBack }: { onNext: () => void; onBack: () => void })
   const connections = useConnections().data ?? [];
   const [open, setOpen] = useState<ConnectKind | null>(null);
   const has = (ids: string[]) => connections.some((c) => ids.includes(c.integration));
-  const items: { kinds: ConnectKind[]; icon: typeof Send; tone: string; title: string; detail: string }[] = [
+  const items: {
+    kinds: ConnectKind[];
+    icon: typeof Send;
+    tone: string;
+    title: string;
+    detail: string;
+    /** When there's more than one way to connect it: what to offer. */
+    choices?: { kind: ConnectKind; label: string }[];
+  }[] = [
     {
       kinds: ["google_calendar", "caldav"],
       icon: CalendarDays,
       tone: "bg-event-soft text-event",
       title: "Your calendar",
       detail: "So I know your plans and can add events when you ask. Google, iCloud and others.",
+      choices: [
+        { kind: "google_calendar", label: "Google Calendar" },
+        { kind: "caldav", label: "iCloud, Fastmail, Nextcloud…" },
+      ],
     },
     {
       kinds: ["email"],
@@ -520,14 +532,19 @@ function Connect({ onNext, onBack }: { onNext: () => void; onBack: () => void })
       detail: "So I can sort what needs a reply and draft answers. Nothing is sent without your OK.",
     },
     {
-      kinds: ["telegram"],
+      kinds: ["telegram", "matrix"],
       icon: Send,
       tone: "bg-[#def3f7] text-[#136c86]",
-      title: "Telegram",
-      detail: "Chat with me from your phone, through a bot only you can use.",
+      title: "Your phone",
+      detail: "Chat with me from Telegram or Matrix, through an account only you can use.",
+      choices: [
+        { kind: "telegram", label: "Telegram" },
+        { kind: "matrix", label: "Matrix (Element…)" },
+      ],
     },
   ];
-  const [calendarChoice, setCalendarChoice] = useState(false);
+  // The item whose choices are showing.
+  const [choosingFor, setChoosingFor] = useState<string | null>(null);
 
   return (
     <div className="flex flex-col gap-8">
@@ -538,7 +555,7 @@ function Connect({ onNext, onBack }: { onNext: () => void; onBack: () => void })
       <div className="flex flex-col gap-2.5">
         {items.map((it) => {
           const done = has(it.kinds);
-          const choosing = calendarChoice && it.kinds.length > 1 && !done;
+          const choosing = choosingFor === it.title && !!it.choices && !done;
           return (
             <div key={it.title} className="surface flex flex-col px-5 py-4">
               <div className="flex items-center gap-4">
@@ -553,8 +570,11 @@ function Connect({ onNext, onBack }: { onNext: () => void; onBack: () => void })
                   <span className="flex items-center gap-1.5 type-subhead font-medium text-private">
                     <Check className="size-4" /> Connected
                   </span>
-                ) : it.kinds.length > 1 ? (
-                  <Button variant="secondary" onClick={() => setCalendarChoice((c) => !c)}>
+                ) : it.choices ? (
+                  <Button
+                    variant="secondary"
+                    onClick={() => setChoosingFor((c) => (c === it.title ? null : it.title))}
+                  >
                     Connect
                   </Button>
                 ) : (
@@ -573,12 +593,17 @@ function Connect({ onNext, onBack }: { onNext: () => void; onBack: () => void })
                     className="overflow-hidden"
                   >
                     <div className="flex flex-wrap gap-2 pt-3 pl-[52px]">
-                      <Button variant="secondary" size="sm" onClick={() => setOpen("google_calendar")} autoFocus>
-                        Google Calendar
-                      </Button>
-                      <Button variant="secondary" size="sm" onClick={() => setOpen("caldav")}>
-                        iCloud, Fastmail, Nextcloud…
-                      </Button>
+                      {it.choices?.map((c, i) => (
+                        <Button
+                          key={c.kind}
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => setOpen(c.kind)}
+                          autoFocus={i === 0}
+                        >
+                          {c.label}
+                        </Button>
+                      ))}
                     </div>
                   </motion.div>
                 )}

@@ -25,7 +25,7 @@ import { api, keys } from "@/lib/api";
 import { useConnections } from "@/lib/queries";
 import { openExternal } from "@/lib/transport";
 
-export type ConnectKind = "google_calendar" | "caldav" | "telegram" | "email";
+export type ConnectKind = "google_calendar" | "caldav" | "telegram" | "matrix" | "email";
 
 export function ConnectDialog({
   kind,
@@ -43,6 +43,7 @@ export function ConnectDialog({
         {kind === "google_calendar" && <GoogleCalendar onDone={onClose} reconnect={reconnect} />}
         {kind === "caldav" && <CalDav onDone={onClose} />}
         {kind === "telegram" && <Telegram onDone={onClose} />}
+        {kind === "matrix" && <Matrix onDone={onClose} />}
         {kind === "email" && <EmailAccount onDone={onClose} />}
       </DialogContent>
     </Dialog>
@@ -518,6 +519,174 @@ function TelegramPairing({ connection }: { connection: Connection }) {
           )}
           <span className="flex items-center gap-2 type-subhead text-muted-foreground">
             <Loader2 className="size-3.5 animate-spin" /> Waiting for you to press Start…
+          </span>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function Matrix({ onDone }: { onDone: () => void }) {
+  const [user, setUser] = useState("");
+  const [password, setPassword] = useState("");
+  const [homeserver, setHomeserver] = useState("");
+  const [showServer, setShowServer] = useState(false);
+  const { busy, error, created, connect } = useConnect();
+  // The connection updates live (via events) once the owner sends the code.
+  const live = useConnections().data?.find((c) => c.id === created?.id) ?? created;
+
+  if (live && live.status === "ok") {
+    return <Done connection={live} onDone={onDone} />;
+  }
+  if (live) return <MatrixPairing connection={live} />;
+
+  const ready = user.trim().length > 0 && password.length > 0;
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>Connect Matrix</DialogTitle>
+        <DialogDescription>
+          Chat with your assistant from Element or any Matrix app, end-to-end encrypted.
+        </DialogDescription>
+      </DialogHeader>
+      <Steps>
+        <Step n={1}>
+          <span>
+            Make a new account for your assistant, separate from yours. Any server works, like
+            matrix.org or your own.
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            className="self-start"
+            onClick={() => openExternal("https://app.element.io/#/register")}
+          >
+            <ExternalLink /> Create an account in Element
+          </Button>
+        </Step>
+        <Step n={2}>
+          <span>Enter the new account's address and password.</span>
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!ready) return;
+              connect({
+                integration: "matrix",
+                user,
+                password,
+                homeserver: homeserver.trim() || null,
+              });
+            }}
+          >
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="matrix-user">Address</Label>
+              <Input
+                id="matrix-user"
+                value={user}
+                onChange={(e) => setUser(e.target.value)}
+                placeholder="@my-assistant:matrix.org"
+                autoComplete="off"
+                spellCheck={false}
+                autoFocus
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="matrix-password">Password</Label>
+              <Input
+                id="matrix-password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="off"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowServer((v) => !v)}
+              className="flex items-center gap-1 self-start type-subhead font-medium text-muted-foreground hover:text-foreground"
+              aria-expanded={showServer}
+            >
+              <ChevronRight className={cn("size-3.5 transition-transform", showServer && "rotate-90")} />
+              Server settings
+            </button>
+            {showServer && (
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="matrix-server">Server address</Label>
+                <Input
+                  id="matrix-server"
+                  value={homeserver}
+                  onChange={(e) => setHomeserver(e.target.value)}
+                  placeholder="https://matrix.example.org"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <p className="type-subhead text-muted-foreground">
+                  Only needed when Mimi can't find the server from the address.
+                </p>
+              </div>
+            )}
+            {error && <p className="type-subhead text-destructive">{error}</p>}
+            <Button type="submit" className="self-start" disabled={busy || !ready}>
+              {busy && <Loader2 className="animate-spin" />} {busy ? "Signing in…" : "Connect"}
+            </Button>
+          </form>
+        </Step>
+      </Steps>
+      <Note>
+        Your assistant uses only its own account, never yours, and talks only to you. Its password
+        is used once to set up encryption and isn't kept.
+      </Note>
+    </>
+  );
+}
+
+/** The six-digit code in a connection's "send this code" line. */
+const pairingCode = (detail: string) => detail.match(/\b(\d{6})\b/)?.[1] ?? null;
+
+function MatrixPairing({ connection }: { connection: Connection }) {
+  const [qr, setQr] = useState<string | null>(null);
+  const url = connection.action_url;
+  const code = pairingCode(connection.detail);
+  useEffect(() => {
+    if (url) QRCode.toDataURL(url, { margin: 1, width: 360, color: { dark: "#16171a", light: "#ffffff" } }).then(setQr);
+  }, [url]);
+
+  if (connection.status === "error") {
+    return (
+      <DialogHeader>
+        <DialogTitle>Something went wrong</DialogTitle>
+        <DialogDescription>{connection.detail}</DialogDescription>
+      </DialogHeader>
+    );
+  }
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>One last step</DialogTitle>
+        <DialogDescription>
+          From your own Matrix account, start a chat with {connection.name} and send it this code.
+          That makes it yours.
+        </DialogDescription>
+      </DialogHeader>
+      {code && (
+        <p className="mx-auto w-fit rounded-[14px] bg-subtle px-5 py-3 font-mono text-[28px] font-semibold tracking-[0.2em] tabular-nums">
+          {code}
+        </p>
+      )}
+      <div className="flex items-center gap-5">
+        <div className="shrink-0 rounded-[18px] bg-white p-2.5 shadow-[var(--shadow-card)]">
+          {qr ? <img src={qr} alt="QR code to open a chat with your assistant" className="size-36" /> : <div className="size-36" />}
+        </div>
+        <div className="flex flex-col gap-3 type-callout">
+          <span>Scan with your phone's camera, or open it on this computer.</span>
+          {url && (
+            <Button className="self-start" onClick={() => openExternal(url)}>
+              <ExternalLink /> Start the chat
+            </Button>
+          )}
+          <span className="flex items-center gap-2 type-subhead text-muted-foreground">
+            <Loader2 className="size-3.5 animate-spin" /> Waiting for your code…
           </span>
         </div>
       </div>

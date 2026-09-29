@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   Smile,
   Sparkles,
+  TriangleAlert,
 } from "lucide-react";
 import { cn } from "cn";
 import { toast } from "sonner";
@@ -243,6 +244,7 @@ function PrivacySettings({ onSection }: { onSection: (s: Place) => void }) {
   const providers = useProviders().data ?? [];
   const connections = useConnections().data ?? [];
   const telegram = connections.some((c) => c.integration === "telegram");
+  const matrix = connections.filter((c) => c.integration === "matrix");
   const email = connections.some((c) => c.integration === "email");
   return (
     <Page>
@@ -318,6 +320,33 @@ function PrivacySettings({ onSection }: { onSection: (s: Place) => void }) {
               detail="Telegram can read what you and your bot send each other. Keep private things in this app."
               className="[&_.truncate]:whitespace-normal"
             />
+          </Grouped>
+        </Section>
+      )}
+
+      {matrix.length > 0 && (
+        <Section title="Matrix">
+          <Grouped>
+            {matrix.map((c) => {
+              const plain = c.detail.includes("not encrypted");
+              return (
+                <Row
+                  key={c.id}
+                  icon={
+                    <IconTile size="sm" className={plain ? "bg-cloud-soft text-cloud" : "bg-private-soft text-private"}>
+                      {plain ? <TriangleAlert /> : <Lock />}
+                    </IconTile>
+                  }
+                  title={plain ? "Your chat isn't end-to-end encrypted" : "End-to-end encrypted"}
+                  detail={
+                    plain
+                      ? "Your Matrix server can read it. Turn on encryption in the chat's settings."
+                      : "Only your devices and this computer can read your chat with your assistant."
+                  }
+                  className="[&_.truncate]:whitespace-normal"
+                />
+              );
+            })}
           </Grouped>
         </Section>
       )}
@@ -556,8 +585,8 @@ function BackgroundGroup() {
       ? (status.unavailable_reason ?? "Not available on this computer.")
       : status.enabled
         ? status.no_restart
-          ? "Starts when you log in, so Telegram and reminders work with this window closed."
-          : "Starts when you log in and keeps going with this window closed, so Telegram and reminders always work."
+          ? "Starts when you log in, so your messaging apps and reminders work with this window closed."
+          : "Starts when you log in and keeps going with this window closed, so your messaging apps and reminders always work."
         : "Mimi only works while this window is open.";
 
   return (
