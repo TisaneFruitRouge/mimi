@@ -78,6 +78,19 @@ fn only_the_code_pairs_and_then_only_the_owner_counts() {
 }
 
 #[test]
+fn an_encrypted_chat_only_takes_encrypted_messages() {
+    let mut c = config();
+    assert!(trusted(&c, false), "a plain chat takes plain messages");
+    assert!(trusted(&c, true));
+    c.encrypted = true;
+    assert!(
+        !trusted(&c, false),
+        "a plain message in an encrypted chat is ignored"
+    );
+    assert!(trusted(&c, true));
+}
+
+#[test]
 fn status_lines_say_what_to_do_and_how_private_it_is() {
     let mut c = config();
     let (status, detail, url) = describe(&c);

@@ -274,7 +274,7 @@ async fn sign_in(
     };
     let client = builder.build().await.map_err(|_| match &account.server {
         Server::Name(name) => format!(
-            "Couldn't find a Matrix server for {name}. Check the address, or enter the server's address under More options."
+            "Couldn't find a Matrix server for {name}. Check the address, or enter the server's address under Server settings."
         ),
         Server::Url(_) => "Couldn't reach that Matrix server.".to_owned(),
     })?;
@@ -463,6 +463,13 @@ pub fn is_pairing_code(config: &MatrixConfig, text: &str) -> bool {
         .is_some_and(|code| text.trim() == code)
 }
 
+/// Whether a message from the owner can be believed. Once their chat is encrypted, only
+/// encrypted messages count: anything else could have been made up by a server along
+/// the way. (Reactions are the exception: Matrix apps send them unencrypted.)
+pub fn trusted(config: &MatrixConfig, sealed: bool) -> bool {
+    sealed || !config.encrypted
+}
+
 /// Whether to accept an invitation: anyone's until paired (the code still has to come),
 /// then only the owner's.
 pub fn accepts_invite(config: &MatrixConfig, inviter: Option<&str>) -> bool {
@@ -488,6 +495,8 @@ enum Incoming {
         text: String,
         /// The message it replies to.
         quoted: Option<OwnedEventId>,
+        /// Whether it came end-to-end encrypted.
+        sealed: bool,
     },
     Reaction {
         room: OwnedRoomId,
@@ -673,6 +682,7 @@ fn incoming(
     for (room, update) in response.rooms.joined {
         out.push(Incoming::Joined { room: room.clone() });
         for event in update.timeline.events {
+            let sealed = event.encryption_info().is_some();
             let Ok(event) = event.raw().deserialize() else {
                 continue;
             };
@@ -713,6 +723,7 @@ fn incoming(
                         sender,
                         text,
                         quoted,
+                        sealed,
                     });
                 }
                 AnySyncTimelineEvent::MessageLike(AnySyncMessageLikeEvent::Reaction(
@@ -822,11 +833,21 @@ async fn handle(
             sender,
             text,
             quoted,
+            sealed,
         } => {
             let Some(room) = client.get_room(&room_id) else {
                 return;
             };
-            match classify(config, room_id.as_str(), sender.as_str()) {
+            let from = classify(config, room_id.as_str(), sender.as_str());
+            if from == Sender::Owner && !trusted(config, sealed) {
+                tracing::warn!(connection = %live.connection, "ignored an unencrypted message in the owner's encrypted Matrix chat");
+                return;
+            }
+            if from == Sender::Owner && sealed {
+                // The owner may have turned encryption on themselves.
+                config.encrypted = true;
+            }
+            match from {
                 Sender::Claimant => {
                     if is_pairing_code(config, &text) {
                         pair(state, live, config, &room, &sender).await;
@@ -850,6 +871,8 @@ async fn handle(
             target,
             key,
         } => {
+            // Matrix apps never encrypt reactions, so these count even in an encrypted
+            // chat. They only ever answer a prompt the assistant sent.
             if classify(config, room.as_str(), sender.as_str()) != Sender::Owner {
                 return;
             }
