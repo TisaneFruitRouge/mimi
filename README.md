@@ -49,7 +49,9 @@ the .dmg yourself, right-click Mimi and choose Open the first time.
 
 ## Development
 
-Requirements: Rust (stable), Node 22+, pnpm. On Linux, also the
+Requirements: Rust (stable), Node 22+, pnpm, and `protoc` (the Protocol Buffers compiler,
+for Signal's libraries: `protobuf-compiler` on Debian/Ubuntu, `protobuf` on Homebrew and
+Arch). On Linux, also the
 [Tauri system dependencies](https://v2.tauri.app/start/prerequisites/#linux).
 
 ```sh

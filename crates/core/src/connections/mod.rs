@@ -18,6 +18,7 @@ use crate::db::DbError;
 use crate::{AppState, now_ms};
 
 pub mod calendar;
+pub mod signal;
 pub mod store;
 pub mod telegram;
 
