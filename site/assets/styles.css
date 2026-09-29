@@ -526,16 +526,38 @@ section {
 }
 .packages {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   margin: 16px 0 0;
   padding: 0;
   list-style: none;
 }
-.packages li {
+.packages a {
+  display: block;
+  height: 100%;
   padding: 12px 14px;
   border-radius: 14px;
   background: var(--subtle);
+  color: inherit;
+  text-decoration: none;
+  transition: background-color 0.15s;
+}
+.packages a:hover {
+  background: var(--fill);
+}
+.packages a:focus-visible {
+  outline: 2px solid var(--lime-deep);
+  outline-offset: 2px;
+}
+/* The one for this computer, when the page can tell. */
+.packages a.yours {
+  box-shadow: inset 0 0 0 1.5px var(--lime-deep);
+}
+.download-note {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 14px;
+  text-align: center;
 }
 .packages strong {
   display: block;
@@ -714,6 +736,12 @@ footer a:hover {
   }
   .packages {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 420px) {
+  .packages {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

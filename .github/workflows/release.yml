@@ -100,3 +100,14 @@ jobs:
             \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.dmg' \))
           echo "$files"
           gh release upload "$GITHUB_REF_NAME" $files --clobber
+          # The same files without the version in their names (Mimi_aarch64.dmg,
+          # Mimi.x86_64.rpm…), so the website can link to
+          # releases/latest/download/<name> and always get the newest one.
+          version=${GITHUB_REF_NAME#v}
+          stable="$RUNNER_TEMP/stable"
+          mkdir -p "$stable"
+          for f in $files; do
+            name=$(basename "$f" | sed "s/_${version}_/_/; s/-${version}-1\././")
+            cp "$f" "$stable/$name"
+          done
+          gh release upload "$GITHUB_REF_NAME" "$stable"/* --clobber
