@@ -257,9 +257,9 @@ impl FakeMail {
                 "CAPABILITY" => {
                     let idle = if self.lock().idle { " IDLE" } else { "" };
                     out +=
-                        &format!("* CAPABILITY IMAP4rev1 MOVE UIDPLUS{idle}\r\n{tag} OK done\r\n");
+                        &*format!("* CAPABILITY IMAP4rev1 MOVE UIDPLUS{idle}\r\n{tag} OK done\r\n");
                 }
-                "NOOP" => out += &format!("{tag} OK done\r\n"),
+                "NOOP" => out += &*format!("{tag} OK done\r\n"),
                 "LOGOUT" => {
                     w.write_all(format!("* BYE bye\r\n{tag} OK done\r\n").as_bytes())
                         .await?;
@@ -276,13 +276,13 @@ impl FakeMail {
                         ok
                     };
                     authed = ok;
-                    out += &if ok {
+                    out += &*if ok {
                         format!("{tag} OK Logged in\r\n")
                     } else {
                         format!("{tag} NO [AUTHENTICATIONFAILED] Invalid credentials\r\n")
                     };
                 }
-                _ if !authed => out += &format!("{tag} BAD log in first\r\n"),
+                _ if !authed => out += &*format!("{tag} BAD log in first\r\n"),
                 "LIST" => {
                     let st = self.lock();
                     for mb in &st.mailboxes {
@@ -291,14 +291,14 @@ impl FakeMail {
                         } else {
                             format!("\\HasNoChildren {}", mb.special)
                         };
-                        out += &format!("* LIST ({attrs}) \"/\" \"{}\"\r\n", mb.name);
+                        out += &*format!("* LIST ({attrs}) \"/\" \"{}\"\r\n", mb.name);
                     }
-                    out += &format!("{tag} OK done\r\n");
+                    out += &*format!("{tag} OK done\r\n");
                 }
                 "CREATE" => {
                     let name = strings(&args).into_iter().next().unwrap_or_default();
                     self.lock().mailboxes.push(mailbox(&name, ""));
-                    out += &format!("{tag} OK done\r\n");
+                    out += &*format!("{tag} OK done\r\n");
                 }
                 "SELECT" | "EXAMINE" => {
                     let name = strings(&args).into_iter().next().unwrap_or_default();
@@ -310,7 +310,7 @@ impl FakeMail {
                     {
                         Some(mb) => {
                             selected = Some(mb.name.clone());
-                            out += &format!(
+                            out += &*format!(
                                 "* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n* {} EXISTS\r\n* 0 RECENT\r\n\
                                  * OK [UIDVALIDITY {}] UIDs valid\r\n* OK [UIDNEXT {}] next\r\n{tag} OK [READ-WRITE] done\r\n",
                                 mb.messages.len(),
@@ -318,7 +318,7 @@ impl FakeMail {
                                 mb.uid_next
                             );
                         }
-                        None => out += &format!("{tag} NO no such mailbox\r\n"),
+                        None => out += &*format!("{tag} NO no such mailbox\r\n"),
                     }
                 }
                 "APPEND" => {
@@ -341,7 +341,7 @@ impl FakeMail {
                     };
                     let raw = String::from_utf8_lossy(&buf).into_owned();
                     self.deliver(&name, &raw, crate::now_ms(), &flags);
-                    out += &format!("{tag} OK appended\r\n");
+                    out += &*format!("{tag} OK appended\r\n");
                 }
                 "UID" => {
                     let Some(mb) = selected.clone() else {
@@ -364,7 +364,7 @@ impl FakeMail {
                     {
                         return Ok(());
                     }
-                    out += &self.uid_command(&tag, &sub.to_uppercase(), rest, &mb);
+                    out += &*self.uid_command(&tag, &sub.to_uppercase(), rest, &mb);
                 }
                 "EXPUNGE" => {
                     if let Some(mb) = &selected {
@@ -374,12 +374,12 @@ impl FakeMail {
                         while seq > 0 {
                             if m.messages[seq - 1].flags.contains("\\Deleted") {
                                 m.messages.remove(seq - 1);
-                                out += &format!("* {seq} EXPUNGE\r\n");
+                                out += &*format!("* {seq} EXPUNGE\r\n");
                             }
                             seq -= 1;
                         }
                     }
-                    out += &format!("{tag} OK done\r\n");
+                    out += &*format!("{tag} OK done\r\n");
                 }
                 "IDLE" => {
                     let mb = selected.clone().unwrap_or_else(|| "INBOX".to_owned());
@@ -406,9 +406,9 @@ impl FakeMail {
                             }
                         }
                     }
-                    out += &format!("{tag} OK IDLE terminated\r\n");
+                    out += &*format!("{tag} OK IDLE terminated\r\n");
                 }
-                _ => out += &format!("{tag} BAD unknown command\r\n"),
+                _ => out += &*format!("{tag} BAD unknown command\r\n"),
             }
             w.write_all(out.as_bytes()).await?;
         }
@@ -448,7 +448,7 @@ impl FakeMail {
                     .map(|m| m.uid)
                     .collect();
                 let list: Vec<String> = hits.iter().map(u32::to_string).collect();
-                out += &format!("* SEARCH {}\r\n{tag} OK done\r\n", list.join(" "))
+                out += &*format!("* SEARCH {}\r\n{tag} OK done\r\n", list.join(" "))
                     .replace("SEARCH \r\n", "SEARCH\r\n");
             }
             "FETCH" => {
@@ -487,10 +487,10 @@ impl FakeMail {
                     }
                     let mut line = format!("* {} FETCH ({}", i + 1, parts.join(" "));
                     if let Some((name, body)) = literal {
-                        line += &format!(" {name} {{{}}}\r\n{body}", body.len());
+                        line += &*format!(" {name} {{{}}}\r\n{body}", body.len());
                     }
                     line += ")\r\n";
-                    out += &line;
+                    out += &*line;
                 }
                 if items.contains("BODY.PEEK[]") {
                     let sent = mb
@@ -500,7 +500,7 @@ impl FakeMail {
                         .count() as u32;
                     st.bodies_sent += sent;
                 }
-                out += &format!("{tag} OK done\r\n");
+                out += &*format!("{tag} OK done\r\n");
             }
             "STORE" => {
                 // UID STORE set +FLAGS.SILENT (\Seen)
@@ -528,7 +528,7 @@ impl FakeMail {
                         }
                     }
                 }
-                out += &format!("{tag} OK done\r\n");
+                out += &*format!("{tag} OK done\r\n");
             }
             "MOVE" | "COPY" => {
                 let (set, target) = rest.split_once(' ').unwrap_or((rest, ""));
@@ -554,14 +554,14 @@ impl FakeMail {
                     while seq > 0 {
                         if in_set(set, mb.messages[seq - 1].uid, max_uid) {
                             mb.messages.remove(seq - 1);
-                            out += &format!("* {seq} EXPUNGE\r\n");
+                            out += &*format!("* {seq} EXPUNGE\r\n");
                         }
                         seq -= 1;
                     }
                 }
-                out += &format!("{tag} OK done\r\n");
+                out += &*format!("{tag} OK done\r\n");
             }
-            _ => out += &format!("{tag} BAD unknown UID command\r\n"),
+            _ => out += &*format!("{tag} BAD unknown UID command\r\n"),
         }
         out
     }

@@ -3,7 +3,14 @@
 use mimi_protocol::{Integration, IntegrationCategory, IntegrationStatus};
 
 /// Integrations whose connection flow exists.
-const AVAILABLE: &[&str] = &["google_calendar", "caldav", "carddav", "telegram", "email"];
+const AVAILABLE: &[&str] = &[
+    "google_calendar",
+    "caldav",
+    "carddav",
+    "telegram",
+    "matrix",
+    "email",
+];
 
 /// The kinds of connection that make an integration connected. Address books come with
 /// the same account connection as calendars (CalDAV and CardDAV share the app password),
@@ -105,8 +112,12 @@ pub fn catalog() -> Vec<Integration> {
             "matrix",
             "Matrix",
             Messaging,
-            "Chat with Mimi on your own Matrix server.",
-            &["Receive your messages", "Reply to you"],
+            "Chat with your assistant from Element or any Matrix app, end-to-end encrypted, through an account only you can talk to.",
+            &[
+                "Chat with you, and only you",
+                "Ask you to approve actions: reply yes or no, or react",
+                "Send your reminders",
+            ],
         ),
         item(
             "whatsapp",

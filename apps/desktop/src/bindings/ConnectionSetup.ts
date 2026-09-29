@@ -4,7 +4,16 @@ import type { MailServers } from "./MailServers";
 /**
  * What the user entered to connect an integration.
  */
-export type ConnectionSetup = { "integration": "google_calendar", ics_url: string, } | { "integration": "caldav", server_url: string, username: string, password: string, } | { "integration": "telegram", bot_token: string, } | { "integration": "email", email: string, password: string, 
+export type ConnectionSetup = { "integration": "google_calendar", ics_url: string, } | { "integration": "caldav", server_url: string, username: string, password: string, } | { "integration": "telegram", bot_token: string, } | { "integration": "matrix", 
+/**
+ * The account's full address (`@name:example.org`), or just its name when
+ * `homeserver` says where it lives.
+ */
+user: string, password: string, 
+/**
+ * The server's address, when it can't be found from the account's address.
+ */
+homeserver: string | null, } | { "integration": "email", email: string, password: string, 
 /**
  * A preset id (`icloud`, `gmail`…); `None` picks one from the address.
  */

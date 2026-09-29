@@ -47,6 +47,16 @@ pub enum ConnectionSetup {
     },
     /// A Telegram bot created by the user with @BotFather.
     Telegram { bot_token: String },
+    /// A Matrix account the user created for their assistant, on any server.
+    Matrix {
+        /// The account's full address (`@name:example.org`), or just its name when
+        /// `homeserver` says where it lives.
+        user: String,
+        password: String,
+        /// The server's address, when it can't be found from the account's address.
+        #[serde(default)]
+        homeserver: Option<String>,
+    },
     /// An email account, read over IMAP and sent through SMTP with an app password.
     Email {
         email: String,

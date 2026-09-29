@@ -752,8 +752,8 @@ mod tests {
         let (mut content, mut reasoning) = (String::new(), String::new());
         for c in chunks {
             match c {
-                ChatChunk::Content(s) => content += &s,
-                ChatChunk::Reasoning(s) => reasoning += &s,
+                ChatChunk::Content(s) => content += &*s,
+                ChatChunk::Reasoning(s) => reasoning += &*s,
                 ChatChunk::ToolCalls(_) | ChatChunk::Replay(_) => {}
             }
         }

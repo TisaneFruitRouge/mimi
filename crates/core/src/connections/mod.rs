@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use self::calendar::google::GoogleAccountConfig;
 use self::calendar::{Account, CalDavConfig, GoogleConfig, caldav::CalDav};
+use self::matrix::MatrixConfig;
 use self::store::ConnectionRow;
 use self::telegram::{Bot, TelegramConfig};
 use crate::api::error::AppError;
@@ -18,6 +19,7 @@ use crate::db::DbError;
 use crate::{AppState, now_ms};
 
 pub mod calendar;
+pub mod matrix;
 pub mod store;
 pub mod telegram;
 
@@ -33,6 +35,8 @@ pub struct Connections {
     pub telegram_api: Mutex<String>,
     /// Prompts sent to apps without buttons, for matching replies and reactions.
     pub prompts: crate::channels::replies::Prompts,
+    /// Running Matrix clients.
+    pub matrix: matrix::Clients,
 }
 
 impl Default for Connections {
@@ -43,6 +47,7 @@ impl Default for Connections {
             feeds: Default::default(),
             telegram_api: Mutex::new(telegram::default_api()),
             prompts: Default::default(),
+            matrix: Default::default(),
         }
     }
 }
@@ -166,6 +171,13 @@ fn describe(row: &ConnectionRow) -> LiveStatus {
                 "Unreadable settings".to_owned(),
                 None,
             )),
+        matrix::MATRIX => serde_json::from_value::<MatrixConfig>(row.config.clone())
+            .map(|c| matrix::describe(&c))
+            .unwrap_or((
+                ConnectionStatus::Error,
+                "Unreadable settings".to_owned(),
+                None,
+            )),
         crate::mail::EMAIL => (ConnectionStatus::Ok, crate::mail::DETAIL.to_owned(), None),
         _ => (
             ConnectionStatus::Error,
@@ -269,6 +281,7 @@ async fn publish(state: &AppState) {
 
 /// Checks what the user entered against the real service, then saves it.
 pub async fn create(state: &Arc<AppState>, setup: ConnectionSetup) -> Result<Connection, AppError> {
+    let id = Uuid::now_v7();
     let (integration, name, config) = match setup {
         ConnectionSetup::GoogleCalendar { ics_url } => {
             let url = calendar::parse_ics_url(&ics_url).map_err(AppError::bad_request)?;
@@ -346,6 +359,17 @@ pub async fn create(state: &Arc<AppState>, setup: ConnectionSetup) -> Result<Con
                 serde_json::to_value(config),
             )
         }
+        ConnectionSetup::Matrix {
+            user,
+            password,
+            homeserver,
+        } => {
+            let (name, config) =
+                matrix::connect(state, id, &user, &password, homeserver.as_deref())
+                    .await
+                    .map_err(AppError::bad_request)?;
+            (matrix::MATRIX, name, serde_json::to_value(config))
+        }
         ConnectionSetup::Email {
             email,
             password,
@@ -369,7 +393,7 @@ pub async fn create(state: &Arc<AppState>, setup: ConnectionSetup) -> Result<Con
         }
     };
     let row = ConnectionRow {
-        id: Uuid::now_v7(),
+        id,
         integration: integration.to_owned(),
         name,
         config: config.map_err(AppError::internal)?,
@@ -414,6 +438,11 @@ pub async fn delete(state: &AppState, id: Uuid) -> Result<bool, DbError> {
             });
         }
     }
+    if let Some(r) = &row
+        && r.integration == matrix::MATRIX
+    {
+        matrix::forget(state, id, serde_json::from_value(r.config.clone()).ok()).await;
+    }
     if row.is_some_and(|r| r.integration == crate::mail::EMAIL) {
         crate::mail::forget(state, id).await;
     }
@@ -430,7 +459,8 @@ pub async fn start_all(state: &Arc<AppState>) {
 }
 
 fn start(state: &Arc<AppState>, row: &ConnectionRow) {
-    if row.integration != telegram::TELEGRAM && row.integration != crate::mail::EMAIL {
+    if ![telegram::TELEGRAM, matrix::MATRIX, crate::mail::EMAIL].contains(&row.integration.as_str())
+    {
         return;
     }
     let token = CancellationToken::new();
@@ -442,6 +472,8 @@ fn start(state: &Arc<AppState>, row: &ConnectionRow) {
         .insert(row.id, token.clone());
     if row.integration == telegram::TELEGRAM {
         tokio::spawn(telegram::run(state.clone(), row.id, token));
+    } else if row.integration == matrix::MATRIX {
+        tokio::spawn(matrix::run(state.clone(), row.id, token));
     } else {
         tokio::spawn(crate::mail::sync::run(state.clone(), row.id, token));
     }

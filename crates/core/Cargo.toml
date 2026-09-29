@@ -47,6 +47,8 @@ html5ever = "0.39"
 markup5ever_rcdom = "0.39.0"
 base64 = "0.22.1"
 url = "2"
+matrix-sdk = { version = "0.19.1", default-features = false, features = ["e2e-encryption", "automatic-room-key-forwarding", "sqlite", "rustls-aws-lc-rs"] }
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 
 [lints]
 workspace = true
