@@ -580,13 +580,17 @@ matrix.org or their own) and enters its address and password;
 - **Sync** (`run`): `sync_once` in a loop (30 s long polls; nothing listens for inbound
   connections). A handler task takes the events in order, so handling one (turning on
   encryption waits for the next sync) never holds up syncing. Messages from before the
-  connection was made are history, not requests (`since`); the sync token in the store
-  means a restart replays nothing. Unreachable → "Retrying…" with backoff (2 s → 5 min);
-  an unknown token (signed out elsewhere) → an error saying to connect again.
+  connection was made are history, not requests (`since`, with an hour's grace for a
+  server clock that's behind); the sync token in the store means a restart replays
+  nothing. The client is made once per task and kept across failed syncs (a store is
+  never open twice; replies being written keep using it). Unreachable → "Retrying…"
+  with backoff (2 s → 5 min); an unknown token (signed out elsewhere) → an error saying
+  to connect again, kept after restarts (`signed_out`).
 - **Pairing**: until paired the assistant joins every invitation but answers nothing
   except the exact six-digit code, sent in a room of two. Its sender becomes the owner
   (user id, display name, room). Then it leaves every other room, declines invitations
-  from anyone else, and turns end-to-end encryption on in the owner's chat if it's off
+  (the owner's too while their chat exists), and turns end-to-end encryption on in the
+  owner's chat if it's off
   (it usually can: Element makes both members admins of a direct chat). The welcome
   says honestly whether the chat is encrypted. If the owner leaves, the connection asks
   them to start a new chat; their next message in a new direct chat moves it there.

@@ -313,7 +313,8 @@ async fn sign_in(
         encrypted: false,
         cross_signed,
         signed_out: false,
-        since: now_ms(),
+        // With an hour's grace, in case the server's clock is behind this computer's.
+        since: now_ms() - 60 * 60 * 1000,
     };
     state.connections.matrix.hand_over(id, client);
     Ok((user_id, config))
@@ -471,11 +472,11 @@ pub fn trusted(config: &MatrixConfig, sealed: bool) -> bool {
 }
 
 /// Whether to accept an invitation: anyone's until paired (the code still has to come),
-/// then only the owner's.
+/// then only the owner's, to a new chat after they left theirs.
 pub fn accepts_invite(config: &MatrixConfig, inviter: Option<&str>) -> bool {
     match &config.owner {
         None => true,
-        Some(owner) => inviter == Some(owner.as_str()),
+        Some(owner) => inviter == Some(owner.as_str()) && config.room_id.is_none(),
     }
 }
 
@@ -525,72 +526,101 @@ enum Ended {
 /// Syncs the account until cancelled or signed out, reconnecting with backoff.
 pub async fn run(state: Arc<AppState>, id: Uuid, cancel: CancellationToken) {
     let mut backoff = Duration::from_secs(2);
-    loop {
-        let Ok(Some(row)) = store::get(&state.db, id).await else {
-            return;
-        };
-        let Ok(config) = serde_json::from_value::<MatrixConfig>(row.config.clone()) else {
+    // One client for the connection's whole life: its store must never be open twice,
+    // and replies still being written keep using it.
+    let client = loop {
+        let Some(config) = load(&state, id).await else {
             return;
         };
         if config.signed_out {
             return;
         }
-        let client = match state.connections.matrix.take_handoff(id) {
+        let opened = match state.connections.matrix.take_handoff(id) {
             Some(client) => Ok(client),
             None => open(&state, id, &config).await,
         };
-        let ended = match client {
-            Ok(client) => {
-                let live = Arc::new(Live {
-                    connection: id,
-                    client,
-                    state: Arc::downgrade(&state),
-                });
-                state.connections.matrix.insert(live.clone());
-                let ended = sync(&state, &live, config, &cancel, &mut backoff).await;
-                state.connections.matrix.remove(id, Some(&live));
-                ended
-            }
-            Err(e) if signed_out(&e) => Ended::SignedOut,
-            Err(_) => Ended::Failed,
-        };
-        match ended {
-            Ended::Cancelled => return,
-            Ended::SignedOut => {
-                if let Ok(Some(mut row)) = store::get(&state.db, id).await
-                    && let Ok(mut config) = serde_json::from_value::<MatrixConfig>(row.config)
-                {
-                    config.signed_out = true;
-                    let (status, detail, url) = describe(&config);
-                    row.config = serde_json::to_value(&config).expect("config serializes");
-                    let _ = store::upsert(&state.db, row).await;
-                    state
-                        .connections
-                        .set_status(&state, id, status, detail, url)
-                        .await;
+        match opened {
+            Ok(client) => break client,
+            Err(e) if signed_out(&e) => return mark_signed_out(&state, id).await,
+            Err(_) => {
+                if !retry_later(&state, id, &cancel, &mut backoff).await {
+                    return;
                 }
-                tracing::info!(connection = %id, "Matrix server stopped accepting the assistant's access");
-                return;
+            }
+        }
+    };
+    let live = Arc::new(Live {
+        connection: id,
+        client,
+        state: Arc::downgrade(&state),
+    });
+    state.connections.matrix.insert(live.clone());
+    loop {
+        // The handler saved whatever changed during the last sync.
+        let Some(config) = load(&state, id).await else {
+            break;
+        };
+        match sync(&state, &live, config, &cancel, &mut backoff).await {
+            Ended::Cancelled => break,
+            Ended::SignedOut => {
+                mark_signed_out(&state, id).await;
+                break;
             }
             Ended::Failed => {
-                state
-                    .connections
-                    .set_status(
-                        &state,
-                        id,
-                        ConnectionStatus::Error,
-                        "Can't reach your Matrix server right now. Retrying…".to_owned(),
-                        None,
-                    )
-                    .await;
-                tokio::select! {
-                    _ = tokio::time::sleep(backoff) => {},
-                    _ = cancel.cancelled() => return,
+                if !retry_later(&state, id, &cancel, &mut backoff).await {
+                    break;
                 }
-                backoff = (backoff * 2).min(Duration::from_secs(300));
             }
         }
     }
+    state.connections.matrix.remove(id, Some(&live));
+}
+
+async fn load(state: &AppState, id: Uuid) -> Option<MatrixConfig> {
+    let row = store::get(&state.db, id).await.ok()??;
+    serde_json::from_value(row.config).ok()
+}
+
+/// Says the server is unreachable and waits before the next try. False if cancelled.
+async fn retry_later(
+    state: &AppState,
+    id: Uuid,
+    cancel: &CancellationToken,
+    backoff: &mut Duration,
+) -> bool {
+    state
+        .connections
+        .set_status(
+            state,
+            id,
+            ConnectionStatus::Error,
+            "Can't reach your Matrix server right now. Retrying…".to_owned(),
+            None,
+        )
+        .await;
+    tokio::select! {
+        _ = tokio::time::sleep(*backoff) => {},
+        _ = cancel.cancelled() => return false,
+    }
+    *backoff = (*backoff * 2).min(Duration::from_secs(300));
+    true
+}
+
+/// The server stopped accepting the access token: say so, for good.
+async fn mark_signed_out(state: &AppState, id: Uuid) {
+    if let Ok(Some(mut row)) = store::get(&state.db, id).await
+        && let Ok(mut config) = serde_json::from_value::<MatrixConfig>(row.config)
+    {
+        config.signed_out = true;
+        let (status, detail, url) = describe(&config);
+        row.config = serde_json::to_value(&config).expect("config serializes");
+        let _ = store::upsert(&state.db, row).await;
+        state
+            .connections
+            .set_status(state, id, status, detail, url)
+            .await;
+    }
+    tracing::info!(connection = %id, "Matrix server stopped accepting the assistant's access");
 }
 
 /// Opens the connection's client from its store and session.

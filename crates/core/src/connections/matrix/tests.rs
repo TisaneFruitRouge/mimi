@@ -72,9 +72,13 @@ fn only_the_code_pairs_and_then_only_the_owner_counts() {
     assert_eq!(classify(&c, "!dm:x", "@me:x"), Sender::Owner);
     assert_eq!(classify(&c, "!other:x", "@me:x"), Sender::OwnerElsewhere);
     assert_eq!(classify(&c, "!dm:x", "@mallory:x"), Sender::Stranger);
-    assert!(accepts_invite(&c, Some("@me:x")));
+    // One chat with the owner at a time: a new one only after they left theirs.
+    assert!(!accepts_invite(&c, Some("@me:x")));
     assert!(!accepts_invite(&c, Some("@mallory:x")));
     assert!(!accepts_invite(&c, None));
+    c.room_id = None;
+    assert!(accepts_invite(&c, Some("@me:x")));
+    assert!(!accepts_invite(&c, Some("@mallory:x")));
 }
 
 #[test]
