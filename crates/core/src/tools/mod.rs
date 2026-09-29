@@ -279,6 +279,11 @@ impl Approvals {
         }
     }
 
+    /// Whether a card is still waiting for an answer.
+    pub fn is_waiting(&self, action_id: Uuid) -> bool {
+        lock(&self.waiting).contains_key(&action_id)
+    }
+
     pub fn forget(&self, action_id: Uuid) {
         lock(&self.waiting).remove(&action_id);
         lock(&self.offers).remove(&action_id);

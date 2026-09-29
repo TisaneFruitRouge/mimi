@@ -4,8 +4,8 @@
 //! Items store their schedule as a rule ([`rules`]); `next_at` is derived and recomputed
 //! whenever the rule, the clock or the time zone changes. One loop ([`run`]) sleeps until
 //! the next item is due (at most a minute at a time, so suspends and clock changes are
-//! noticed), then [`tick`]s: due reminders are delivered (Telegram with Done / Snooze
-//! buttons, a desktop notification, the app), due routines run as a chat turn in their
+//! noticed), then [`tick`]s: due reminders are delivered (every paired messaging app,
+//! with a way to mark them done or snooze them, a desktop notification, the app), due routines run as a chat turn in their
 //! own conversation and their answer is delivered the same way. Occurrences missed while
 //! the computer was off are sent once, marked late, if recent, and otherwise only
 //! recorded as missed: never a flood.
@@ -26,7 +26,7 @@ use uuid::Uuid;
 use self::rules::Fire;
 use self::store::Item;
 use crate::api::error::AppError;
-use crate::connections::telegram;
+use crate::channels::{self, Outgoing};
 use crate::{AppState, now_ms};
 
 pub mod notify;
@@ -336,29 +336,10 @@ fn deliver_reminder(state: &Arc<AppState>, item: &Item, due: i64, now: i64, fire
         state.events.publish(Event::ScheduleChanged);
         let late = (delivery.status == DeliveryStatus::Late)
             .then(|| format!("It was due at {}.", local_time(delivery.due_at)));
-        let mut channels = vec!["app"];
-
-        if let Some((bot, chat)) = telegram::owner(&state).await {
-            let html = format!(
-                "⏰ <b>{}</b>{}",
-                telegram::escape(&delivery.title),
-                late.as_ref()
-                    .map(|l| format!("\n<i>{l}</i>"))
-                    .unwrap_or_default()
-            );
-            let id = delivery.id;
-            let buttons = [
-                ("Done", format!("done:{id}")),
-                ("Snooze 10 min", format!("snooze:{id}")),
-                ("1 hour", format!("snooze60:{id}")),
-            ];
-            match bot.send_with_buttons(chat, &html, &buttons).await {
-                Ok(()) => channels.push("telegram"),
-                Err(e) => tracing::warn!("sending a reminder to Telegram failed: {e}"),
-            }
-        }
+        let mut reached = vec!["app"];
+        reached.extend(channels::remind_everywhere(&state, &delivery, late.as_deref()).await);
         if desktop_notifications(&state).await {
-            channels.push("desktop");
+            reached.push("desktop");
             notify::show(
                 "Reminder".to_owned(),
                 match &late {
@@ -368,7 +349,7 @@ fn deliver_reminder(state: &Arc<AppState>, item: &Item, due: i64, now: i64, fire
             )
             .await;
         }
-        tracing::info!(item = %delivery.item_id, ?channels, late = late.is_some(), "reminder delivered");
+        tracing::info!(item = %delivery.item_id, channels = ?reached, late = late.is_some(), "reminder delivered");
     });
 }
 
@@ -466,7 +447,7 @@ async fn run_routine(state: &Arc<AppState>, item: Item, due: i64, now: i64, fire
         }
     };
     let assistant = sent.assistant_message.id;
-    let owner = telegram::owner(state).await;
+    let owners = channels::owners(state).await;
     let mut announced = std::collections::HashSet::new();
     let deadline = tokio::time::sleep(ROUTINE_TIMEOUT);
     tokio::pin!(deadline);
@@ -474,12 +455,10 @@ async fn run_routine(state: &Arc<AppState>, item: Item, due: i64, now: i64, fire
         tokio::select! {
             event = events.recv() => match event {
                 Ok(Event::MessageUpdated { message }) if message.id == assistant => {
-                    // Approvals go where the user is: Telegram buttons and a desktop nudge.
+                    // Approvals go where the user is: their messaging apps and a desktop nudge.
                     for action in &message.actions {
                         if action.status == ActionStatus::PendingApproval && announced.insert(action.id) {
-                            if let Some((bot, chat)) = &owner {
-                                let _ = bot.ask_approval(*chat, action).await;
-                            }
+                            channels::ask_all(&owners, action).await;
                             if desktop_notifications(state).await {
                                 notify::show(format!("{} needs your OK", item.title), action.summary.clone()).await;
                             }
@@ -521,28 +500,11 @@ async fn run_routine(state: &Arc<AppState>, item: Item, due: i64, now: i64, fire
     }
 
     let content = message.content.trim();
-    if let Some((bot, chat)) = &owner {
-        let mut html = format!(
-            "<b>{}</b>\n\n{}",
-            telegram::escape(&item.title),
-            if content.is_empty() {
-                "(No answer.)".to_owned()
-            } else {
-                telegram::markdown_to_html(content)
-            }
-        );
-        for action in &message.actions {
-            if let Some(url) = action.output.as_ref().and_then(|o| o["open_url"].as_str()) {
-                html.push_str(&format!(
-                    "\n\n<a href=\"{}\">Open in Google Calendar to save it</a>",
-                    telegram::escape(url).replace('"', "&quot;")
-                ));
-            }
-        }
-        if let Err(e) = bot.send(*chat, &html).await {
-            tracing::warn!("sending a routine's result to Telegram failed: {e}");
-        }
-    }
+    channels::send_all(
+        &owners,
+        &Outgoing::reply(Some(item.title.clone()), &message),
+    )
+    .await;
     if desktop_notifications(state).await {
         notify::show(item.title.clone(), plain_preview(content, 180)).await;
     }

@@ -6,6 +6,7 @@ use std::time::Instant;
 use mimi_protocol::{KeyStorage, Paths};
 
 pub mod api;
+pub mod channels;
 pub mod chat;
 pub mod connections;
 pub mod daemon;

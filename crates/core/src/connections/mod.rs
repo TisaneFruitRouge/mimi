@@ -31,6 +31,8 @@ pub struct Connections {
     pub feeds: calendar::FeedCache,
     /// Where the Telegram Bot API lives; tests point it at a fake.
     pub telegram_api: Mutex<String>,
+    /// Prompts sent to apps without buttons, for matching replies and reactions.
+    pub prompts: crate::channels::replies::Prompts,
 }
 
 impl Default for Connections {
@@ -40,6 +42,7 @@ impl Default for Connections {
             tasks: Default::default(),
             feeds: Default::default(),
             telegram_api: Mutex::new(telegram::default_api()),
+            prompts: Default::default(),
         }
     }
 }
