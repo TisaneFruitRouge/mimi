@@ -140,22 +140,28 @@ pub async fn folders(session: &mut ImapSession) -> Result<Folders, MailError> {
 /// The account's sync loop. Runs until `token` is cancelled.
 pub async fn run(state: Arc<AppState>, id: Uuid, token: CancellationToken) {
     let poke = state.mail.poke_handle(id);
+    // Connections in a row that failed before syncing anything.
     let mut failures = 0u32;
     let mut first = true;
+    // Whether the account shows something other than "fine" (starting, or an error), to
+    // put back once a pass works.
+    let mut needs_ok = true;
     loop {
         let Some(account) = super::account(&state, id).await else {
             return;
         };
-        if first {
+        if std::mem::take(&mut first) {
             set_status(&state, id, ConnectionStatus::Ok, "Checking your mail…").await;
         }
+        let mut synced = false;
         let outcome = tokio::select! {
-            r = connected(&state, &account, &poke, &token, &mut first) => r,
+            r = connected(&state, &account, &poke, &token, &mut needs_ok, &mut synced) => r,
             _ = token.cancelled() => return,
         };
         let wait = match outcome {
             Ok(()) => return,
             Err(MailError::Login) => {
+                needs_ok = true;
                 set_status(
                     &state,
                     id,
@@ -165,10 +171,20 @@ pub async fn run(state: Arc<AppState>, id: Uuid, token: CancellationToken) {
                 .await;
                 Duration::from_secs(30 * 60)
             }
+            // Servers and home routers close connections that sit idle waiting for mail.
+            // One that had synced and then dropped isn't failing: reconnect without
+            // counting it, so the account doesn't end up showing an error while mail
+            // arrives fine.
+            Err(e) if synced => {
+                failures = 0;
+                tracing::info!(connection = %id, "mail connection dropped, reconnecting: {e}");
+                Duration::from_secs(30)
+            }
             Err(e) => {
                 failures += 1;
                 tracing::warn!(connection = %id, "mail sync failed: {e}");
                 if failures >= 3 {
+                    needs_ok = true;
                     set_status(
                         &state,
                         id,
@@ -201,7 +217,8 @@ async fn connected(
     account: &Account,
     poke: &tokio::sync::Notify,
     token: &CancellationToken,
-    first: &mut bool,
+    needs_ok: &mut bool,
+    synced: &mut bool,
 ) -> Result<(), MailError> {
     let mut session = session(&account.config).await?;
     let idle = session.capabilities().await.map_err(proto)?.has_str("IDLE");
@@ -209,7 +226,8 @@ async fn connected(
         tokio::time::timeout(PASS_TIMEOUT, pass(state, &mut session, account))
             .await
             .map_err(|_| MailError::Unreachable(account.config.servers.imap_host.clone()))??;
-        if std::mem::take(first) {
+        *synced = true;
+        if std::mem::take(needs_ok) {
             set_status(state, account.id, ConnectionStatus::Ok, super::DETAIL).await;
         }
         let wake = if idle {

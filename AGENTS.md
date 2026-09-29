@@ -271,8 +271,12 @@ than inventing their own.
   (at most 2,000 messages per mailbox on the first pass). New mail by UID above the
   stored high-water mark; flag changes and removals by a `(UID FLAGS)` sweep over what's
   stored; a new UIDVALIDITY refetches the mailbox. Then IDLE on the Inbox (10 minutes,
-  or until poked after a send/archive; polling every 2 minutes without IDLE). Backoff
-  30 s → 15 min; a refused password waits 30 minutes and says so on the connection.
+  or until poked after a send/archive; polling every 2 minutes without IDLE). A
+  connection that synced and then dropped (servers and routers close idle ones) just
+  reconnects after 30 s: it isn't a failure. Connections that fail before syncing back
+  off 30 s → 15 min and show an error from the third in a row, cleared by the next pass
+  that works (`dropped_idle_connections_are_not_errors`). A refused password waits 30
+  minutes and says so on the connection.
   Messages over 2 MB are stored with headers only.
 - **Storage** (`store.rs`, migration 0013): `mail_threads`, `mail_messages` (+
   `mail_fts`), `mail_sync`. Threading by In-Reply-To/References/Message-ID, then "Re:"

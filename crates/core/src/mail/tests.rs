@@ -2413,3 +2413,136 @@ async fn reply_drafts_follow_custom_instructions_but_summaries_dont() {
     assert!(!system(1).contains("Vincent"));
     assert!(!system(1).contains("dry jokes"));
 }
+
+/// What the account shows in Connections.
+async fn shown(state: &AppState, id: Uuid) -> (mimi_protocol::ConnectionStatus, String) {
+    let c = crate::connections::list(state)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.id == id)
+        .unwrap();
+    (c.status, c.detail)
+}
+
+/// Servers and home routers hang up on connections idling for news all the time. That
+/// is no error: the account keeps saying it's fine, and mail keeps coming.
+#[tokio::test]
+async fn dropped_idle_connections_are_not_errors() {
+    let fake = FakeMail::start(ME, PASSWORD).await;
+    let (state, account) = account_without_loop(&fake).await;
+    let token = tokio_util::sync::CancellationToken::new();
+    tokio::spawn(sync::run(state.clone(), account.id, token.clone()));
+    eventually("the first pass is done", async || {
+        shown(&state, account.id).await.1 == DETAIL
+    })
+    .await;
+
+    for n in 2..=5 {
+        fake.drop_idle_connection();
+        eventually("the server hangs up", async || {
+            !fake.state.lock().unwrap().drop_idle
+        })
+        .await;
+        eventually("it reconnects", async || {
+            // Skips the wait before reconnecting.
+            state.mail.poke(account.id);
+            fake.logins() >= n
+        })
+        .await;
+    }
+    let (status, detail) = shown(&state, account.id).await;
+    assert_eq!(status, mimi_protocol::ConnectionStatus::Ok);
+    assert_eq!(detail, DETAIL);
+
+    fake.deliver(
+        "INBOX",
+        &message(
+            "Sam <sam@example.com>",
+            ME,
+            "Still here",
+            "Hi",
+            "s1@example.com",
+            "",
+        ),
+        now_ms(),
+        &[],
+    );
+    eventually("new mail arrives", async || {
+        all_threads(&state).await.len() == 1
+    })
+    .await;
+    token.cancel();
+}
+
+/// Three connections in a row that can't sync show an error; the next pass that works
+/// takes it away.
+#[tokio::test]
+async fn an_error_clears_once_mail_syncs_again() {
+    let fake = FakeMail::start(ME, PASSWORD).await;
+    fake.deliver(
+        "INBOX",
+        &message(
+            "Sam <sam@example.com>",
+            ME,
+            "Hello",
+            "Hi",
+            "h1@example.com",
+            "",
+        ),
+        now_ms() - DAY,
+        &[],
+    );
+    let (state, account) = account_without_loop(&fake).await;
+    // The server goes away: its address answers nothing.
+    let closed = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let save = |port: u16| {
+        let (state, account) = (state.clone(), account.clone());
+        async move {
+            let mut config = account.config.clone();
+            config.servers.imap_port = port;
+            crate::connections::store::upsert(
+                &state.db,
+                crate::connections::store::ConnectionRow {
+                    id: account.id,
+                    integration: EMAIL.to_owned(),
+                    name: account.name.clone(),
+                    config: serde_json::to_value(&config).unwrap(),
+                    created_at: now_ms(),
+                },
+            )
+            .await
+            .unwrap();
+        }
+    };
+    let token = tokio_util::sync::CancellationToken::new();
+    tokio::spawn(sync::run(state.clone(), account.id, token.clone()));
+    eventually("the first pass is done", async || {
+        shown(&state, account.id).await.1 == DETAIL
+    })
+    .await;
+    save(closed).await;
+    fake.drop_idle_connection();
+    eventually("the server hangs up", async || {
+        !fake.state.lock().unwrap().drop_idle
+    })
+    .await;
+    eventually("three failures show an error", async || {
+        state.mail.poke(account.id);
+        shown(&state, account.id).await.0 == mimi_protocol::ConnectionStatus::Error
+    })
+    .await;
+
+    // It's back.
+    save(fake.imap_port).await;
+    eventually("a pass that works clears it", async || {
+        state.mail.poke(account.id);
+        shown(&state, account.id).await == (mimi_protocol::ConnectionStatus::Ok, DETAIL.to_owned())
+    })
+    .await;
+    assert_eq!(all_threads(&state).await.len(), 1);
+    token.cancel();
+}

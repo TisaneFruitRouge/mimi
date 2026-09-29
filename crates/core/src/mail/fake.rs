@@ -50,6 +50,8 @@ pub struct State {
     pub unreadable: Option<u32>,
     /// Whole messages handed over so far.
     pub bodies_sent: u32,
+    /// Hang up on the next connection that's idling, as servers and routers do.
+    pub drop_idle: bool,
 }
 
 pub struct FakeMail {
@@ -93,6 +95,7 @@ impl FakeMail {
                 idle: true,
                 unreadable: None,
                 bodies_sent: 0,
+                drop_idle: false,
             }),
             imap_port: imap.local_addr().unwrap().port(),
             smtp_port: smtp.local_addr().unwrap().port(),
@@ -208,6 +211,11 @@ impl FakeMail {
     /// Whether the IMAP server advertises IDLE.
     pub fn set_idle(&self, on: bool) {
         self.lock().idle = on;
+    }
+
+    /// Hangs up on the next connection that's idling (within 50 ms, or when one starts).
+    pub fn drop_idle_connection(&self) {
+        self.lock().drop_idle = true;
     }
 
     /// Makes fetching one message fail (`None`: none), as a flaky server might.
@@ -387,6 +395,9 @@ impl FakeMail {
                                 break;
                             }
                             _ = tokio::time::sleep(Duration::from_millis(50)) => {
+                                if std::mem::take(&mut self.lock().drop_idle) {
+                                    return Ok(());
+                                }
                                 let now = self.exists(&mb);
                                 if now != known {
                                     known = now;
