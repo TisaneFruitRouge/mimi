@@ -47,6 +47,9 @@ pub enum ConnectionSetup {
     },
     /// A Telegram bot created by the user with @BotFather.
     Telegram { bot_token: String },
+    /// The user's own Signal account, linked as a device. Nothing to enter: the
+    /// connection then shows a code to scan (its `action_url`, as a QR code).
+    Signal {},
     /// An email account, read over IMAP and sent through SMTP with an app password.
     Email {
         email: String,

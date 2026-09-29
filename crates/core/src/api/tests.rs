@@ -4912,3 +4912,168 @@ mod calendar_guests {
         assert_eq!(status, 200);
     }
 }
+
+// --- Signal ------------------------------------------------------------------------
+
+mod signal_flow {
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    use serde_json::json;
+    use uuid::Uuid;
+
+    use super::tool_use::{Reply, scripted_llm, setup};
+    use crate::channels;
+    use crate::connections::signal;
+    use crate::connections::signal::classify::Incoming;
+    use crate::connections::signal::worker::{Pieces, Worker};
+    use crate::connections::store::{self as rows, ConnectionRow};
+    use mimi_protocol::{Delivery, DeliveryStatus, ScheduleKind};
+
+    async fn next(sent: &mut tokio::sync::mpsc::UnboundedReceiver<Pieces>) -> Pieces {
+        tokio::time::timeout(Duration::from_secs(10), sent.recv())
+            .await
+            .expect("something was sent to Signal")
+            .unwrap()
+    }
+
+    fn text(pieces: &Pieces) -> String {
+        pieces.iter().map(|(t, _)| t.as_str()).collect()
+    }
+
+    /// Note to Self, driven with a stand-in for the Signal client: a message becomes a
+    /// chat turn, the approval it needs is asked there and answered with a reaction, and
+    /// the reply comes back headed with the assistant's name.
+    #[tokio::test]
+    async fn note_to_self_talks_with_the_assistant() {
+        let llm = scripted_llm(|_, n| match n {
+            0 => Reply::Call("send_note", json!({"to": "Sam"})),
+            _ => Reply::Text("Done, I **sent** it."),
+        })
+        .await;
+        let (h, _reads, writes) = setup(&llm).await;
+        let state = h.state.clone();
+        let id = Uuid::now_v7();
+        rows::upsert(
+            &state.db,
+            ConnectionRow {
+                id,
+                integration: signal::SIGNAL.into(),
+                name: "Signal".into(),
+                config: json!({"account": {"aci": Uuid::now_v7(), "name": "Vincent"}}),
+                created_at: 0,
+            },
+        )
+        .await
+        .unwrap();
+        let (worker, mut sent) = Worker::detached();
+        state.connections.signal.set(id, worker.clone());
+        let note = |text: &str| Incoming::Note {
+            text: text.into(),
+            quote: None,
+            timestamp: 1,
+        };
+
+        signal::on_message(&state, id, &worker, note("Please send Sam a note")).await;
+        let prompt = next(&mut sent).await;
+        let prompt_text = text(&prompt);
+        assert!(
+            prompt_text.starts_with("Mimi\nWaiting for you\n"),
+            "{prompt_text}"
+        );
+        assert!(prompt_text.contains("Reply yes or no"), "{prompt_text}");
+        assert_eq!(
+            writes.load(Ordering::SeqCst),
+            0,
+            "nothing runs before approval"
+        );
+
+        // Someone reacting to another message changes nothing; 👍 on the prompt approves.
+        signal::on_message(
+            &state,
+            id,
+            &worker,
+            Incoming::Reaction {
+                emoji: "👍".into(),
+                target: 5,
+            },
+        )
+        .await;
+        // The stand-in numbers what it sends from 1001.
+        signal::on_message(
+            &state,
+            id,
+            &worker,
+            Incoming::Reaction {
+                emoji: "👍".into(),
+                target: 1001,
+            },
+        )
+        .await;
+        assert_eq!(text(&next(&mut sent).await), "Mimi\n✅ Approved");
+        let reply = next(&mut sent).await;
+        assert_eq!(text(&reply), "Mimi\nDone, I sent it.");
+        // The name and "sent" are bold, as Signal styles.
+        let (reply_text, ranges) = &reply[0];
+        let bold: Vec<String> = ranges
+            .iter()
+            .map(|r| {
+                let units: Vec<u16> = reply_text.encode_utf16().collect();
+                let (s, l) = (r.start.unwrap() as usize, r.length.unwrap() as usize);
+                String::from_utf16(&units[s..s + l]).unwrap()
+            })
+            .collect();
+        assert_eq!(bold, vec!["Mimi", "sent"]);
+        assert_eq!(writes.load(Ordering::SeqCst), 1);
+
+        // The chat went to a "Signal" conversation, which /new replaces.
+        let config: signal::SignalConfig =
+            serde_json::from_value(rows::get(&state.db, id).await.unwrap().unwrap().config)
+                .unwrap();
+        let conversation = config.conversation_id.expect("a Signal conversation");
+        let messages = crate::chat::store::messages(&state.db, conversation)
+            .await
+            .unwrap();
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.content == "Please send Sam a note")
+        );
+        signal::on_message(&state, id, &worker, note("/new")).await;
+        assert_eq!(
+            text(&next(&mut sent).await),
+            "Mimi\nStarted a new conversation."
+        );
+        let config: signal::SignalConfig =
+            serde_json::from_value(rows::get(&state.db, id).await.unwrap().unwrap().config)
+                .unwrap();
+        assert_eq!(config.conversation_id, None);
+
+        // Reminders reach Signal too, and a reply or reaction to one answers it.
+        let delivery = Delivery {
+            id: Uuid::now_v7(),
+            item_id: Uuid::now_v7(),
+            kind: ScheduleKind::Reminder,
+            title: "Call the dentist".into(),
+            due_at: 0,
+            at: 0,
+            status: DeliveryStatus::Delivered,
+            detail: None,
+            conversation_id: None,
+        };
+        assert_eq!(
+            channels::remind_everywhere(&state, &delivery, None).await,
+            vec!["signal"]
+        );
+        let reminder = text(&next(&mut sent).await);
+        assert!(
+            reminder.starts_with("Mimi\n⏰ Call the dentist"),
+            "{reminder}"
+        );
+        assert!(reminder.contains("snooze 1h"), "{reminder}");
+        assert_eq!(
+            state.connections.prompts.target_of(id, "1005"),
+            Some(channels::replies::Target::Reminder(delivery.id))
+        );
+    }
+}

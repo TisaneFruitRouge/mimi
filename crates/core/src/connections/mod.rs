@@ -33,7 +33,9 @@ pub struct Connections {
     /// Where the Telegram Bot API lives; tests point it at a fake.
     pub telegram_api: Mutex<String>,
     /// Prompts sent to apps without buttons, for matching replies and reactions.
-    pub prompts: crate::channels::replies::Prompts,
+    pub prompts: Arc<crate::channels::replies::Prompts>,
+    /// The running Signal clients.
+    pub signal: signal::Workers,
 }
 
 impl Default for Connections {
@@ -44,6 +46,7 @@ impl Default for Connections {
             feeds: Default::default(),
             telegram_api: Mutex::new(telegram::default_api()),
             prompts: Default::default(),
+            signal: Default::default(),
         }
     }
 }
@@ -72,6 +75,15 @@ impl Connections {
         if changed {
             publish(state).await;
         }
+    }
+
+    /// The live status of a connection, if something set one.
+    fn live(&self, id: Uuid) -> Option<LiveStatus> {
+        self.status
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&id)
+            .cloned()
     }
 
     fn stop(&self, id: Uuid) {
@@ -168,6 +180,13 @@ fn describe(row: &ConnectionRow) -> LiveStatus {
                 None,
             )),
         crate::mail::EMAIL => (ConnectionStatus::Ok, crate::mail::DETAIL.to_owned(), None),
+        signal::SIGNAL => serde_json::from_value::<signal::SignalConfig>(row.config.clone())
+            .map(|c| signal::describe(&c))
+            .unwrap_or((
+                ConnectionStatus::Error,
+                "Unreadable settings".to_owned(),
+                None,
+            )),
         _ => (
             ConnectionStatus::Error,
             "Unknown integration".to_owned(),
@@ -368,6 +387,8 @@ pub async fn create(state: &Arc<AppState>, setup: ConnectionSetup) -> Result<Con
             }
             (crate::mail::EMAIL, name, serde_json::to_value(config))
         }
+        // Linking happens after the row is saved: the user scans a code the daemon shows.
+        ConnectionSetup::Signal {} => return signal::connect(state).await,
     };
     let row = ConnectionRow {
         id: Uuid::now_v7(),
@@ -431,21 +452,20 @@ pub async fn start_all(state: &Arc<AppState>) {
 }
 
 fn start(state: &Arc<AppState>, row: &ConnectionRow) {
-    if row.integration != telegram::TELEGRAM && row.integration != crate::mail::EMAIL {
-        return;
-    }
     let token = CancellationToken::new();
+    let (s, id, t) = (state.clone(), row.id, token.clone());
+    match row.integration.as_str() {
+        telegram::TELEGRAM => tokio::spawn(telegram::run(s, id, t)),
+        signal::SIGNAL => tokio::spawn(signal::run(s, id, t)),
+        crate::mail::EMAIL => tokio::spawn(crate::mail::sync::run(s, id, t)),
+        _ => return,
+    };
     state
         .connections
         .tasks
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .insert(row.id, token.clone());
-    if row.integration == telegram::TELEGRAM {
-        tokio::spawn(telegram::run(state.clone(), row.id, token));
-    } else {
-        tokio::spawn(crate::mail::sync::run(state.clone(), row.id, token));
-    }
+        .insert(row.id, token);
 }
 
 /// Every connected calendar account.

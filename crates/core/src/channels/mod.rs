@@ -101,6 +101,7 @@ pub fn open_links(actions: &[Action]) -> Vec<Link> {
 pub async fn owners(state: &AppState) -> Vec<Arc<dyn Channel>> {
     let mut all: Vec<Arc<dyn Channel>> = Vec::new();
     all.extend(crate::connections::telegram::owners(state).await);
+    all.extend(crate::connections::signal::owners(state).await);
     all
 }
 
