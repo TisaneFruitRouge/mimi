@@ -16,4 +16,9 @@ color: string,
  * Events are saved straight into it. Google calendars aren't: new events open in
  * Google Calendar for the user to save.
  */
-writable: boolean, google: boolean, };
+writable: boolean, google: boolean, 
+/**
+ * People can be invited to events saved in it (guests). False for calendars read
+ * through a private address, and for CalDAV accounts Mimi has no email address for.
+ */
+guests: boolean, };

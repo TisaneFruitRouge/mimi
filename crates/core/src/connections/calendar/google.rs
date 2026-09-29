@@ -25,6 +25,8 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use mimi_protocol::GuestResponse;
+
 use super::NewEvent;
 use super::ics::{Attendee, CalEvent};
 use crate::AppState;
@@ -428,9 +430,15 @@ struct GEvent {
     start: Option<GTime>,
     end: Option<GTime>,
     recurring_event_id: Option<String>,
+    /// Kept as Google sends them, so a change can give them back unchanged.
     #[serde(default)]
-    attendees: Vec<GPerson>,
+    attendees: Vec<Value>,
     organizer: Option<GPerson>,
+    #[serde(rename = "iCalUID")]
+    ical_uid: Option<String>,
+    sequence: Option<u32>,
+    /// An occurrence's start before it was moved (its `RECURRENCE-ID`).
+    original_start_time: Option<GTime>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -445,6 +453,10 @@ struct GTime {
 struct GPerson {
     email: Option<String>,
     display_name: Option<String>,
+    response_status: Option<String>,
+    /// This is the signed-in account (or the calendar the copy is in).
+    #[serde(rename = "self", default)]
+    me: bool,
 }
 
 impl GTime {
@@ -468,7 +480,19 @@ fn person(p: &GPerson) -> Option<Attendee> {
             .clone()
             .filter(|n| !n.trim().is_empty() && !n.eq_ignore_ascii_case(&email)),
         email,
+        response: match p.response_status.as_deref() {
+            Some("accepted") => Some(GuestResponse::Accepted),
+            Some("declined") => Some(GuestResponse::Declined),
+            Some("tentative") => Some(GuestResponse::Tentative),
+            Some("needsAction") => Some(GuestResponse::Pending),
+            _ => None,
+        },
+        me: p.me,
     })
+}
+
+fn attendee_of(v: &Value) -> Option<Attendee> {
+    person(&serde_json::from_value::<GPerson>(v.clone()).ok()?)
 }
 
 /// One occurrence as the rest of Mimi reads events. `uid` is the series' id, so an
@@ -496,8 +520,9 @@ fn to_cal_event(e: GEvent, calendar: &str) -> Option<CalEvent> {
         notes: text(e.description),
         calendar: calendar.to_owned(),
         calendar_id: String::new(),
-        attendees: e.attendees.iter().filter_map(person).collect(),
+        attendees: e.attendees.iter().filter_map(attendee_of).collect(),
         organizer: e.organizer.as_ref().and_then(person),
+        repeats: e.recurring_event_id.is_some(),
     })
 }
 
@@ -585,9 +610,34 @@ fn event_body(event: &NewEvent) -> Value {
     if let Some(n) = &event.notes {
         body["description"] = json!(n);
     }
+    if !event.guests.is_empty() {
+        body["attendees"] = json!(
+            event
+                .guests
+                .iter()
+                .map(|g| guest_json(&g.email, g.name.as_deref()))
+                .collect::<Vec<_>>()
+        );
+    }
     body
 }
 
+fn guest_json(email: &str, name: Option<&str>) -> Value {
+    let mut v = json!({ "email": email });
+    if let Some(n) = name {
+        v["displayName"] = json!(n);
+    }
+    v
+}
+
+/// Every write tells Google to email nobody: invitations, updates and cancellations are
+/// the user's to send, through Mimi's own mail, when they say so.
+fn quietly(mut url: Url) -> Url {
+    url.query_pairs_mut().append_pair("sendUpdates", "none");
+    url
+}
+
+/// Adds an event; returns Google's id for it and the UID other calendars know it by.
 pub async fn insert(
     access: &GoogleAccess,
     http: &reqwest::Client,
@@ -595,9 +645,9 @@ pub async fn insert(
     config: &GoogleAccountConfig,
     calendar: &GoogleCalendar,
     event: &NewEvent,
-) -> Result<(), GoogleError> {
-    let url = access.url(&["calendars", &calendar.id, "events"])?;
-    access
+) -> Result<(String, String), GoogleError> {
+    let url = quietly(access.url(&["calendars", &calendar.id, "events"])?);
+    let saved = access
         .api(
             http,
             account,
@@ -606,8 +656,17 @@ pub async fn insert(
             url,
             Some(&event_body(event)),
         )
-        .await
-        .map(|_| ())
+        .await?
+        .unwrap_or(Value::Null);
+    let id = saved["id"]
+        .as_str()
+        .ok_or_else(|| GoogleError::Other("Google answered in a way Mimi can't read.".to_owned()))?
+        .to_owned();
+    let ical_uid = saved["iCalUID"]
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("{id}@google.com"));
+    Ok((id, ical_uid))
 }
 
 /// One occurrence found again: as Mimi reads it, Google's id for it, and whether it's
@@ -616,6 +675,12 @@ pub struct Occurrence {
     pub event: CalEvent,
     pub id: String,
     pub repeats: bool,
+    pub ical_uid: String,
+    pub sequence: u32,
+    /// For an occurrence of a series: its original start.
+    pub original_start: Option<DateTime<Utc>>,
+    /// The guests as Google has them.
+    pub attendees: Vec<Value>,
 }
 
 /// The occurrence of series (or single event) `uid` starting at `start`.
@@ -649,10 +714,27 @@ pub async fn find_occurrence(
         .and_then(|e| {
             let id = e.id.clone();
             let repeats = e.recurring_event_id.is_some();
+            let ical_uid = e.ical_uid.clone().unwrap_or_else(|| {
+                format!(
+                    "{}@google.com",
+                    e.recurring_event_id.as_ref().unwrap_or(&e.id)
+                )
+            });
+            let sequence = e.sequence.unwrap_or(0);
+            let original_start = e
+                .original_start_time
+                .as_ref()
+                .and_then(GTime::instant)
+                .filter(|_| repeats);
+            let attendees = e.attendees.clone();
             Some(Occurrence {
                 event: to_cal_event(e, &calendar.name)?,
                 id,
                 repeats,
+                ical_uid,
+                sequence,
+                original_start,
+                attendees,
             })
         })
         .ok_or(GoogleError::NotFound)
@@ -669,7 +751,7 @@ pub async fn patch(
     event_id: &str,
     fields: &Value,
 ) -> Result<(), GoogleError> {
-    let url = access.url(&["calendars", &calendar.id, "events", event_id])?;
+    let url = quietly(access.url(&["calendars", &calendar.id, "events", event_id])?);
     access
         .api(http, account, config, Method::PATCH, url, Some(fields))
         .await
@@ -684,7 +766,7 @@ pub async fn delete(
     calendar: &GoogleCalendar,
     event_id: &str,
 ) -> Result<(), GoogleError> {
-    let url = access.url(&["calendars", &calendar.id, "events", event_id])?;
+    let url = quietly(access.url(&["calendars", &calendar.id, "events", event_id])?);
     match access
         .api(http, account, config, Method::DELETE, url, None)
         .await
@@ -695,8 +777,10 @@ pub async fn delete(
     }
 }
 
-/// Changes as Google's event fields.
-pub fn patch_fields(changes: &super::edit::Changes) -> Value {
+/// Changes as Google's event fields. `current` is the event's guest list as Google has
+/// it: guests who stay are given back exactly as they were (answers included), since
+/// Google replaces the whole list.
+pub fn patch_fields(changes: &super::edit::Changes, current: &[Value]) -> Value {
     let mut body = json!({});
     if let Some(t) = &changes.title {
         body["summary"] = json!(t);
@@ -710,6 +794,31 @@ pub fn patch_fields(changes: &super::edit::Changes) -> Value {
     }
     if let Some(n) = &changes.notes {
         body["description"] = json!(n.trim());
+    }
+    if let Some(list) = &changes.guests {
+        let mut attendees: Vec<Value> = Vec::new();
+        for v in current {
+            let email = v["email"].as_str().map(str::to_lowercase);
+            let stays = match &email {
+                Some(e) => list.iter().any(|g| &g.email == e),
+                // Rooms and resources without an address stay.
+                None => true,
+            };
+            if stays || v["resource"] == json!(true) {
+                attendees.push(v.clone());
+            }
+        }
+        for g in list {
+            let known = current.iter().any(|v| {
+                v["email"]
+                    .as_str()
+                    .is_some_and(|e| e.eq_ignore_ascii_case(&g.email))
+            });
+            if !known {
+                attendees.push(guest_json(&g.email, g.name.as_deref()));
+            }
+        }
+        body["attendees"] = json!(attendees);
     }
     body
 }

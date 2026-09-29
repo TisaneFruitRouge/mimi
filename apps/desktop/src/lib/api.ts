@@ -50,7 +50,12 @@ import type { MailThreadDetail } from "@/bindings/MailThreadDetail";
 import type { CalendarEvents } from "@/bindings/CalendarEvents";
 import type { CalendarInfo } from "@/bindings/CalendarInfo";
 import type { CreatedEvent } from "@/bindings/CreatedEvent";
+import type { EventChange } from "@/bindings/EventChange";
+import type { EventChanged } from "@/bindings/EventChanged";
+import type { GuestSuggestion } from "@/bindings/GuestSuggestion";
+import type { InvitationOffer } from "@/bindings/InvitationOffer";
 import type { NewCalendarEvent } from "@/bindings/NewCalendarEvent";
+import type { SendInvitations } from "@/bindings/SendInvitations";
 import type { PersonConversation } from "@/bindings/PersonConversation";
 import type { GoogleSignIn } from "@/bindings/GoogleSignIn";
 import type { GoogleSignInInfo } from "@/bindings/GoogleSignInInfo";
@@ -225,6 +230,26 @@ export const api = {
   events: (from: number, to: number) =>
     call<CalendarEvents>("GET", `/calendar/events?from=${from}&to=${to}`),
   addEvent: (e: NewCalendarEvent) => call<CreatedEvent>("POST", "/calendar/events", e),
+  /** Changes one occurrence; only the fields given change. Nobody is emailed. */
+  changeEvent: (id: string, change: EventChange) =>
+    call<EventChanged>("PATCH", `/calendar/events/${encodeURIComponent(id)}`, change),
+  /** Removes one occurrence, or (`all`) the whole repeating event. Nobody is emailed. */
+  removeEvent: (id: string, all = false) =>
+    call<EventChanged>(
+      "DELETE",
+      `/calendar/events/${encodeURIComponent(id)}${all ? "?which=all" : ""}`,
+    ),
+  /** The invitation for an event's guests as it is now, ready to send. */
+  offerInvitations: (eventId: string) =>
+    call<InvitationOffer>("POST", `/calendar/events/${encodeURIComponent(eventId)}/invitations`),
+  invitation: (id: string) => call<InvitationOffer>("GET", `/calendar/invitations/${id}`),
+  /** The user's own click: sends from their email account, to all or only `guests`. */
+  sendInvitations: (id: string, guests?: string[]) =>
+    call<InvitationOffer>("POST", `/calendar/invitations/${id}/send`, {
+      guests: guests ?? null,
+    } satisfies SendInvitations),
+  guestSuggestions: (q: string) =>
+    call<GuestSuggestion[]>("GET", `/calendar/guests?q=${encodeURIComponent(q)}`),
   /** @ suggestions (people and events), or # suggestions (conversations and emails). */
   mentions: (q: string, kind: MentionSigil = "@") =>
     call<MentionCandidate[]>(
@@ -344,4 +369,7 @@ export const keys = {
   calendar: ["calendar"] as const,
   calendars: ["calendar", "list"] as const,
   events: (from: number, to: number) => ["calendar", "events", from, to] as const,
+  invitation: (id: string) => ["calendar", "invitation", id] as const,
+  /** People to suggest as guests: under "people", so changes to People refresh them. */
+  guestSuggestions: (q: string) => ["people", "guests", q] as const,
 };

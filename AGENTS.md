@@ -160,7 +160,9 @@ than inventing their own.
   Things with their own menu wrap themselves in `ContextMenu` (a mail conversation, a
   message, a smart folder, a chat message, a person; `ThingMenu` for "Open / Ask about
   this"; in Calendar an event: open, remind me before (upcoming only), remove its
-  reminders, ask, copy details, hide its calendar; a reminder or routine: `ItemMenu`;
+  reminders, ask, copy details, then edit, send invitations (the user's own events with
+  guests) and delete for calendars written from here, hide its calendar; a reminder or
+  routine: `ItemMenu`;
   an empty slot of the week grid: new event at that time, new reminder, navigation,
   view); the innermost wins, and `AppContextMenu` around the shell covers the
   rest (Copy / Ask about the selected text, New chat, Search, Settings). Text fields keep
@@ -213,6 +215,18 @@ than inventing their own.
   with ETags; one occurrence of a series is changed with an override or `EXDATE`
   (`calendar/edit.rs`). Recurrence is expanded locally (`calendar/ics.rs`) for iCal and
   CalDAV, by Google itself for signed-in Google. Setup notes: `docs/google-oauth.md`.
+- **Guests** (`calendar/guests.rs`, `calendar/invite.rs`; details in `docs/architecture.md`
+  › Calendars › Guests and invitations): calendars never email anyone. Google writes
+  always pass `sendUpdates=none`; CalDAV writes `ORGANIZER` (the CalDAV username when
+  it's an address, else the first email account; without one, no guests, and the note
+  says why) and `ATTENDEE`s with `SCHEDULE-AGENT=CLIENT`, and `edit::quiet` adds that
+  to existing guests of the user's own events before any write or delete. Guests who
+  stay keep their entry (answer included). Guests come as addresses, person ids, or a
+  name only when it comes down to one address (`guests::resolve`: never a guess). They
+  change only on events the user organizes (`CalendarEvent.mine`), one occurrence of a
+  series at a time. Each write with guests records *offers* (`calendar_invitations`,
+  migration 0022: invite, update, cancel, uninvite) that the user sends with a click or
+  the assistant with `calendar_send_invitations`; RSVPs aren't processed.
 - Telegram is a bot the user creates with @BotFather, long-polled (nothing listens for
   inbound connections). A one-time `/start <code>` pairs it with its owner; every other
   chat is ignored. Messages go into a "Telegram" conversation; approval cards are sent as
@@ -221,12 +235,17 @@ than inventing their own.
   writable), `GET /v1/calendar/events?from&to` (ms, at most ~a year; events of every
   calendar merged, recurrence expanded, organizer/guests matched to People by email),
   `POST /v1/calendar/events` (CalDAV and signed-in Google: saved; Google by address:
-  returns the pre-filled page to open). Calendar ids are stable
+  returns the pre-filled page to open), `PATCH|DELETE /v1/calendar/events/{id}` (one
+  occurrence; `?which=all` deletes a series), `POST /calendar/events/{id}/invitations`
+  (a fresh offer for its guests), `GET /calendar/invitations/{id}`, `POST
+  /calendar/invitations/{id}/send` (the user's click is the approval, like `/mail/send`),
+  `GET /calendar/guests?q=` (People by address, for the Guests field). Writes answer
+  with the offers they made; nothing is emailed. Calendar ids are stable
   (`calendar::calendar_id`: connection id, plus a hash of the collection or Google
-  calendar id); every `CalEvent` carries its `calendar_id`. Adding an event from the
-  panel is the user's own action, so it needs no approval card; the assistant's
-  `calendar_add_event`, `calendar_change_event` and `calendar_delete_event` do, unless
-  Permissions allow them.
+  calendar id); every `CalEvent` carries its `calendar_id`. Adding, changing or deleting
+  an event from the panel is the user's own action, so it needs no approval card; the
+  assistant's `calendar_add_event`, `calendar_change_event` and `calendar_delete_event`
+  do, unless Permissions allow them.
 - Never log feed URLs, tokens or passwords (reqwest errors include URLs: map them).
 - Tests fake the outside world: Radicale (`uvx radicale --auth-type=none`) for CalDAV
   (`MIMI_TEST_CALDAV=http://127.0.0.1:5232/ cargo test -p mimi-core live_caldav --
@@ -349,6 +368,13 @@ than inventing their own.
   seeded mail on 127.0.0.1:3143 (IMAP) / 3025 (SMTP) as `me@example.org` / `app-pass`
   (connect with "Other", security "None"). Never point tests at a real mailbox.
 
+- **Invitations** (`calendar/invite.rs`) go out through this mail: one iMIP message
+  (RFC 6047) per offer to all its guests, from the account whose address organizes the
+  event (else the first one, and the offer says so): plain text plus the event as
+  `text/calendar; method=REQUEST|CANCEL`, inline and as `invite.ics`. `SEQUENCE` is the
+  calendar's, kept above the last one sent for that UID and occurrence. Filed in Sent
+  like any other email; each offer is sent once.
+
 - **Received on** (migration 0014, `parse::received_on`): each incoming message records
   which of the user's addresses it arrived at: the top-most X-Original-To/Delivered-To
   that is plainly theirs (`parse::is_own_address`: the account's address, a +tag of it,
@@ -427,10 +453,14 @@ than inventing their own.
   unless every recipient is known (`mail::known`: the user's own addresses, address-book
   or hand-added handles, or someone in the Sent folder; never Mimi's correspondent cards
   or mail that merely claims to be from the user), even for a person with an exception.
-  Keep that check, and don't add new kinds without the same care. Automatic actions
-  show in the chat as a card with their details; `api/tests.rs ›
-  automatic_sending_only_writes_to_people_the_user_knows`, `mail_flow ›
-  people_exceptions_and_dont_ask_again` and `permission_api` cover it.
+  The same net covers events: guests put the user's event in other people's calendars,
+  so an event write that adds guests (`CallTarget::Email` from `call_targets`; the
+  kind's `recipients_must_be_known`) runs on its own only if every guest is known.
+  `calendar_send_invitations` is sending mail (`send_mail`). Keep that check, and don't
+  add new kinds without the same care. Automatic actions show in the chat as a card with
+  their details (and, for events with guests, the "Send invitations to …" button);
+  `api/tests.rs › automatic_sending_only_writes_to_people_the_user_knows`, `mail_flow ›
+  people_exceptions_and_dont_ask_again`, `permission_api` and `calendar_guests` cover it.
 - **Adding a tool:** implement `tools::Tool` (crates/core/src/tools/mod.rs): a stable
   `snake_case` name, a description written for the model, a JSON Schema for the
   arguments, `summary()` as one plain-language line for the approval card, and

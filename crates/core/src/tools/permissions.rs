@@ -50,9 +50,12 @@ pub struct Kind {
     pub color: &'static str,
     pub default: Autonomy,
     pub targets: PermissionTargetKind,
-    /// Automatic still asks unless every email recipient is someone the user knows (see
-    /// [`crate::mail::known`]): a hostile email can't make the assistant write to its
-    /// sender's accomplice, whatever the settings say.
+    /// Automatic still asks unless everyone the call reaches (email recipients, an
+    /// event's guests: its [`CallTarget::Email`]s) is someone the user knows (see
+    /// [`crate::mail::known`]): a hostile email can't make the assistant write to, or
+    /// invite, its sender's accomplice, whatever the settings say. A kind about people
+    /// (email) must reach someone; a calendar kind reaching nobody is just about the
+    /// calendar.
     pub recipients_must_be_known: bool,
 }
 
@@ -62,7 +65,7 @@ pub const KINDS: &[Kind] = &[
         id: "send_mail",
         title: "Send emails",
         ask_detail: "Shows you the whole email to approve before it goes out.",
-        automatic_detail: "Sends on its own to your contacts and people you've emailed before. Still asks before writing to anyone new.",
+        automatic_detail: "Sends on its own to your contacts and people you've emailed before, invitations included. Still asks before writing to anyone new.",
         note: Some(
             "An email to someone new, who isn't in your contacts and hasn't had an email from you, always waits for your OK.",
         ),
@@ -77,26 +80,30 @@ pub const KINDS: &[Kind] = &[
         id: "add_events",
         title: "Add calendar events",
         ask_detail: "Shows you each event to approve before it's added.",
-        automatic_detail: "Adds events to your calendars on its own.",
-        note: None,
+        automatic_detail: "Adds events to your calendars on its own. Invitations are only emailed when you say so.",
+        note: Some(
+            "An event with a guest who isn't in your contacts and hasn't had an email from you always waits for your OK.",
+        ),
         icon: "calendar-plus",
         color: "#ff3b30",
         default: Autonomy::Ask,
         targets: PermissionTargetKind::Calendar,
-        recipients_must_be_known: false,
+        recipients_must_be_known: true,
     },
     Kind {
         governs: Governs::ChangeEvents,
         id: "change_events",
         title: "Change or remove calendar events",
         ask_detail: "Shows you each change or removal to approve first.",
-        automatic_detail: "Moves, renames and removes events on its own.",
-        note: None,
+        automatic_detail: "Moves, renames and removes events on its own. Guests are only emailed when you say so.",
+        note: Some(
+            "Inviting someone who isn't in your contacts and hasn't had an email from you always waits for your OK.",
+        ),
         icon: "calendar-cog",
         color: "#5856d6",
         default: Autonomy::Ask,
         targets: PermissionTargetKind::Calendar,
-        recipients_must_be_known: false,
+        recipients_must_be_known: true,
     },
     Kind {
         governs: Governs::Schedule,
@@ -176,10 +183,20 @@ pub async fn requires_approval(
     if decide(state, kind, &choice(permissions, kind), &targets).await == Autonomy::Ask {
         return true;
     }
-    if kind.recipients_must_be_known {
-        return !crate::mail::known::all_known(state, &emails(&targets)).await;
+    !reaches_only_known(state, kind, &targets).await
+}
+
+/// The safety net under every choice: a call reaching people (see
+/// [`Kind::recipients_must_be_known`]) reaches only people the user knows.
+async fn reaches_only_known(state: &AppState, kind: &Kind, targets: &[CallTarget]) -> bool {
+    if !kind.recipients_must_be_known {
+        return true;
     }
-    false
+    let emails = emails(targets);
+    if emails.is_empty() && kind.targets != PermissionTargetKind::Person {
+        return true;
+    }
+    crate::mail::known::all_known(state, &emails).await
 }
 
 fn emails(targets: &[CallTarget]) -> Vec<String> {
@@ -306,6 +323,9 @@ pub async fn always_offer(
             (PermissionTargetKind::Calendar, CallTarget::Calendar(id)) => {
                 PermissionTarget::Calendar(id.clone())
             }
+            // An event's guests: the exception is about the calendar; the safety net
+            // below still needs every guest to be known.
+            (PermissionTargetKind::Calendar, CallTarget::Email(_)) => continue,
             _ => return None,
         };
         // The user chose to be asked about this one: don't offer to undo that here.
@@ -316,9 +336,7 @@ pub async fn always_offer(
             out.push(rule_target);
         }
     }
-    if kind.recipients_must_be_known
-        && !crate::mail::known::all_known(state, &emails(&targets)).await
-    {
+    if out.is_empty() || !reaches_only_known(state, kind, &targets).await {
         return None;
     }
     let labels = labels(state).await;
@@ -627,6 +645,27 @@ mod tests {
         assert!(send(json!(["stranger@example.net"])).await);
         assert!(send(json!([])).await);
         assert!(send(json!(["not an address"])).await);
+
+        // Automatic events too, once they have guests: a stranger makes it ask; an
+        // event with nobody on it is only about the calendar.
+        for kind in [Governs::AddEvents, Governs::ChangeEvents] {
+            let event = |to: Value| {
+                let state = &state;
+                let all_automatic = all_automatic.clone();
+                async move {
+                    requires_approval(
+                        state,
+                        &Fake(true, Some(kind)),
+                        &json!({"to": to}),
+                        &all_automatic,
+                    )
+                    .await
+                }
+            };
+            assert!(event(json!(["stranger@example.net"])).await);
+            assert!(event(json!(["not an address"])).await);
+            assert!(!event(json!([])).await);
+        }
     }
 
     #[tokio::test]

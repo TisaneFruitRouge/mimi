@@ -8,9 +8,10 @@ use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use icalendar::{
     Calendar, CalendarComponent, CalendarDateTime, Component, DatePerhapsTime, EventLike,
 };
+use mimi_protocol::GuestResponse;
 
 /// One occurrence of an event.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CalEvent {
     pub uid: String,
     pub title: String,
@@ -28,18 +29,24 @@ pub struct CalEvent {
     pub attendees: Vec<Attendee>,
     /// Who created the event (ORGANIZER), if the calendar says.
     pub organizer: Option<Attendee>,
+    /// One occurrence of a repeating event.
+    pub repeats: bool,
 }
 
 /// A person on an event, as the calendar describes them. Written by whoever sent the
 /// invitation: untrusted text.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Attendee {
     pub name: Option<String>,
     pub email: String,
+    /// A guest's answer (`PARTSTAT`), when the calendar says.
+    pub response: Option<GuestResponse>,
+    /// The calendar says this is the account's own entry (Google's `self`).
+    pub me: bool,
 }
 
 /// `mailto:sam@example.com` with its `CN` (and `EMAIL`) parameters → an attendee.
-fn attendee(p: &icalendar::Property) -> Option<Attendee> {
+pub(crate) fn attendee(p: &icalendar::Property) -> Option<Attendee> {
     let param = |k: &str| {
         p.params()
             .get(k)
@@ -55,7 +62,19 @@ fn attendee(p: &icalendar::Property) -> Option<Attendee> {
         .filter(|e| e.contains('@'))?
         .to_lowercase();
     let name = param("CN").filter(|n| !n.eq_ignore_ascii_case(&email));
-    Some(Attendee { name, email })
+    let response = param("PARTSTAT").and_then(|s| match s.to_ascii_uppercase().as_str() {
+        "ACCEPTED" => Some(GuestResponse::Accepted),
+        "DECLINED" => Some(GuestResponse::Declined),
+        "TENTATIVE" => Some(GuestResponse::Tentative),
+        "NEEDS-ACTION" => Some(GuestResponse::Pending),
+        _ => None,
+    });
+    Some(Attendee {
+        name,
+        email,
+        response,
+        me: false,
+    })
 }
 
 /// Hard cap on occurrences per recurring event, so a daily rule over a long range
@@ -140,6 +159,9 @@ pub fn events_between(
             .flatten()
             .filter_map(attendee)
             .collect();
+        let repeats = event.property_value("RRULE").is_some()
+            || event.multi_properties().contains_key("RDATE")
+            || event.get_recurrence_id().is_some();
 
         // Calendar data comes from other people: an event at the very end of time must
         // not overflow. Such an event is left out.
@@ -166,6 +188,7 @@ pub fn events_between(
             calendar_id: String::new(),
             attendees: attendees.clone(),
             organizer: organizer.clone(),
+            repeats,
         };
         // The occurrence starting at `s`, if it overlaps the range.
         let occurrence_in_range = |s: DateTime<Utc>| {

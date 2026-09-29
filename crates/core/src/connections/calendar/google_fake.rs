@@ -26,6 +26,8 @@ pub struct Fake {
     pub verifiers: Vec<String>,
     pub revoked: Vec<String>,
     pub refreshes: usize,
+    /// Every write: its method, event (or calendar) and `sendUpdates` value.
+    pub writes: Vec<(&'static str, String, Option<String>)>,
     next: usize,
 }
 
@@ -200,6 +202,7 @@ async fn insert_event(
     State(s): State<Shared>,
     headers: HeaderMap,
     Path(cal): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
     Json(mut body): Json<Value>,
 ) -> Response {
     if !authorized(&s, &headers) {
@@ -207,7 +210,14 @@ async fn insert_event(
     }
     let mut fake = s.lock().unwrap();
     fake.next += 1;
-    body["id"] = json!(format!("new{}", fake.next));
+    let id = format!("new{}", fake.next);
+    fake.writes
+        .push(("insert", id.clone(), q.get("sendUpdates").cloned()));
+    // As Google does: the calendar organizes it, and other calendars know it by its UID.
+    body["id"] = json!(id);
+    body["iCalUID"] = json!(format!("{id}@google.com"));
+    body["sequence"] = json!(0);
+    body["organizer"] = json!({"email": cal, "self": true});
     fake.events.entry(cal).or_default().push(body.clone());
     Json(body).into_response()
 }
@@ -216,12 +226,15 @@ async fn patch_event(
     State(s): State<Shared>,
     headers: HeaderMap,
     Path((cal, id)): Path<(String, String)>,
+    Query(q): Query<HashMap<String, String>>,
     Json(body): Json<Value>,
 ) -> Response {
     if !authorized(&s, &headers) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let mut fake = s.lock().unwrap();
+    fake.writes
+        .push(("patch", id.clone(), q.get("sendUpdates").cloned()));
     let Some(events) = fake.events.get_mut(&cal) else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -229,6 +242,10 @@ async fn patch_event(
     let mut found = false;
     for e in events.iter_mut() {
         if e["id"] == id || e["recurringEventId"] == id {
+            // Google counts versions when the time changes.
+            if body.get("start").is_some() {
+                e["sequence"] = json!(e["sequence"].as_u64().unwrap_or(0) + 1);
+            }
             for (k, v) in body.as_object().unwrap() {
                 e[k] = v.clone();
             }
@@ -246,11 +263,14 @@ async fn delete_event(
     State(s): State<Shared>,
     headers: HeaderMap,
     Path((cal, id)): Path<(String, String)>,
+    Query(q): Query<HashMap<String, String>>,
 ) -> StatusCode {
     if !authorized(&s, &headers) {
         return StatusCode::UNAUTHORIZED;
     }
     let mut fake = s.lock().unwrap();
+    fake.writes
+        .push(("delete", id.clone(), q.get("sendUpdates").cloned()));
     let Some(events) = fake.events.get_mut(&cal) else {
         return StatusCode::NOT_FOUND;
     };

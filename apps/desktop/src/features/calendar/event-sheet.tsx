@@ -1,8 +1,10 @@
-import { Bell, Clock, MapPin, Sparkles, X } from "lucide-react";
+import { Bell, Clock, Ellipsis, MapPin, Pencil, Send, Sparkles, Trash2, X } from "lucide-react";
+import { cn } from "cn";
 import { toast } from "sonner";
 
 import type { CalendarEvent } from "@/bindings/CalendarEvent";
 import type { EventPerson } from "@/bindings/EventPerson";
+import type { GuestResponse } from "@/bindings/GuestResponse";
 import type { ScheduleItem } from "@/bindings/ScheduleItem";
 import { PersonAvatar, initials } from "@/components/people";
 import { Button } from "@/components/ui/button";
@@ -52,44 +54,78 @@ export function remindersFor(items: ScheduleItem[], eventId: string) {
   );
 }
 
+/** What the event's own actions need: changing it, inviting its guests, removing it. */
+export type EventEdits = {
+  /** The event's calendar can be written to from here. */
+  writable: (e: CalendarEvent) => boolean;
+  edit: (e: CalendarEvent) => void;
+  invite: (e: CalendarEvent) => void;
+  remove: (e: CalendarEvent) => void;
+};
+
+/** Whether "Send invitations…" makes sense: the user's own event, with guests. */
+export function canInvite(e: CalendarEvent) {
+  return e.mine && e.attendees.some((a) => a.email !== e.organizer?.email);
+}
+
 /**
- * One event: when, where, who, the invitation's notes, reminders and "Ask Mimi".
- * Everything shown comes from the calendar and may be written by someone else, so it
- * is plain text: no links, no formatting.
+ * One event: when, where, who (with their answers), the invitation's notes, reminders,
+ * Edit, "Send invitations…", Delete and "Ask Mimi". Everything shown comes from the
+ * calendar and may be written by someone else, so it is plain text: no links, no
+ * formatting.
  */
 export function EventSheet({
   event,
   color,
+  edits,
   onClose,
   onAsk,
   onOpenPerson,
 }: {
   event: CalendarEvent | null;
   color: string;
+  edits?: EventEdits;
   onClose: () => void;
   onAsk: (draft: Draft) => void;
   onOpenPerson: (id: string) => void;
 }) {
   return (
     <Dialog open={!!event} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[85vh] gap-0 overflow-hidden bg-canvas p-0 sm:max-w-[460px]">
+      <DialogContent className="max-h-[85vh] gap-0 overflow-hidden bg-canvas p-0 sm:max-w-[500px]">
         {event && (
-          <EventDetails event={event} color={color} onClose={onClose} onAsk={onAsk} onOpenPerson={onOpenPerson} />
+          <EventDetails
+            event={event}
+            color={color}
+            edits={edits}
+            onClose={onClose}
+            onAsk={onAsk}
+            onOpenPerson={onOpenPerson}
+          />
         )}
       </DialogContent>
     </Dialog>
   );
 }
 
+/** A guest's answer, in plain words. */
+const answers: Record<GuestResponse, string> = {
+  accepted: "Going",
+  declined: "Not going",
+  tentative: "Maybe",
+  pending: "No answer yet",
+};
+
 function EventDetails({
   event: e,
   color,
+  edits,
   onClose,
   onAsk,
   onOpenPerson,
 }: {
   event: CalendarEvent;
   color: string;
+  edits?: EventEdits;
   onClose: () => void;
   onAsk: (draft: Draft) => void;
   onOpenPerson: (id: string) => void;
@@ -144,7 +180,20 @@ function EventDetails({
                         <span className="block truncate type-footnote text-muted-foreground">{p.email}</span>
                       )}
                     </span>
-                    {organizer && <span className="type-footnote text-faint">Organizer</span>}
+                    {organizer ? (
+                      <span className="type-footnote text-faint">Organizer</span>
+                    ) : (
+                      p.response && (
+                        <span
+                          className={cn(
+                            "shrink-0 type-footnote",
+                            p.response === "accepted" ? "text-private" : "text-faint",
+                          )}
+                        >
+                          {answers[p.response]}
+                        </span>
+                      )
+                    )}
                   </>
                 );
                 return p.person_id ? (
@@ -202,7 +251,7 @@ function EventDetails({
         )}
       </div>
 
-      <div className="flex items-center gap-2 px-6 pt-2 pb-6">
+      <div className="flex min-w-0 flex-wrap items-center gap-2 px-6 pt-2 pb-6">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="secondary">
@@ -220,6 +269,47 @@ function EventDetails({
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
+        {edits?.writable(e) && (
+          <Button
+            variant="secondary"
+            onClick={() => {
+              onClose();
+              edits.edit(e);
+            }}
+          >
+            <Pencil /> Edit
+          </Button>
+        )}
+        {edits?.writable(e) && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" aria-label="More">
+                <Ellipsis />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              {canInvite(e) && (
+                <DropdownMenuItem
+                  onSelect={() => {
+                    onClose();
+                    edits.invite(e);
+                  }}
+                >
+                  <Send /> Send invitations…
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={() => {
+                  onClose();
+                  edits.remove(e);
+                }}
+              >
+                <Trash2 /> Delete event…
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
         <div className="flex-1" />
         <Button
           onClick={() => {
