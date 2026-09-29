@@ -22,10 +22,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { api, keys } from "@/lib/api";
-import { useConnections } from "@/lib/queries";
+import { useAssistantName, useConnections } from "@/lib/queries";
 import { openExternal } from "@/lib/transport";
 
-export type ConnectKind = "google_calendar" | "caldav" | "telegram" | "email";
+export type ConnectKind = "google_calendar" | "caldav" | "telegram" | "signal" | "email";
 
 export function ConnectDialog({
   kind,
@@ -43,6 +43,7 @@ export function ConnectDialog({
         {kind === "google_calendar" && <GoogleCalendar onDone={onClose} reconnect={reconnect} />}
         {kind === "caldav" && <CalDav onDone={onClose} />}
         {kind === "telegram" && <Telegram onDone={onClose} />}
+        {kind === "signal" && <Signal onDone={onClose} />}
         {kind === "email" && <EmailAccount onDone={onClose} />}
       </DialogContent>
     </Dialog>
@@ -520,6 +521,128 @@ function TelegramPairing({ connection }: { connection: Connection }) {
             <Loader2 className="size-3.5 animate-spin" /> Waiting for you to press Start…
           </span>
         </div>
+      </div>
+    </>
+  );
+}
+
+/**
+ * Signal: Mimi links to the user's own account as a device, like Signal Desktop. The
+ * daemon gets the linking address from Signal and publishes it as the connection's
+ * `action_url`; it's only ever shown here as a QR code made on this computer, never
+ * opened as a link.
+ */
+function Signal({ onDone }: { onDone: () => void }) {
+  const assistant = useAssistantName();
+  const connections = useConnections().data;
+  const { busy, error, created, connect } = useConnect();
+  const existing = connections?.find((c) => c.integration === "signal");
+  // The connection updates live (via events) as codes arrive and once it's scanned.
+  const live = created ? (connections?.find((c) => c.id === created.id) ?? created) : undefined;
+  // A link already under way (the dialog was closed meanwhile): show its code again.
+  const linking = live ?? (existing?.status === "needs_action" && existing.action_url ? existing : undefined);
+  const start = () => connect({ integration: "signal" });
+
+  if (live && live.status === "ok") {
+    return <Done connection={live} onDone={onDone} />;
+  }
+  if (linking) {
+    return <SignalCode connection={linking} onRetry={start} busy={busy} />;
+  }
+
+  const again = existing && existing.status !== "ok";
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>Connect Signal</DialogTitle>
+        <DialogDescription>
+          Chat with {assistant} in your Note to Self, end-to-end encrypted. You link it from your
+          phone, like Signal on a computer.
+        </DialogDescription>
+      </DialogHeader>
+      <Steps>
+        <Step n={1}>
+          <span>Show a code to scan.</span>
+          <Button className="self-start" disabled={busy} onClick={start}>
+            {busy && <Loader2 className="animate-spin" />} {again ? "Link again" : "Show the code"}
+          </Button>
+          {(error || shownError(existing)) && (
+            <p className="type-subhead text-destructive">{error ?? shownError(existing)}</p>
+          )}
+        </Step>
+        <Step n={2}>
+          <span>
+            On your phone, open Signal, go to <b>Settings › Linked devices</b>, tap <b>+</b> and scan it.
+          </span>
+        </Step>
+        <Step n={3}>
+          <span>Write to {assistant} in <b>Note to Self</b>. Replies come back there.</span>
+        </Step>
+      </Steps>
+      <Note>
+        {assistant} only reads Note to Self. Like any linked device it receives your other chats too,
+        but ignores them: nothing from them is read, kept or shown to your assistant.
+      </Note>
+      <Note icon="warn">
+        Signal doesn't notify you about Note to Self, so messages and reminders from {assistant} there
+        arrive silently.
+      </Note>
+    </>
+  );
+}
+
+/** What went wrong with a Signal connection, when it isn't just waiting for a scan. */
+function shownError(connection: Connection | undefined) {
+  return connection?.status === "error" ? connection.detail : null;
+}
+
+function SignalCode({ connection, onRetry, busy }: { connection: Connection; onRetry: () => void; busy: boolean }) {
+  const [qr, setQr] = useState<string | null>(null);
+  const url = connection.action_url;
+  useEffect(() => {
+    if (!url) return setQr(null);
+    let current = true;
+    QRCode.toDataURL(url, { margin: 1, width: 480, color: { dark: "#16171a", light: "#ffffff" } }).then(
+      (data) => current && setQr(data),
+    );
+    return () => {
+      current = false;
+    };
+  }, [url]);
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>Scan with Signal</DialogTitle>
+        <DialogDescription>
+          On your phone, open Signal, go to <b>Settings › Linked devices</b>, tap <b>+</b> and scan this code.
+        </DialogDescription>
+      </DialogHeader>
+      <div className="flex flex-col items-center gap-4">
+        <div className="rounded-[18px] bg-white p-3 shadow-[var(--shadow-card)]">
+          {qr ? (
+            <img src={qr} alt="Code to link Signal" className="size-56" />
+          ) : (
+            <div className="flex size-56 items-center justify-center">
+              <Loader2 className="size-6 animate-spin text-muted-foreground" />
+            </div>
+          )}
+        </div>
+        <span
+          className={cn(
+            "flex items-center gap-2 type-subhead",
+            connection.status === "error" ? "text-destructive" : "text-muted-foreground",
+          )}
+        >
+          {connection.status !== "error" && url && <Loader2 className="size-3.5 animate-spin" />}
+          {url ? "Waiting for you to scan… A new code appears if this one expires." : connection.detail}
+        </span>
+        {/* The daemon's passing states ("Getting a code…", "Retrying…") end with an ellipsis. */}
+        {!url && !connection.detail.endsWith("…") && (
+          <Button variant="secondary" size="sm" disabled={busy} onClick={onRetry}>
+            {busy && <Loader2 className="animate-spin" />} Show a new code
+          </Button>
+        )}
       </div>
     </>
   );

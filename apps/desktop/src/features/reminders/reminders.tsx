@@ -8,6 +8,7 @@ import {
   ChevronRight,
   CircleAlert,
   Clock,
+  MessageCircle,
   MessageSquare,
   Monitor,
   MoreHorizontal,
@@ -456,6 +457,7 @@ function WhereTheyGo() {
   const settings = useSettings().data;
   const connections = useQuery({ queryKey: keys.connections, queryFn: api.connections }).data ?? [];
   const telegram = connections.find((c) => c.integration === "telegram" && c.status === "ok");
+  const signal = connections.find((c) => c.integration === "signal" && c.status === "ok");
   const [busy, setBusy] = useState(false);
   const on = settings?.desktop_notifications ?? true;
   const toggle = async () => {
@@ -502,6 +504,20 @@ function WhereTheyGo() {
               : "Connect a Telegram bot to get them on your phone."
           }
           trailing={telegram ? <Pill>On</Pill> : undefined}
+        />
+        <Row
+          icon={
+            <IconTile className="bg-[#e5ecfb] text-[#3353a8]">
+              <MessageCircle />
+            </IconTile>
+          }
+          title="Signal"
+          detail={
+            signal
+              ? "Sent to your Note to Self, without a notification. Reply done or snooze; yes or no to approve."
+              : "Link Signal to get them in your Note to Self."
+          }
+          trailing={signal ? <Pill>On</Pill> : undefined}
         />
       </Grouped>
     </Section>

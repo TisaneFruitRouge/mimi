@@ -47,7 +47,7 @@ import { useConnections, useIntegrations } from "@/lib/queries";
 import { openExternal } from "@/lib/transport";
 
 const connectable = (id: string): id is ConnectKind =>
-  id === "google_calendar" || id === "caldav" || id === "telegram" || id === "email";
+  id === "google_calendar" || id === "caldav" || id === "telegram" || id === "signal" || id === "email";
 
 /** Integrations that make sense to connect more than once. */
 const repeatable = (id: string) =>
@@ -115,7 +115,7 @@ export function ConnectionsView({ onPeople }: { onPeople: () => void }) {
             <div>
               <p className="type-body font-medium">Nothing connected yet</p>
               <p className="type-subhead text-muted-foreground">
-                Connect a calendar, your email or Telegram below to get started.
+                Connect a calendar, your email or a messaging app below to get started.
               </p>
             </div>
           </div>
@@ -130,6 +130,7 @@ export function ConnectionsView({ onPeople }: { onPeople: () => void }) {
                   setReconnect(c.id);
                   setConnecting("google_calendar");
                 }}
+                onShowCode={() => setConnecting("signal")}
               />
             ))}
           </Grouped>
@@ -193,8 +194,18 @@ export function ConnectionsView({ onPeople }: { onPeople: () => void }) {
           <AlertDialogHeader>
             <AlertDialogTitle>Disconnect {removing?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              Your assistant loses access right away and the saved sign-in is deleted. Nothing is
-              deleted on the service itself.
+              {removing?.integration === "signal" ? (
+                <>
+                  Your assistant stops reading Note to Self right away, and everything this computer
+                  kept for Signal is deleted. On your phone, also remove it under Signal › Settings ›
+                  Linked devices.
+                </>
+              ) : (
+                <>
+                  Your assistant loses access right away and the saved sign-in is deleted. Nothing is
+                  deleted on the service itself.
+                </>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -254,12 +265,18 @@ function ConnectionRow({
   connection: c,
   onRemove,
   onSignInAgain,
+  onShowCode,
 }: {
   connection: Connection;
   onRemove: () => void;
   onSignInAgain: () => void;
+  /** Signal: show the code to link it (never opened as a link). */
+  onShowCode: () => void;
 }) {
   const dot = { ok: "bg-private", needs_action: "bg-cloud", error: "bg-destructive" }[c.status];
+  const signal = c.integration === "signal";
+  // Waiting for a scan, or unlinked from the phone (the daemon's line says "Link again").
+  const signalLink = signal && (c.status === "needs_action" || /link again/i.test(c.detail));
   return (
     <Row
       icon={<IntegrationIcon id={c.integration} />}
@@ -281,9 +298,14 @@ function ConnectionRow({
       }
       trailing={
         <>
-          {c.action_url && (
+          {c.action_url && !signal && (
             <Button size="sm" variant="lime" className="rounded-full px-3.5" onClick={() => openExternal(c.action_url!)}>
               Finish setup
+            </Button>
+          )}
+          {signalLink && (
+            <Button size="sm" variant="lime" className="rounded-full px-3.5" onClick={onShowCode}>
+              {c.status === "error" ? "Link again" : "Show code"}
             </Button>
           )}
           {c.integration === "google" && c.status === "error" && (

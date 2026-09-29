@@ -243,6 +243,7 @@ function PrivacySettings({ onSection }: { onSection: (s: Place) => void }) {
   const providers = useProviders().data ?? [];
   const connections = useConnections().data ?? [];
   const telegram = connections.some((c) => c.integration === "telegram");
+  const signal = connections.some((c) => c.integration === "signal");
   const email = connections.some((c) => c.integration === "email");
   return (
     <Page>
@@ -316,6 +317,23 @@ function PrivacySettings({ onSection }: { onSection: (s: Place) => void }) {
               }
               title="Bot messages aren't end-to-end encrypted"
               detail="Telegram can read what you and your bot send each other. Keep private things in this app."
+              className="[&_.truncate]:whitespace-normal"
+            />
+          </Grouped>
+        </Section>
+      )}
+
+      {signal && (
+        <Section title="Signal">
+          <Grouped>
+            <Row
+              icon={
+                <IconTile size="sm" className="bg-private-soft text-private">
+                  <Lock />
+                </IconTile>
+              }
+              title="Only Note to Self"
+              detail="Linked like Signal on a computer, it receives your other chats too, but ignores them: nothing from them is read or kept. Messages stay end-to-end encrypted."
               className="[&_.truncate]:whitespace-normal"
             />
           </Grouped>
@@ -556,8 +574,8 @@ function BackgroundGroup() {
       ? (status.unavailable_reason ?? "Not available on this computer.")
       : status.enabled
         ? status.no_restart
-          ? "Starts when you log in, so Telegram and reminders work with this window closed."
-          : "Starts when you log in and keeps going with this window closed, so Telegram and reminders always work."
+          ? "Starts when you log in, so your messaging apps and reminders work with this window closed."
+          : "Starts when you log in and keeps going with this window closed, so your messaging apps and reminders always work."
         : "Mimi only works while this window is open.";
 
   return (

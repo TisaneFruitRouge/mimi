@@ -12,6 +12,7 @@ import {
   Loader2,
   Lock,
   Mail,
+  MessageCircle,
   Radar,
   Send,
   Sparkles,
@@ -503,7 +504,8 @@ function NoLocalRuntime() {
 function Connect({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
   const connections = useConnections().data ?? [];
   const [open, setOpen] = useState<ConnectKind | null>(null);
-  const has = (ids: string[]) => connections.some((c) => ids.includes(c.integration));
+  // Connected means working: a bot waiting for Start or a code waiting to be scanned isn't yet.
+  const has = (ids: string[]) => connections.some((c) => ids.includes(c.integration) && c.status === "ok");
   const items: { kinds: ConnectKind[]; icon: typeof Send; tone: string; title: string; detail: string }[] = [
     {
       kinds: ["google_calendar", "caldav"],
@@ -525,6 +527,13 @@ function Connect({ onNext, onBack }: { onNext: () => void; onBack: () => void })
       tone: "bg-[#def3f7] text-[#136c86]",
       title: "Telegram",
       detail: "Chat with me from your phone, through a bot only you can use.",
+    },
+    {
+      kinds: ["signal"],
+      icon: MessageCircle,
+      tone: "bg-[#e5ecfb] text-[#3353a8]",
+      title: "Signal",
+      detail: "Chat with me in your Note to Self, end-to-end encrypted.",
     },
   ];
   const [calendarChoice, setCalendarChoice] = useState(false);

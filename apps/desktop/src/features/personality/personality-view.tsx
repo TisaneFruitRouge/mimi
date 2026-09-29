@@ -131,7 +131,7 @@ export function PersonalityView() {
           rows={5}
         />
         <p className="max-w-[640px] type-footnote text-muted-foreground">
-          {name} follows these in every conversation, on Telegram and in routines, and when it
+          {name} follows these in every conversation, in your messaging apps and in routines, and when it
           drafts an email for you. They can't turn off anything in Permissions. When you use a
           model in the cloud, they're sent along with your messages, so leave out passwords and
           other secrets.
