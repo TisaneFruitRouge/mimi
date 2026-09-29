@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   Smile,
   Sparkles,
+  TriangleAlert,
 } from "lucide-react";
 import { cn } from "cn";
 import { toast } from "sonner";
@@ -244,6 +245,7 @@ function PrivacySettings({ onSection }: { onSection: (s: Place) => void }) {
   const connections = useConnections().data ?? [];
   const telegram = connections.some((c) => c.integration === "telegram");
   const signal = connections.some((c) => c.integration === "signal");
+  const matrix = connections.filter((c) => c.integration === "matrix");
   const email = connections.some((c) => c.integration === "email");
   return (
     <Page>
@@ -336,6 +338,32 @@ function PrivacySettings({ onSection }: { onSection: (s: Place) => void }) {
               detail="Linked like Signal on a computer, it receives your other chats too, but ignores them: nothing from them is read or kept. Messages stay end-to-end encrypted."
               className="[&_.truncate]:whitespace-normal"
             />
+          </Grouped>
+        </Section>
+      )}
+      {matrix.length > 0 && (
+        <Section title="Matrix">
+          <Grouped>
+            {matrix.map((c) => {
+              const plain = c.detail.includes("not encrypted");
+              return (
+                <Row
+                  key={c.id}
+                  icon={
+                    <IconTile size="sm" className={plain ? "bg-cloud-soft text-cloud" : "bg-private-soft text-private"}>
+                      {plain ? <TriangleAlert /> : <Lock />}
+                    </IconTile>
+                  }
+                  title={plain ? "Your chat isn't end-to-end encrypted" : "End-to-end encrypted"}
+                  detail={
+                    plain
+                      ? "Your Matrix server can read it. Turn on encryption in the chat's settings."
+                      : "Only your devices and this computer can read your chat with your assistant."
+                  }
+                  className="[&_.truncate]:whitespace-normal"
+                />
+              );
+            })}
           </Grouped>
         </Section>
       )}

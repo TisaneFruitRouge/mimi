@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use self::calendar::google::GoogleAccountConfig;
 use self::calendar::{Account, CalDavConfig, GoogleConfig, caldav::CalDav};
+use self::matrix::MatrixConfig;
 use self::store::ConnectionRow;
 use self::telegram::{Bot, TelegramConfig};
 use crate::api::error::AppError;
@@ -18,6 +19,7 @@ use crate::db::DbError;
 use crate::{AppState, now_ms};
 
 pub mod calendar;
+pub mod matrix;
 pub mod signal;
 pub mod store;
 pub mod telegram;
@@ -36,6 +38,8 @@ pub struct Connections {
     pub prompts: Arc<crate::channels::replies::Prompts>,
     /// The running Signal clients.
     pub signal: signal::Workers,
+    /// Running Matrix clients.
+    pub matrix: matrix::Clients,
 }
 
 impl Default for Connections {
@@ -47,6 +51,7 @@ impl Default for Connections {
             telegram_api: Mutex::new(telegram::default_api()),
             prompts: Default::default(),
             signal: Default::default(),
+            matrix: Default::default(),
         }
     }
 }
@@ -179,6 +184,13 @@ fn describe(row: &ConnectionRow) -> LiveStatus {
                 "Unreadable settings".to_owned(),
                 None,
             )),
+        matrix::MATRIX => serde_json::from_value::<MatrixConfig>(row.config.clone())
+            .map(|c| matrix::describe(&c))
+            .unwrap_or((
+                ConnectionStatus::Error,
+                "Unreadable settings".to_owned(),
+                None,
+            )),
         crate::mail::EMAIL => (ConnectionStatus::Ok, crate::mail::DETAIL.to_owned(), None),
         signal::SIGNAL => serde_json::from_value::<signal::SignalConfig>(row.config.clone())
             .map(|c| signal::describe(&c))
@@ -289,6 +301,7 @@ async fn publish(state: &AppState) {
 
 /// Checks what the user entered against the real service, then saves it.
 pub async fn create(state: &Arc<AppState>, setup: ConnectionSetup) -> Result<Connection, AppError> {
+    let id = Uuid::now_v7();
     let (integration, name, config) = match setup {
         ConnectionSetup::GoogleCalendar { ics_url } => {
             let url = calendar::parse_ics_url(&ics_url).map_err(AppError::bad_request)?;
@@ -366,6 +379,17 @@ pub async fn create(state: &Arc<AppState>, setup: ConnectionSetup) -> Result<Con
                 serde_json::to_value(config),
             )
         }
+        ConnectionSetup::Matrix {
+            user,
+            password,
+            homeserver,
+        } => {
+            let (name, config) =
+                matrix::connect(state, id, &user, &password, homeserver.as_deref())
+                    .await
+                    .map_err(AppError::bad_request)?;
+            (matrix::MATRIX, name, serde_json::to_value(config))
+        }
         ConnectionSetup::Email {
             email,
             password,
@@ -391,7 +415,7 @@ pub async fn create(state: &Arc<AppState>, setup: ConnectionSetup) -> Result<Con
         ConnectionSetup::Signal {} => return signal::connect(state).await,
     };
     let row = ConnectionRow {
-        id: Uuid::now_v7(),
+        id,
         integration: integration.to_owned(),
         name,
         config: config.map_err(AppError::internal)?,
@@ -436,6 +460,11 @@ pub async fn delete(state: &AppState, id: Uuid) -> Result<bool, DbError> {
             });
         }
     }
+    if let Some(r) = &row
+        && r.integration == matrix::MATRIX
+    {
+        matrix::forget(state, id, serde_json::from_value(r.config.clone()).ok()).await;
+    }
     if row.is_some_and(|r| r.integration == crate::mail::EMAIL) {
         crate::mail::forget(state, id).await;
     }
@@ -457,6 +486,7 @@ fn start(state: &Arc<AppState>, row: &ConnectionRow) {
     match row.integration.as_str() {
         telegram::TELEGRAM => tokio::spawn(telegram::run(s, id, t)),
         signal::SIGNAL => tokio::spawn(signal::run(s, id, t)),
+        matrix::MATRIX => tokio::spawn(matrix::run(s, id, t)),
         crate::mail::EMAIL => tokio::spawn(crate::mail::sync::run(s, id, t)),
         _ => return,
     };

@@ -47,7 +47,7 @@ import { useConnections, useIntegrations } from "@/lib/queries";
 import { openExternal } from "@/lib/transport";
 
 const connectable = (id: string): id is ConnectKind =>
-  id === "google_calendar" || id === "caldav" || id === "telegram" || id === "signal" || id === "email";
+  id === "google_calendar" || id === "caldav" || id === "telegram" || id === "signal" || id === "matrix" || id === "email";
 
 /** Integrations that make sense to connect more than once. */
 const repeatable = (id: string) =>

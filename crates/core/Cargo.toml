@@ -50,6 +50,8 @@ url = "2"
 # Signal as a linked device. AGPL-3.0-only, pinned to an exact revision; without the
 # `cdsi` feature (it needs BoringSSL and a forked SQLite).
 presage = { git = "https://github.com/whisperfish/presage", rev = "33dd1491130793390e356e15a5711f1e6ca14fdb", default-features = false }
+matrix-sdk = { version = "0.19.1", default-features = false, features = ["e2e-encryption", "automatic-room-key-forwarding", "sqlite", "rustls-aws-lc-rs"] }
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 
 [lints]
 workspace = true

@@ -102,6 +102,7 @@ pub async fn owners(state: &AppState) -> Vec<Arc<dyn Channel>> {
     let mut all: Vec<Arc<dyn Channel>> = Vec::new();
     all.extend(crate::connections::telegram::owners(state).await);
     all.extend(crate::connections::signal::owners(state).await);
+    all.extend(crate::connections::matrix::owners(state).await);
     all
 }
 
@@ -257,7 +258,7 @@ mod tests {
 
     #[test]
     fn long_text_is_split() {
-        let text = "a".repeat(3000) + "\n" + &"b".repeat(3000);
+        let text = "a".repeat(3000) + "\n" + &*"b".repeat(3000);
         let parts = chunks(&text, 4000);
         assert_eq!(parts.len(), 2);
         assert!(parts.iter().all(|p| p.chars().count() <= 4000));

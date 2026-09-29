@@ -106,7 +106,7 @@ export function ConversationPalette({
           >
             <Smile /> Personality
           </CommandItem>
-          <CommandItem keywords={["telegram", "signal", "google", "icloud", "apps"]} onSelect={run(() => onSection("connections"))}>
+          <CommandItem keywords={["telegram", "signal", "matrix", "element", "google", "icloud", "apps"]} onSelect={run(() => onSection("connections"))}>
             <Blocks /> Connections
           </CommandItem>
           <CommandItem onSelect={run(() => onSection("models"))}>
@@ -115,7 +115,7 @@ export function ConversationPalette({
           <CommandItem onSelect={run(() => onSection("memory"))}>
             <BookOpen /> Memory
           </CommandItem>
-          <CommandItem keywords={["alerts", "telegram", "signal"]} onSelect={run(() => onSection("notifications"))}>
+          <CommandItem keywords={["alerts", "telegram", "signal", "matrix"]} onSelect={run(() => onSection("notifications"))}>
             <BellRing /> Reminders and notifications
           </CommandItem>
           <CommandItem

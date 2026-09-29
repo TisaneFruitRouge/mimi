@@ -21,7 +21,7 @@ type SaveState = "idle" | "saving" | "saved" | "error";
 /**
  * Settings › Personality: the assistant's name, who it is and how it talks, and the
  * user's standing instructions. The daemon puts the last two into every conversation
- * (chat, Telegram, routines) and the instructions into email drafts; see
+ * (chat, messaging apps, routines) and the instructions into email drafts; see
  * `crates/core/src/persona.rs`.
  */
 export function PersonalityView() {

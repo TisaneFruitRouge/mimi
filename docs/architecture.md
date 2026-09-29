@@ -393,6 +393,8 @@ at 7, send me my day").
     owner's taps count; a second tap on a settled one answers "Already handled".
   - Signal, in Note to Self (silently), answered by a reply ("done", "snooze 1h") or a
     reaction (✅, 💤).
+  - Matrix, in the owner's chat, answered by a reply or a reaction (✅, 💤): see
+    Messaging apps.
   - A desktop notification from the daemon (notify-rust over D-Bus on Linux, the
     notification center on macOS), when `Settings.desktop_notifications` is on.
   - The app: a `schedule_delivered` event (toast with Done / Snooze) and the history.
@@ -638,6 +640,81 @@ newer. An offer is claimed before it's sent, so it goes out once. Guests' answer
 (replies to the invitation) arrive as ordinary email and aren't processed; Google
 records answers from Google accounts itself.
 
+## Messaging apps
+
+`channels/` is what every messaging app shares: a `Channel` is a private line to the
+user (send, typing, ask for approval, remind), `channels::converse` runs a chat turn
+from an app and relays its approvals and reply on the same channel, and
+`channels::owners` lists every paired app for what Mimi sends on its own (reminders,
+routine results, a routine's approvals). Apps without buttons answer prompts with a
+short reply or a reaction, matched to the prompt by `channels::replies`.
+
+### Matrix
+
+`connections/matrix/` (matrix-sdk, Apache-2.0, with `e2e-encryption` and its SQLite
+store). The user makes an account for the assistant on any server (in Element, on
+matrix.org or their own) and enters its address and password;
+`ConnectionSetup::Matrix { user, password, homeserver? }`.
+
+- **Signing in** (`connect`): the server comes from the address through
+  `.well-known/matrix/client`, else the address's host, else the "Server address" the
+  user typed (http only for servers on this computer or network). Mimi logs in with the
+  password (device name: the assistant's name), refuses an account that's already
+  connected, and sets up cross-signing with the same password (user-interactive auth),
+  replacing an identity made elsewhere (Element makes one when the account is created
+  there) since the account is the assistant's. So the owner's app shows the device as
+  trusted. The password isn't kept; the config holds the user id, homeserver, device id
+  and access token. Key backup and recovery aren't set up: losing the store only loses
+  the ability to read old messages, which the assistant doesn't need.
+- **Store**: `<data>/matrix/<connection id>/`, matrix-sdk's SQLite stores (sync state,
+  encryption keys) encrypted with a random passphrase kept in the connection config, so
+  in the encrypted database. matrix-sdk-sqlite uses the same rusqlite as the daemon, so
+  both link one libsqlite3 (SQLCipher's). A store is opened once: the client made at
+  sign-in is handed to the connection's task, and everything else (`owners`) uses the
+  running client from `state.connections.matrix`.
+- **Sync** (`run`): `sync_once` in a loop (30 s long polls; nothing listens for inbound
+  connections). A handler task takes the events in order, so handling one (turning on
+  encryption waits for the next sync) never holds up syncing. Messages from before the
+  connection was made are history, not requests (`since`, with an hour's grace for a
+  server clock that's behind); the sync token in the store means a restart replays
+  nothing. The client is made once per task and kept across failed syncs (a store is
+  never open twice; replies being written keep using it). Unreachable → "Retrying…"
+  with backoff (2 s → 5 min); an unknown token (signed out elsewhere) → an error saying
+  to connect again, kept after restarts (`signed_out`).
+- **Pairing**: until paired the assistant joins every invitation but answers nothing
+  except the exact six-digit code, sent in a room of two. Its sender becomes the owner
+  (user id, display name, room). Then it leaves every other room, declines invitations
+  (the owner's too while their chat exists), and turns end-to-end encryption on in the
+  owner's chat if it's off
+  (it usually can: Element makes both members admins of a direct chat). The welcome
+  says honestly whether the chat is encrypted. If the owner leaves, the connection asks
+  them to start a new chat; their next message in a new direct chat moves it there.
+- **Messages**: the owner's messages go to a "Matrix" conversation (`/new` starts a new
+  one), with typing notices while the reply is written. Once the chat is encrypted, a
+  message that arrives unencrypted is ignored: a server on the way could have made it
+  up. Reactions are the exception (Matrix apps never encrypt them); they only ever
+  answer a prompt the assistant sent. A message it can't decrypt gets "try sending it
+  again". Replies are Markdown turned into Matrix HTML with pulldown-cmark
+  (`format.rs`): the model's raw HTML is shown as text, links keep only http(s) and
+  mailto, pictures become their description, and long replies split at line breaks
+  (12,000 characters) without cutting a code block in two.
+- **Prompts**: approvals ("Waiting for you: …") and reminders ("⏰ …") carry the hints
+  from `channels::replies`, and are remembered by event id: a reply to one (its
+  `m.in_reply_to`) or a reaction on it (👍 / 👎, ✅ / 💤) answers it; a bare "yes" or
+  "no" answers the only approval waiting. Replies' quoted fallback is removed first.
+- **Removing** the connection signs the device out (`/logout`, best effort) and
+  deletes its store.
+- **Status line**: "From your own Matrix account, start a chat with @bot:server and send
+  123456" (NeedsAction, with a `https://matrix.to/#/@bot:server` link and the code the
+  app shows large), then "Talking with Vincent as @bot:server, end-to-end encrypted"
+  (or "not encrypted: turn on encryption in the chat's settings", or "from a device that
+  isn't verified" when cross-signing couldn't be set up).
+- **Logging**: matrix-sdk is chatty and reports expected "not found" answers as errors,
+  so the daemon's default log filter keeps it to warnings (`main.rs`).
+- **Tests**: pure logic in `matrix/tests.rs` and `format.rs`; `api/tests/matrix_live.rs`
+  runs everything against a real homeserver, with a second matrix-sdk client as the
+  owner (see CLAUDE.md for the command).
+
 ## People and @ mentions
 
 `crates/core/src/people/` keeps one directory of people, unified across sources.
@@ -878,7 +955,7 @@ The onboarding (`apps/desktop/src/features/onboarding/`) replaces the old setup 
    recommended downloads for it (built-in runtime, else Ollama), local servers found
    running, or a cloud service (with the trade-off said plainly; recommended first on
    weak machines).
-3. **Connections** (optional): calendar, email, Telegram and Signal, through the
+3. **Connections** (optional): calendar, email, and Telegram, Signal or Matrix, through the
    Connections dialogs.
 4. **About you** (optional): name, place and free text, appended to the memory profile.
 5. **Finish**: waits for the download if one is running; "Start chatting".

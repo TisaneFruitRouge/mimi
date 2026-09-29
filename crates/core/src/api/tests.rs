@@ -398,7 +398,7 @@ impl Harness {
                     message_id: id,
                     content,
                     ..
-                } if id.to_string() == message_id => deltas += &content,
+                } if id.to_string() == message_id => deltas += &*content,
                 mimi_protocol::Event::MessageUpdated { message }
                     if message.id.to_string() == message_id
                         && message.status != mimi_protocol::MessageStatus::Streaming =>
@@ -2001,6 +2001,8 @@ SUMMARY:Dentist\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
         assert_eq!(found[0]["id"], conv_id);
     }
 }
+
+mod matrix_live;
 
 /// A fake Telegram Bot API: queued updates go out through getUpdates, and everything
 /// sent comes back through `sent()`.
