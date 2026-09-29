@@ -231,6 +231,21 @@ than inventing their own.
   inbound connections). A one-time `/start <code>` pairs it with its owner; every other
   chat is ignored. Messages go into a "Telegram" conversation; approval cards are sent as
   inline Approve / Don't buttons. Bot messages aren't end-to-end encrypted: say so.
+- **Matrix** (`connections/matrix/`, matrix-sdk with `e2e-encryption`; details in
+  `docs/architecture.md` › Messaging apps › Matrix): an account the user makes for the
+  assistant on any server. Mimi signs in with its password (server found through
+  `.well-known`, else the "Server address"), sets up cross-signing with it, and never
+  keeps it. Keys live in `<data>/matrix/<id>/` (matrix-sdk's SQLite store, its
+  passphrase in the connection config); one client per connection, in
+  `state.connections.matrix`. Pairing: the six-digit code, from someone in a room of two;
+  then only the owner's direct chat counts (other rooms are left, other invitations
+  declined), encryption is turned on there if it's off, and once it's encrypted
+  unencrypted messages are ignored (reactions excepted: apps never encrypt them).
+  Approvals and reminders are answered by reply or reaction (`channels::replies`).
+  Replies are Markdown → HTML with the model's HTML escaped (`format.rs`). Removing the
+  connection signs the device out and deletes the store. Say honestly whether the chat
+  is encrypted. matrix-sdk pulls in `decancer`, whose `AddAssign` impl for `String`
+  breaks `s += &string` inference in mimi-core: write `s += &*string` or `push_str`.
 - **Calendar panel APIs** (`api/calendar.rs`): `GET /v1/calendars` (id, name, colour,
   writable), `GET /v1/calendar/events?from&to` (ms, at most ~a year; events of every
   calendar merged, recurrence expanded, organizer/guests matched to People by email),
@@ -251,7 +266,14 @@ than inventing their own.
   (`MIMI_TEST_CALDAV=http://127.0.0.1:5232/ cargo test -p mimi-core live_caldav --
   --ignored`), `calendar/google_fake.rs` for Google (sign-in, tokens, Calendar API),
   `fake_telegram` in `api/tests.rs` for the bot, public Google holiday feeds for iCal
-  parsing. Never point tests at Google.
+  parsing. Never point tests at Google. Matrix runs against a throwaway Synapse with open
+  registration (`uvx --from matrix-synapse python -m synapse.app.homeserver
+  --server-name localhost --config-path homeserver.yaml --generate-config
+  --report-stats=no`, then add `enable_registration: true` and
+  `enable_registration_without_verification: true`, and start it with the same command
+  minus `--generate-config …`): `MIMI_TEST_MATRIX=http://127.0.0.1:8008 cargo test -p
+  mimi-core live_matrix -- --ignored` registers an assistant, an owner and a stranger,
+  and drives the owner with a second matrix-sdk client. Never point it at matrix.org.
 
 ## Email
 
@@ -571,15 +593,16 @@ than inventing their own.
 - **Event-relative items** re-find their event (calendar + uid, closest occurrence)
   every 15 minutes and right before firing; gone → `ended` with a plain reason;
   calendar unreachable → keep the last known time.
-- **Delivery:** reminders go to the Telegram owner (Done / Snooze 10 min / 1 hour
-  buttons, `done:`/`snooze:`/`snooze60:` callbacks), desktop notifications
+- **Delivery:** reminders go to every paired messaging app through `channels::owners`
+  (Telegram: Done / Snooze 10 min / 1 hour buttons, `done:`/`snooze:`/`snooze60:`
+  callbacks; Matrix: reply or react ✅ / 💤), desktop notifications
   (`notify.rs`, fail-soft, `Settings.desktop_notifications`; `MIMI_NO_NOTIFICATIONS=1`
   and tests never show one), and the app (`ScheduleDelivered` event → toast). Sending
   runs in spawned tasks so one slow channel never holds up the loop.
 - **Routines keep the approval rule.** Their tool calls go through approvals like any
-  chat; pending ones are relayed to Telegram and the desktop, and the run waits (up to
-  30 minutes) in its own task, never blocking the scheduler. A run whose previous run
-  is still going is skipped, not queued.
+  chat; pending ones are relayed to the messaging apps and the desktop, and the run
+  waits (up to 30 minutes) in its own task, never blocking the scheduler. A run whose
+  previous run is still going is skipped, not queued.
 - **Tools** (`schedule/tools.rs`): `reminder_add`, `routine_add`, `schedule_list`,
   `schedule_change`, `schedule_cancel`. No approval (the user's own local schedule), but
   every write returns `schedule_revision` and shows as a quiet line with Undo, like
@@ -663,8 +686,8 @@ than inventing their own.
   `settings.onboarding_done` is false; the step is saved in `settings.onboarding_step`,
   so closing the app resumes there. Welcome and privacy promise -> model (hardware
   summary, installed models, suggested downloads, detected servers, or a cloud service
-  with an honest note) -> optional calendar/email/Telegram (the Connections dialogs) -> "about
-  you" (appended to the memory profile) -> finish. A model chosen for download is saved as
+  with an honest note) -> optional calendar/email/Telegram or Matrix (the Connections
+  dialogs) -> "about you" (appended to the memory profile) -> finish. A model chosen for download is saved as
   `settings.pending_model`; the daemon makes it the default when the download finishes
   (`settings::adopt_pending`), even with no window open. Settings › General › "Show the
   welcome again" reruns it. Migration 0010 marks existing setups as onboarded.
