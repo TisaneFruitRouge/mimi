@@ -23,6 +23,7 @@ pub mod permissions;
 pub mod providers;
 pub mod schedule;
 pub mod settings;
+pub mod updates;
 
 pub use calendar::*;
 pub use chat::*;
@@ -38,6 +39,7 @@ pub use permissions::*;
 pub use providers::*;
 pub use schedule::*;
 pub use settings::*;
+pub use updates::*;
 
 /// Prefix for all versioned API routes.
 pub const API_PREFIX: &str = "/v1";
@@ -47,6 +49,11 @@ pub const API_PREFIX: &str = "/v1";
 #[ts(export)]
 pub struct Health {
     pub version: String,
+    /// Which build of that version (`MIMI_BUILD_ID` at build time), so an app can tell
+    /// that the daemon is an older build of the same version. Absent in development.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub build: Option<String>,
 }
 
 /// Authenticated daemon status.

@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use mimi_client::Client;
-use mimi_protocol::Paths;
+use mimi_protocol::{Health, Paths};
 use mimi_service::Spec;
 
 /// Who keeps the daemon running.
@@ -60,13 +60,23 @@ impl Default for DaemonProcess {
 }
 
 async fn reachable() -> bool {
-    running_version().await.is_some()
+    running_health().await.is_some()
 }
 
-/// The version of the daemon that's running, if one is.
-async fn running_version() -> Option<String> {
-    Some(Client::local().ok()?.health().await.ok()?.version)
+/// The running daemon's version and build, if one is running.
+async fn running_health() -> Option<Health> {
+    Client::local().ok()?.health().await.ok()
 }
+
+/// Whether the running daemon is another version or build than this app ships. Builds
+/// are only compared when both have one (development builds don't).
+fn outdated(health: &Health) -> bool {
+    health.version != env!("CARGO_PKG_VERSION")
+        || matches!((health.build.as_deref(), BUILD), (Some(a), Some(b)) if a != b)
+}
+
+/// Which build this app is: set by `pnpm bundle` and the release workflow.
+const BUILD: Option<&str> = option_env!("MIMI_BUILD_ID");
 
 async fn wait_until(up: bool, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
@@ -110,12 +120,12 @@ impl DaemonProcess {
 
     /// Brings a daemon up if none is running. Call once at launch.
     pub async fn ensure_running(&self) {
-        if let Some(version) = running_version().await {
+        if let Some(health) = running_health().await {
             let service = spec()
                 .ok()
                 .filter(|s| mimi_service::status(s).is_ok_and(|s| s.installed));
             if let Some(spec) = &service
-                && version != env!("CARGO_PKG_VERSION")
+                && outdated(&health)
                 && !mimi_service::daemon_is_external()
             {
                 // Mimi was updated, but the background service still runs the old

@@ -96,7 +96,7 @@ export function ConversationPalette({
           </CommandItem>
         </CommandGroup>
         <CommandGroup heading="Settings">
-          <CommandItem keywords={["shortcuts", "background", "welcome"]} onSelect={run(() => onSection("general"))}>
+          <CommandItem keywords={["shortcuts", "background", "welcome", "updates", "new version"]} onSelect={run(() => onSection("general"))}>
             <Settings /> General
             <CommandShortcut>{mod},</CommandShortcut>
           </CommandItem>

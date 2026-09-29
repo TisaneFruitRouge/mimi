@@ -125,6 +125,9 @@ function apply(qc: QueryClient, event: Event) {
       }
       break;
     }
+    case "update_changed":
+      qc.setQueryData(keys.updates, event.update);
+      break;
     case "runtime_changed":
       qc.setQueryData(keys.runtime, event.runtime);
       break;

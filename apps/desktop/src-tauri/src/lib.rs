@@ -11,6 +11,7 @@ use crate::daemon_process::{BackgroundStatus, DaemonProcess, Owner};
 
 mod attachments;
 mod daemon_process;
+mod relaunch;
 mod tray;
 
 /// Errors cross into the webview as a tagged value the UI can branch on.
@@ -216,7 +217,17 @@ fn tiling_window_manager() -> bool {
         || desktop.split(':').any(|d| DESKTOPS.contains(&d.trim()))
 }
 
+/// Brings the window forward when the user opens Mimi (again). If a new version has been
+/// installed since this one started, starts that one instead (not in development, where
+/// `tauri dev` rebuilds the program all the time).
 fn show_main_window(app: &AppHandle) {
+    let launched = app.state::<relaunch::Launched>();
+    if !cfg!(debug_assertions) && launched.replaced() {
+        match launched.hand_over() {
+            Ok(()) => return app.exit(0),
+            Err(e) => eprintln!("mimi: couldn't start the new version: {e}"),
+        }
+    }
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();
@@ -236,6 +247,7 @@ pub fn run() {
     let app = builder
         .plugin(tauri_plugin_opener::init())
         .manage(Connection::default())
+        .manage(relaunch::Launched::now())
         .manage(Arc::new(DaemonProcess::default()))
         .setup(|app| {
             // Attachments opened last time: they're only kept while in use.

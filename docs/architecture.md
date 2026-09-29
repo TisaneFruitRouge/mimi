@@ -619,7 +619,19 @@ The tray (`tray.rs`) offers Open Mimi, a status line and Quit Mimi. In backgroun
 closing the window hides it to the tray; quitting leaves a service-run daemon running.
 Linux trays need libayatana-appindicator at runtime; without it there's no tray and
 closing the window quits the app (the service, if on, keeps the assistant running).
-Release builds are single-instance: launching again brings the window forward.
+Release builds are single-instance: launching again brings the window forward, unless
+the program was replaced since this one started (an update installed while the window
+was hidden in the tray). Then the running app starts a small shell that waits for it to
+exit and launches the new program (`open` on the `.app` on macOS), and quits
+(`relaunch.rs`). The daemon's `/health` also carries a build id, so a same-version
+rebuild restarts the service too.
+
+**New versions.** With Settings › General › "Check for new versions" on (off by default),
+the daemon asks GitHub's releases API for the latest release once a day
+(`updates.rs`; the last answer is kept in the `settings` row `updates`, so restarts don't
+ask again). Drafts and pre-releases don't count, and the release page's address is built
+from the version, not taken from the answer. The app shows a one-time notice per new
+version and the status in Settings; nothing is downloaded or installed for the user.
 
 ## Models and the built-in runtime
 

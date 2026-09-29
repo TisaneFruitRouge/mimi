@@ -50,6 +50,9 @@ jobs:
             target: x86_64-apple-darwin
             bundles: dmg
     runs-on: ${{ matrix.os }}
+    env:
+      # One id for the daemon and the app, so an app can tell its daemon is another build.
+      MIMI_BUILD_ID: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
 

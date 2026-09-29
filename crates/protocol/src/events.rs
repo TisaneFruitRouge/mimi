@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use crate::{
     Connection, Conversation, Delivery, Message, ModelPull, Provider, RuntimeStatus, Settings,
+    UpdateStatus,
 };
 
 /// Pushed by the daemon to every client connected to `GET /v1/events` (WebSocket, one
@@ -51,6 +52,10 @@ pub enum Event {
     /// The built-in runtime started or stopped a model, or failed to.
     RuntimeChanged {
         runtime: RuntimeStatus,
+    },
+    /// A check for new versions finished (or its setting changed).
+    UpdateChanged {
+        update: UpdateStatus,
     },
     /// Something in the memory changed: refetch the Memory screen.
     MemoryChanged,

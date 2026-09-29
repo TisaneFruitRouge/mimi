@@ -15,6 +15,7 @@ import { ConversationPalette } from "@/features/shell/conversation-palette";
 import { SettingsView, settingsPages } from "@/features/shell/settings-view";
 import { AppContextMenu } from "@/components/app-context-menu";
 import { BarMaterial, type Section, type SettingsPage, TopBar, isTab, tabs } from "@/features/shell/top-bar";
+import { useUpdateNotice } from "@/features/shell/updates";
 import type { DaemonError } from "@/lib/api";
 import { type Draft, setDraft } from "@/lib/draft";
 import { useConnected } from "@/lib/events";
@@ -116,6 +117,7 @@ const sectionKeys: Record<string, Section> = Object.fromEntries(tabs.map((t) => 
 
 function Shell() {
   const [{ section, conversationId, personId }, navigate] = useRoute();
+  useUpdateNotice();
   // Coming back to Chat, People or Settings returns to where it was.
   const last = useRef({ conversationId, personId, settings: "general" as SettingsPage });
   if (section === "chat") last.current.conversationId = conversationId;

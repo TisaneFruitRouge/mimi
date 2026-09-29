@@ -43,6 +43,9 @@ pub struct Settings {
     pub mail_sorter: MailSorter,
     /// What the assistant may do without asking first.
     pub permissions: Permissions,
+    /// Whether this computer asks GitHub, about once a day, if a newer version of Mimi
+    /// has been published. Off unless the user turns it on.
+    pub update_check: bool,
 }
 
 /// Longest personality, in characters. It goes into every prompt, next to the memory
@@ -81,6 +84,7 @@ impl Default for Settings {
             mail_sorting: true,
             mail_sorter: MailSorter::Model,
             permissions: Permissions::default(),
+            update_check: false,
         }
     }
 }

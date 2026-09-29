@@ -3,4 +3,9 @@
 /**
  * Unauthenticated liveness check. Deliberately reveals nothing beyond the version.
  */
-export type Health = { version: string, };
+export type Health = { version: string, 
+/**
+ * Which build of that version (`MIMI_BUILD_ID` at build time), so an app can tell
+ * that the daemon is an older build of the same version. Absent in development.
+ */
+build?: string, };

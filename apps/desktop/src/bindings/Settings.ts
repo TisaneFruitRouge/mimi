@@ -66,4 +66,9 @@ mail_sorter: MailSorter,
 /**
  * What the assistant may do without asking first.
  */
-permissions: Permissions, };
+permissions: Permissions, 
+/**
+ * Whether this computer asks GitHub, about once a day, if a newer version of Mimi
+ * has been published. Off unless the user turns it on.
+ */
+update_check: boolean, };

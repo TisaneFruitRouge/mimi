@@ -44,6 +44,7 @@ pub async fn put(
     }
     let current = settings::load(&state.db).await?;
     let sorter_changed = current.mail_sorter != new.mail_sorter;
+    let update_check_on = new.update_check && !current.update_check;
     // Permissions change only through `/permissions`, where they're checked; a client
     // saving other settings can't widen them, even with a stale copy.
     new.permissions = current.permissions;
@@ -52,6 +53,9 @@ pub async fn put(
         // Where mail is sorted shows in the Mail panel.
         crate::mail::changed(&state);
         state.mail.triage_wake.notify_one();
+    }
+    if update_check_on {
+        state.updates.wake.notify_one();
     }
     state.events.publish(Event::SettingsChanged {
         settings: new.clone(),

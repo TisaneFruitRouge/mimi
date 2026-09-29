@@ -12,7 +12,9 @@ find-and-replace (it was renamed from Hearth once already).
    when a feature needs them (Google for their calendar, Telegram for their messages, a
    cloud model they chose). Registered app identities (e.g. Mimi's Google OAuth
    client ID, a Telegram api_id) are just identifiers shown on consent screens; they
-   never route data through the project.
+   never route data through the project. The one exception to "nothing unasked":
+   "Check for new versions" asks GitHub's public releases API directly, once a day, and
+   only after the user turns it on (off by default).
 1. **Self-hosting, privacy and security by default.** Prefer local processing. Data
    leaves the machine only when the task needs it (sending a Telegram message, creating
    a calendar event), or when the user has explicitly chosen a cloud model.
@@ -554,8 +556,12 @@ than inventing their own.
   background" in Settings installs/removes the login service and hands the daemon over;
   `mimi service install|uninstall|status|start` does the same headless.
 - **After an update** the login service may still run the old daemon. At launch the app
-  compares the daemon's `/health` version with its own and restarts the service when
-  they differ (not under `pnpm dev`). Requests an older daemon can't read (unknown route,
+  compares the daemon's `/health` version and build (`MIMI_BUILD_ID`, set by `pnpm
+  bundle` and the release workflow; absent in development) with its own and restarts
+  the service when they differ (not under `pnpm dev`). A hidden app (closed to the tray)
+  would otherwise show the old version forever: `relaunch.rs` remembers the file it was
+  started from (`$APPIMAGE`, else the executable), and when the user opens Mimi again
+  after it was replaced, hands over to the new program. Requests an older daemon can't read (unknown route,
   unreadable body) surface as `DaemonError.code === "outdated"` with a plain message.
 - **Finding `mimid`** is `mimi_service::daemon_binary()` only: `MIMI_DAEMON_BIN`, else
   next to the running executable (bundles ship it as the Tauri sidecar `binaries/mimid`,
@@ -626,8 +632,11 @@ than inventing their own.
 - **Releases**: pushing a `v*` tag that matches `tauri.conf.json`'s version runs
   `.github/workflows/release.yml` (deb/rpm/AppImage on Ubuntu 22.04, arm64 and x64 dmg
   on macOS) into a draft GitHub Release; publish it by hand. `scripts/install.sh` is the
-  one-command installer (`curl ... | sh`). No automatic update checks, ever (principle
-  0). macOS builds are unsigned for now (the install script clears the quarantine
+  one-command installer (`curl ... | sh`). Update checks are opt-in only
+  (`Settings.update_check`, `crates/core/src/updates.rs`: GitHub's `releases/latest` for
+  the workspace `repository`, once a day, drafts and pre-releases ignored; `GET
+  /v1/updates`, `POST /v1/updates/check`, `UpdateChanged`). It only tells the user; it
+  never downloads or installs anything. macOS builds are unsigned for now (the install script clears the quarantine
   flag); Developer ID signing and notarization are a later step.
 
 ## Commands

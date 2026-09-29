@@ -43,6 +43,7 @@ import { ModelsView } from "@/features/models/models-view";
 import { PermissionsView } from "@/features/permissions/permissions-view";
 import { PersonalityView } from "@/features/personality/personality-view";
 import { NotificationsSettings } from "@/features/reminders/reminders";
+import { UpdatesGroup } from "@/features/shell/updates";
 import type { Section as Place, SettingsPage } from "@/features/shell/top-bar";
 import { api, keys } from "@/lib/api";
 import { mod } from "@/lib/platform";
@@ -167,7 +168,7 @@ function GeneralSettings({ onSection }: { onSection: (s: Place) => void }) {
 
   return (
     <Page>
-      <PageHeader title="General" subtitle="How your assistant runs, and keyboard shortcuts." />
+      <PageHeader title="General" subtitle="How your assistant runs, updates, and keyboard shortcuts." />
       <Section title="Assistant">
         <Grouped>
           <Row
@@ -201,6 +202,8 @@ function GeneralSettings({ onSection }: { onSection: (s: Place) => void }) {
       </Section>
 
       {isTauri && <BackgroundGroup />}
+
+      <UpdatesGroup />
 
       <Section title="Keyboard shortcuts">
         <Grouped>

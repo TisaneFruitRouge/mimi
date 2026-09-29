@@ -18,6 +18,7 @@ import type { PersonUpdate } from "@/bindings/PersonUpdate";
 import type { RemovedPerson } from "@/bindings/RemovedPerson";
 import type { ModelPull } from "@/bindings/ModelPull";
 import type { RuntimeStatus } from "@/bindings/RuntimeStatus";
+import type { UpdateStatus } from "@/bindings/UpdateStatus";
 import type { ModelInfo } from "@/bindings/ModelInfo";
 import type { NewProvider } from "@/bindings/NewProvider";
 import type { ProbeRequest } from "@/bindings/ProbeRequest";
@@ -116,6 +117,8 @@ export const api = {
   status: () => call<Status>("GET", "/status"),
   settings: () => call<Settings>("GET", "/settings"),
   putSettings: (s: Settings) => call<Settings>("PUT", "/settings", s),
+  updates: () => call<UpdateStatus>("GET", "/updates"),
+  checkForUpdates: () => call<UpdateStatus>("POST", "/updates/check"),
   /** What the assistant may do without asking, kind by kind, with the user's choices. */
   permissions: () => call<PermissionKind[]>("GET", "/permissions"),
   setPermission: (kind: string, choice: KindPermission) =>
@@ -293,6 +296,7 @@ export const api = {
 /** Query keys, shared by queries and the event sync so they stay in step. */
 export const keys = {
   settings: ["settings"] as const,
+  updates: ["updates"] as const,
   permissions: ["permissions"] as const,
   status: ["status"] as const,
   providers: ["providers"] as const,

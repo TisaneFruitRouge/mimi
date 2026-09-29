@@ -26,12 +26,15 @@ mod permissions;
 mod providers;
 mod schedule;
 mod settings;
+mod updates;
 mod web;
 
 pub fn router(state: Arc<AppState>) -> Router {
     let authed = Router::new()
         .route("/status", get(status))
         .route("/settings", get(settings::get).put(settings::put))
+        .route("/updates", get(updates::status))
+        .route("/updates/check", post(updates::check))
         .route("/permissions", get(permissions::list))
         .route("/permissions/{kind}", axum::routing::put(permissions::put))
         .route("/events", get(events::subscribe))
@@ -184,6 +187,7 @@ pub fn router(state: Arc<AppState>) -> Router {
 async fn health() -> Json<Health> {
     Json(Health {
         version: VERSION.to_owned(),
+        build: crate::BUILD.map(str::to_owned),
     })
 }
 

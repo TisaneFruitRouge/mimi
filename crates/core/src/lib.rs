@@ -24,9 +24,12 @@ pub mod runtime;
 pub mod schedule;
 pub mod settings;
 pub mod tools;
+pub mod updates;
 pub mod web;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Which build this is: set by `pnpm bundle` and the release workflow, unset in development.
+pub const BUILD: Option<&str> = option_env!("MIMI_BUILD_ID");
 
 pub struct AppState {
     pub paths: Paths,
@@ -60,6 +63,8 @@ pub struct AppState {
     pub scheduler: schedule::Scheduler,
     /// Email: sync wake-ups and the sorting queue.
     pub mail: mail::Mail,
+    /// "Check for new versions": the test endpoint and the loop's wake-up.
+    pub updates: updates::Updates,
 }
 
 impl AppState {
@@ -95,6 +100,7 @@ impl AppState {
             downloads: Default::default(),
             scheduler: Default::default(),
             mail: Default::default(),
+            updates: Default::default(),
         }
     }
 }
