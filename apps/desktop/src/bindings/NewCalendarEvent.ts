@@ -11,4 +11,9 @@ start: number,
 /**
  * Milliseconds; for all-day events, local midnight after the last day.
  */
-end: number, all_day: boolean, location: string | null, notes: string | null, };
+end: number, all_day: boolean, location: string | null, notes: string | null, 
+/**
+ * People to invite: email addresses ("Sam <sam@example.com>" or bare). The calendar
+ * service emails nobody; the answer offers to send the invitations.
+ */
+guests: Array<string>, };

@@ -16,8 +16,11 @@ import {
   Loader2,
   MapPin,
   PanelRightOpen,
+  Pencil,
   Plus,
+  Send,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 import { cn } from "cn";
 import { toast } from "sonner";
@@ -45,7 +48,15 @@ import {
   timeRange,
   whenLong,
 } from "@/features/calendar/dates";
-import { EventSheet, before, remindBefore, remindersFor } from "@/features/calendar/event-sheet";
+import { DeleteEventDialog, SendInvitationsDialog } from "@/features/calendar/event-dialogs";
+import {
+  type EventEdits,
+  EventSheet,
+  before,
+  canInvite,
+  remindBefore,
+  remindersFor,
+} from "@/features/calendar/event-sheet";
 import { NewEventDialog } from "@/features/calendar/new-event-dialog";
 import {
   DeleteItemDialog,
@@ -176,6 +187,8 @@ interface CalendarActions {
   editItem: (i: ScheduleItem) => void;
   deleteItem: (i: ScheduleItem) => void;
   openConversation: (id: string) => void;
+  /** Edit, send invitations, delete: for events in calendars written from here. */
+  events: EventEdits;
 }
 const CalendarActionsContext = createContext<CalendarActions | null>(null);
 
@@ -239,6 +252,22 @@ function EventMenu({
         <ContextMenuItem onSelect={() => copyText(eventText(e))}>
           <Copy /> Copy details
         </ContextMenuItem>
+        {actions?.events.writable(e) && (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuItem onSelect={() => actions.events.edit(e)}>
+              <Pencil /> Edit…
+            </ContextMenuItem>
+            {canInvite(e) && (
+              <ContextMenuItem onSelect={() => actions.events.invite(e)}>
+                <Send /> Send invitations…
+              </ContextMenuItem>
+            )}
+            <ContextMenuItem variant="destructive" onSelect={() => actions.events.remove(e)}>
+              <Trash2 /> Delete…
+            </ContextMenuItem>
+          </>
+        )}
         {actions && (
           <>
             <ContextMenuSeparator />
@@ -286,6 +315,9 @@ export function CalendarView({
   const [hidden, setHidden] = useState<string[]>(() => stored<string[]>("mimi.calendar.hidden", []));
   const [open, setOpen] = useState<CalendarEvent | null>(null);
   const [creating, setCreating] = useState<{ start: number | null } | null>(null);
+  const [changing, setChanging] = useState<CalendarEvent | null>(null);
+  const [inviting, setInviting] = useState<CalendarEvent | null>(null);
+  const [removing, setRemoving] = useState<CalendarEvent | null>(null);
   const [editing, setEditing] = useState<ScheduleItem | "new" | null>(null);
   const [deletingItem, setDeletingItem] = useState<ScheduleItem | null>(null);
   // Where the calendar was right-clicked: a time in the week grid, if on an empty slot.
@@ -316,6 +348,12 @@ export function CalendarView({
     [calendars.data],
   );
   const colorOf = (e: CalendarEvent) => colors.get(e.calendar_id) ?? GREY;
+  const eventEdits: EventEdits = {
+    writable: (e) => calendars.data?.find((c) => c.id === e.calendar_id)?.writable ?? false,
+    edit: setChanging,
+    invite: setInviting,
+    remove: setRemoving,
+  };
   const visible = (events.data?.events ?? []).filter((e) => !hidden.includes(e.calendar_id));
   // Reminders at times of their own, every one in range, shown in the grid too.
   // Event-relative ones show as a bell on their event instead.
@@ -376,6 +414,7 @@ export function CalendarView({
         editItem: setEditing,
         deleteItem: setDeletingItem,
         openConversation: onOpenConversation,
+        events: eventEdits,
       }}
     >
       <div className="flex h-full flex-col px-6 pt-[68px] pb-5">
@@ -500,17 +539,24 @@ export function CalendarView({
         <EventSheet
           event={open}
           color={open ? colorOf(open) : GREY}
+          edits={eventEdits}
           onClose={() => setOpen(null)}
           onAsk={onAsk}
           onOpenPerson={onOpenPerson}
         />
         <DeleteItemDialog item={deletingItem} onClose={() => setDeletingItem(null)} />
         <NewEventDialog
-          open={!!creating}
+          open={!!creating || !!changing}
           start={creating?.start ?? null}
+          event={changing}
           calendars={calendars.data ?? []}
-          onClose={() => setCreating(null)}
+          onClose={() => {
+            setCreating(null);
+            setChanging(null);
+          }}
         />
+        <SendInvitationsDialog event={inviting} onClose={() => setInviting(null)} />
+        <DeleteEventDialog event={removing} onClose={() => setRemoving(null)} />
       </div>
     </CalendarActionsContext.Provider>
   );

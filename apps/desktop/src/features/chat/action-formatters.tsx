@@ -11,14 +11,18 @@ type Formatter = {
 };
 
 export const formatters: Record<string, Formatter> = {
+  // Guests are listed one per line: an event with them reaches each of them.
   calendar_add_event: {
-    keys: ["title", "start", "end", "calendar", "location", "notes"],
+    keys: ["title", "start", "end", "calendar", "location", "notes", "guests", "guests_note"],
     rows: (a) => {
       const rows: ArgRow[] = [{ label: "Event", value: text(a.title) }];
       rows.push({ label: "When", value: when(text(a.start), present(a.end) ? text(a.end) : null) });
       if (present(a.calendar)) rows.push({ label: "Calendar", value: text(a.calendar) });
       if (present(a.location)) rows.push({ label: "Where", value: text(a.location) });
+      if (present(a.guests)) rows.push({ label: "Guests", value: lines(a.guests) });
+      if (present(a.guests_note)) rows.push({ label: "Guests", value: text(a.guests_note) });
       if (present(a.notes)) rows.push({ label: "Notes", value: text(a.notes) });
+      if (present(a.guests)) rows.push({ label: "Email", value: "Nobody is emailed. You can send the invitations after." });
       return rows;
     },
   },
@@ -39,6 +43,9 @@ export const formatters: Record<string, Formatter> = {
       "end",
       "location",
       "notes",
+      "add_guests",
+      "remove_guests",
+      "guests",
     ],
     rows: (a) => {
       const rows: ArgRow[] = [
@@ -53,6 +60,33 @@ export const formatters: Record<string, Formatter> = {
       if (typeof a.location === "string")
         rows.push({ label: "Where", value: a.location.trim() ? a.location : "(removed)" });
       if (typeof a.notes === "string") rows.push({ label: "Notes", value: a.notes.trim() ? a.notes : "(removed)" });
+      if (present(a.add_guests)) rows.push({ label: "Invite", value: lines(a.add_guests) });
+      if (present(a.remove_guests)) rows.push({ label: "Take off", value: lines(a.remove_guests) });
+      if (present(a.guests)) rows.push({ label: "Guests after", value: lines(a.guests) });
+      if (present(a.add_guests) || present(a.remove_guests))
+        rows.push({ label: "Email", value: "Nobody is emailed. You can tell them after." });
+      return rows;
+    },
+  },
+  // Who it goes to, from which address, and about which event. `offer` and `event` only
+  // point at it; `guests` is how the request narrowed the recipients.
+  calendar_send_invitations: {
+    keys: ["event", "offer", "kind", "event_title", "event_when", "recipients", "from", "from_note", "guests"],
+    rows: (a) => {
+      const what: Record<string, string> = {
+        invite: "The invitation",
+        update: "The new details",
+        cancel: "It's cancelled",
+        uninvite: "They're no longer invited",
+      };
+      const rows: ArgRow[] = [
+        { label: "Event", value: text(a.event_title) },
+        { label: "When", value: upperFirst(text(a.event_when)) },
+        { label: "To", value: lines(a.recipients) },
+        { label: "Message", value: what[text(a.kind)] ?? "The invitation" },
+      ];
+      if (present(a.from)) rows.push({ label: "From", value: text(a.from) });
+      if (present(a.from_note)) rows.push({ label: "Note", value: text(a.from_note) });
       return rows;
     },
   },
@@ -93,6 +127,11 @@ function text(v: unknown): string {
 
 function present(v: unknown) {
   return text(v).trim() !== "";
+}
+
+/** A list with one entry per line: each guest or recipient on their own. */
+function lines(v: unknown): string {
+  return Array.isArray(v) ? v.map(text).join("\n") : text(v);
 }
 
 /** "On Friday 2 Oct, 10:00–10:45" from the daemon's "on Friday…". */

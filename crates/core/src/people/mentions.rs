@@ -242,6 +242,7 @@ mod tests {
             calendar_id: String::new(),
             attendees: Vec::new(),
             organizer: None,
+            repeats: false,
         };
         let (start, calendar, uid) = parse_event_id(&event_id(&e)).unwrap();
         assert_eq!(

@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import type { Action } from "@/bindings/Action";
 import { Button } from "@/components/ui/button";
+import { InvitationOffers } from "@/features/calendar/invitations";
 import { describeArgs } from "@/features/chat/action-formatters";
 import { DRAFT_TOOLS, DraftCard, draftOf } from "@/features/mail/draft-card";
 import { api } from "@/lib/api";
@@ -26,7 +27,24 @@ const MAY_BE_AUTOMATIC = new Set([
   "calendar_add_event",
   "calendar_change_event",
   "calendar_delete_event",
+  "calendar_send_invitations",
 ]);
+
+/** Invitations an event write left to send (nothing was emailed): their ids. */
+function offersOf(a: Action): string[] {
+  const list = (a.output as { invitations?: unknown } | null)?.invitations;
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((o) => {
+    const id = (o as { invitation?: unknown } | null)?.invitation;
+    return typeof id === "string" ? [id] : [];
+  });
+}
+
+/** Something the user should know about a write, e.g. why guests weren't added. */
+function noteOf(a: Action): string | null {
+  const note = (a.output as { note?: unknown } | null)?.note;
+  return typeof note === "string" && !openUrlOf(a) ? note : null;
+}
 
 /** What the assistant did (reads) and asked to do (approval cards) in one reply. */
 export function Actions({ actions }: { actions: Action[] }) {
@@ -273,6 +291,8 @@ function DecidedCard({ action: a, automatic = false }: { action: Action; automat
           ? `Couldn't do it${a.error ? `: ${a.error}` : "."}`
           : `On it: ${lowerFirst(a.summary)}…`;
   const rows = automatic ? describeArgs(a.tool, a.arguments) : [];
+  const offers = offersOf(a);
+  const note = noteOf(a);
   return (
     <div className="flex flex-col rounded-[14px] bg-background px-3.5 py-2.5 type-callout shadow-[var(--shadow-card)]">
       <div className="flex items-center gap-3">
@@ -312,6 +332,12 @@ function DecidedCard({ action: a, automatic = false }: { action: Action; automat
             </div>
           ))}
         </dl>
+      )}
+      {a.status === "done" && note && <p className="mt-1.5 ml-8 type-subhead text-muted-foreground">{note}</p>}
+      {a.status === "done" && offers.length > 0 && (
+        <div className="mt-2.5 mb-0.5 ml-8">
+          <InvitationOffers ids={offers} />
+        </div>
       )}
     </div>
   );

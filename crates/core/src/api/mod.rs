@@ -106,6 +106,20 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/calendar/events",
             get(calendar::events).post(calendar::create),
         )
+        .route(
+            "/calendar/events/{id}",
+            axum::routing::patch(calendar::change).delete(calendar::remove),
+        )
+        .route(
+            "/calendar/events/{id}/invitations",
+            post(calendar::offer_invitations),
+        )
+        .route("/calendar/invitations/{id}", get(calendar::invitation))
+        .route(
+            "/calendar/invitations/{id}/send",
+            post(calendar::send_invitations),
+        )
+        .route("/calendar/guests", get(calendar::guest_suggestions))
         .route("/hardware", get(hardware::get))
         .route("/recommendations", get(hardware::recommendations))
         .route(

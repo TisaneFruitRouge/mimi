@@ -118,7 +118,7 @@ nothing). `GET /v1/permissions` serves them with the user's choices
 
 | Kind | Default | Exceptions | Tools |
 | --- | --- | --- | --- |
-| `send_mail` | ask | people | `mail_send` |
+| `send_mail` | ask | people | `mail_send`, `calendar_send_invitations` |
 | `add_events` | ask | calendars | `calendar_add_event` |
 | `change_events` | ask | calendars | `calendar_change_event`, `calendar_delete_event` |
 | `schedule` | automatic | none | reminders and routines |
@@ -133,8 +133,12 @@ nothing). `GET /v1/permissions` serves them with the user's choices
   `Tool::call_targets` (email recipients, a calendar id). Each target takes its
   exception's choice, else the kind's default; a person exception covers every address
   of that person in People, and when two exceptions cover one address, asking wins. The
-  call runs on its own only if every target does. For `send_mail` the safety net comes
-  after: every recipient must also be known (`mail::known`), whatever the rules say.
+  call runs on its own only if every target does. The safety net comes after, for the
+  kinds marked `recipients_must_be_known`: every email target must also be known
+  (`mail::known`), whatever the rules say. For `send_mail` that's every recipient (and
+  an email must have one); for `add_events` and `change_events` it's every guest when a
+  call adds guests (the event then reaches them: Google shows it in their calendar
+  without any email), and nothing more for an event with nobody on it.
 - **"Don't ask again for Sam"**: when a card could have been skipped by an exception
   (every target is one person or calendar with no exception of its own, and for email
   every recipient is known), the daemon offers it: `Action.always_allow` holds the
@@ -430,6 +434,10 @@ else is sent to the model with `ChatOptions::QUICK` (no thinking) and gets needs
 important or other plus a one-line summary. A thread with a newer message is sorted
 again. If the model fails, the queue stops until the next wake-up.
 
+**Invitations.** Event invitations, updates and cancellations are sent through the same
+SMTP path and filed in Sent, only when the user says so (see Calendars › Guests and
+invitations).
+
 **People.** `mail::contacts::Correspondents` offers, per account, everyone the user
 wrote to and every human sender with at least two messages, as cards with one email
 handle (record id = the address). The directory merges them only on that address.
@@ -486,6 +494,54 @@ shows its real title, time and calendar, and they re-check that it's the same ca
 when they run. `live_caldav_adds_changes_and_removes_events` runs all of it against a
 real server (`MIMI_TEST_CALDAV`, e.g. Radicale); `api/tests.rs › google_flow` covers
 sign-in, reads, writes, rules and revocation against `google_fake.rs`.
+
+### Guests and invitations
+
+Events can have guests (`guests.rs`), and no calendar service ever emails them for Mimi:
+
+- **Google**: `attendees` on insert and patch, and `sendUpdates=none` on every insert,
+  patch and delete. Google replaces the whole list on a patch, so guests who stay are
+  given back exactly as Google had them (answers included). The organizer is the
+  calendar itself.
+- **CalDAV**: `ORGANIZER` is the user's address for the account (the username when it's
+  an address, else the first email account; without either, an event is saved without
+  its guests and the answer says why) and each guest an `ATTENDEE` with `CN`,
+  `ROLE=REQ-PARTICIPANT`, `PARTSTAT=NEEDS-ACTION`, `RSVP=TRUE` and
+  `SCHEDULE-AGENT=CLIENT` (RFC 6638: iCloud, Fastmail and Nextcloud then leave the
+  scheduling to the client). Guests who stay keep their line untouched. Because a
+  server would email guests it isn't told to leave alone, `edit::quiet` gives
+  `SCHEDULE-AGENT=CLIENT` to the other attendees of the user's own events on every write,
+  and before a delete (written first, then deleted).
+- **Who**: guests are given as addresses, person ids (from @ mentions) or names; a name
+  counts only when it comes down to one address (`guests::resolve`), otherwise the tool
+  says so and the assistant asks. Guests change only on events the user organizes
+  (`guests::is_mine`: no organizer, or one of their addresses, or Google's `self`), and
+  one occurrence of a repeating event at a time (an override keeps the series' guests).
+
+Every write that could concern guests leaves *offers* (`invite.rs`, table
+`calendar_invitations`, migration 0022): a snapshot of the event and who could be told.
+Adding gives an invitation; a change gives the invitation to new guests, the new details
+to guests who stay (only if the title, time, place or notes changed) and a withdrawn
+invitation to guests taken off; removing gives a cancellation (without `RECURRENCE-ID`
+for a whole series). A change to every occurrence of a series makes no offer (its answer
+says so): the message would need the series' rules. Nothing is sent until the user
+clicks (the Calendar panel's dialogs and toasts, or the button on the chat's card; `POST
+/calendar/invitations/{id}/send`) or the assistant's `calendar_send_invitations` runs
+under the `send_mail` permission. The tools' results say plainly that nothing was
+emailed, name the guests and tell the model to ask.
+
+Sending is one iMIP message (RFC 6047) per offer, to all its recipients: one copy in
+Sent of exactly what everyone got, and calendar apps find their own `ATTENDEE` in it
+(Outlook and Thunderbird send invitations this way). It goes from the email account
+whose address is the organizer, else the first one (the offer's `from_note` says so);
+plain text (what, when with the time zone, where, guests, notes) and the event as
+`text/calendar; method=REQUEST` or `CANCEL`, inline and again as `invite.ics`
+(`application/ics`, as Gmail sends it, so apps don't show it twice). `SEQUENCE` is the
+calendar's, but always above the last one sent for that UID and occurrence
+(`sent_sequence`): Google counts only new times, and guests must see every update as
+newer. An offer is claimed before it's sent, so it goes out once. Guests' answers
+(replies to the invitation) arrive as ordinary email and aren't processed; Google
+records answers from Google accounts itself.
 
 ## People and @ mentions
 

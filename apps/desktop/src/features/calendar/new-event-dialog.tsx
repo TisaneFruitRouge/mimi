@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { Check, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
+import type { CalendarEvent } from "@/bindings/CalendarEvent";
 import type { CalendarInfo } from "@/bindings/CalendarInfo";
+import type { InvitationOffer } from "@/bindings/InvitationOffer";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -25,57 +27,94 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { addDays, fromInputs, inputDate, inputTime, startOfDay } from "@/features/calendar/dates";
+import { type GuestEntry, GuestsField, guestText } from "@/features/calendar/guests-field";
+import { InvitationRow } from "@/features/calendar/invitations";
 import { api, keys } from "@/lib/api";
 import { openExternal } from "@/lib/transport";
 
-/** Adding an event by hand. `start` is where the user clicked, if they did. */
+/**
+ * Adding an event by hand (`start` is where the user clicked, if they did), or changing
+ * one (`event`). Guests are saved without anyone being emailed; once saved, the dialog
+ * offers to send the invitations.
+ */
 export function NewEventDialog({
   open,
   start,
+  event,
   calendars,
   onClose,
 }: {
   open: boolean;
   start: number | null;
+  event?: CalendarEvent | null;
   calendars: CalendarInfo[];
   onClose: () => void;
 }) {
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="gap-5 bg-canvas sm:max-w-[480px]">
-        {open && <NewEventForm key={start ?? "now"} start={start} calendars={calendars} onDone={onClose} />}
+        {open && (
+          <NewEventForm
+            key={event?.id ?? start ?? "now"}
+            start={start}
+            event={event ?? null}
+            calendars={calendars}
+            onDone={onClose}
+          />
+        )}
       </DialogContent>
     </Dialog>
   );
 }
 
+/** The user themselves, among an event's attendees: not a guest to show or to invite. */
+function guestsOf(e: CalendarEvent): GuestEntry[] {
+  const organizer = e.organizer?.email;
+  return e.attendees
+    .filter((a) => a.email !== organizer)
+    .map((a) => ({ name: a.person_name ?? a.name, email: a.email }));
+}
+
 function NewEventForm({
   start: clicked,
+  event,
   calendars,
   onDone,
 }: {
   start: number | null;
+  event: CalendarEvent | null;
   calendars: CalendarInfo[];
   onDone: () => void;
 }) {
   const qc = useQueryClient();
-  const initial = clicked ?? nextHour();
-  const [title, setTitle] = useState("");
+  const initial = event?.start ?? clicked ?? nextHour();
+  const initialEnd = event
+    ? event.all_day
+      ? addDays(event.end, -1)
+      : event.end
+    : initial + 3_600_000;
+  const [title, setTitle] = useState(event?.title ?? "");
   const [calendarId, setCalendarId] = useState(
-    () => (calendars.find((c) => c.writable) ?? calendars[0])?.id ?? "",
+    () => event?.calendar_id ?? (calendars.find((c) => c.writable) ?? calendars[0])?.id ?? "",
   );
-  const [allDay, setAllDay] = useState(false);
+  const [allDay, setAllDay] = useState(event?.all_day ?? false);
   const [date, setDate] = useState(inputDate(initial));
   const [time, setTime] = useState(inputTime(initial));
-  const [endDate, setEndDate] = useState(inputDate(initial + 3_600_000));
-  const [endTime, setEndTime] = useState(inputTime(initial + 3_600_000));
-  const [location, setLocation] = useState("");
-  const [notes, setNotes] = useState("");
+  const [endDate, setEndDate] = useState(inputDate(initialEnd));
+  const [endTime, setEndTime] = useState(inputTime(initialEnd));
+  const [location, setLocation] = useState(event?.location ?? "");
+  const [notes, setNotes] = useState(event?.notes ?? "");
+  const [guests, setGuests] = useState<GuestEntry[]>(() => (event ? guestsOf(event) : []));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Once saved: what the guests could be sent.
+  const [offers, setOffers] = useState<InvitationOffer[] | null>(null);
 
   const calendar = calendars.find((c) => c.id === calendarId);
   const google = !!calendar && !calendar.writable;
+  const editing = !!event;
+  // Guests only where they can be invited, and only on the user's own events.
+  const canInvite = !!calendar?.guests && (!event || event.mine);
 
   const submit = async () => {
     const startMs = allDay ? startOfDay(fromInputs(date)) : fromInputs(date, time);
@@ -87,6 +126,25 @@ function NewEventForm({
     setBusy(true);
     setError(null);
     try {
+      if (event) {
+        const changed = await api.changeEvent(event.id, {
+          title,
+          start: startMs,
+          end: endMs,
+          all_day: allDay,
+          location,
+          notes,
+          guests: canInvite ? guests.map(guestText) : null,
+        });
+        qc.invalidateQueries({ queryKey: keys.calendar });
+        if (changed.note) toast.info(changed.note);
+        if (changed.invitations.length > 0) setOffers(changed.invitations);
+        else {
+          toast.success("Saved");
+          onDone();
+        }
+        return;
+      }
       const created = await api.addEvent({
         calendar_id: calendarId,
         title,
@@ -95,15 +153,21 @@ function NewEventForm({
         all_day: allDay,
         location: location || null,
         notes: notes || null,
+        guests: canInvite ? guests.map(guestText) : [],
       });
       if (created.open_url) {
         await openExternal(created.open_url);
         toast.success("Google Calendar is open with your event. Press Save there.");
-      } else {
-        toast.success(`Added to ${created.calendar}`);
-        qc.invalidateQueries({ queryKey: keys.calendar });
+        onDone();
+        return;
       }
-      onDone();
+      qc.invalidateQueries({ queryKey: keys.calendar });
+      if (created.note) toast.info(created.note);
+      if (created.invitations.length > 0) setOffers(created.invitations);
+      else {
+        toast.success(`Added to ${created.calendar}`);
+        onDone();
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -122,6 +186,29 @@ function NewEventForm({
     setEndTime(inputTime(after));
   };
 
+  if (offers)
+    return (
+      <div className="flex flex-col gap-5">
+        <DialogHeader>
+          <span className="flex size-9 items-center justify-center rounded-full bg-private-soft text-private">
+            <Check className="size-[18px]" strokeWidth={2.6} />
+          </span>
+          <DialogTitle className="type-title">{editing ? "Saved" : `Added to ${calendar?.name ?? "your calendar"}`}</DialogTitle>
+          <DialogDescription>Nothing has been emailed to your guests yet.</DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-3 rounded-[14px] bg-background p-4 shadow-[var(--shadow-card)]">
+          {offers.map((o) => (
+            <InvitationRow key={o.id} offer={o} />
+          ))}
+        </div>
+        <DialogFooter>
+          <Button variant="secondary" onClick={onDone}>
+            Done
+          </Button>
+        </DialogFooter>
+      </div>
+    );
+
   return (
     <form
       className="flex flex-col gap-5"
@@ -131,11 +218,15 @@ function NewEventForm({
       }}
     >
       <DialogHeader>
-        <DialogTitle className="type-title">New event</DialogTitle>
+        <DialogTitle className="type-title">{editing ? "Edit event" : "New event"}</DialogTitle>
         <DialogDescription>
-          {google
-            ? "Google Calendar opens with this filled in, for you to save."
-            : "Saved straight into your calendar."}
+          {editing
+            ? event.repeats
+              ? "Changes only this time. The rest of the series stays as it is."
+              : `In ${event.calendar}.`
+            : google
+              ? "Google Calendar opens with this filled in, for you to save."
+              : "Saved straight into your calendar."}
         </DialogDescription>
       </DialogHeader>
 
@@ -151,23 +242,25 @@ function NewEventForm({
           />
         </div>
 
-        <div className="flex flex-col gap-1.5">
-          <Label>Calendar</Label>
-          <Select value={calendarId} onValueChange={setCalendarId}>
-            <SelectTrigger aria-label="Calendar">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {calendars.map((c) => (
-                <SelectItem key={c.id} value={c.id}>
-                  <span className="size-2.5 rounded-full" style={{ background: c.color }} aria-hidden />
-                  {c.name}
-                  {!c.writable && <span className="text-faint"> · opens Google Calendar</span>}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        {!editing && (
+          <div className="flex flex-col gap-1.5">
+            <Label>Calendar</Label>
+            <Select value={calendarId} onValueChange={setCalendarId}>
+              <SelectTrigger aria-label="Calendar">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {calendars.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    <span className="size-2.5 rounded-full" style={{ background: c.color }} aria-hidden />
+                    {c.name}
+                    {!c.writable && <span className="text-faint"> · opens Google Calendar</span>}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
 
         <div className="grouped flex flex-col">
           <label className="flex h-11 items-center justify-between px-4 type-callout">
@@ -215,6 +308,26 @@ function NewEventForm({
         </div>
 
         <Input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Place (optional)" aria-label="Place" />
+
+        {canInvite ? (
+          <div className="flex flex-col gap-1.5">
+            <Label>Guests</Label>
+            <GuestsField value={guests} onChange={setGuests} />
+            <p className="type-footnote text-faint">
+              Nobody is emailed when you save. You can send the invitations next.
+            </p>
+          </div>
+        ) : (
+          editing &&
+          !event.mine &&
+          event.organizer && (
+            <p className="type-footnote text-faint">
+              {event.organizer.person_name ?? event.organizer.name ?? event.organizer.email} organizes this
+              event, so only they can change its guests.
+            </p>
+          )
+        )}
+
         <Textarea
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
@@ -231,7 +344,7 @@ function NewEventForm({
         </Button>
         <Button type="submit" disabled={busy || !title.trim() || !calendarId}>
           {busy && <Loader2 className="animate-spin" />}
-          {google ? "Open in Google Calendar" : "Add"}
+          {editing ? "Save" : google ? "Open in Google Calendar" : "Add"}
         </Button>
       </DialogFooter>
     </form>

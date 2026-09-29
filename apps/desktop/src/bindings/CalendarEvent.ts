@@ -9,4 +9,13 @@ export type CalendarEvent = {
 /**
  * Stable per occurrence; the same id @ mentions and "remind me before" use.
  */
-id: string, calendar_id: string, calendar: string, title: string, start: number, end: number, all_day: boolean, location: string | null, notes: string | null, organizer: EventPerson | null, attendees: Array<EventPerson>, };
+id: string, calendar_id: string, calendar: string, title: string, start: number, end: number, all_day: boolean, location: string | null, notes: string | null, organizer: EventPerson | null, attendees: Array<EventPerson>, 
+/**
+ * One occurrence of a repeating event.
+ */
+repeats: boolean, 
+/**
+ * The user organizes it (or nobody does): they may change its guests and send
+ * invitations. False for events someone else invited them to.
+ */
+mine: boolean, };
