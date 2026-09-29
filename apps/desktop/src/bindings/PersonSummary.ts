@@ -8,4 +8,8 @@ export type PersonSummary = { id: string, name: string, nickname: string | null,
 /**
  * Distinct channels, in a stable order.
  */
-channels: Array<Channel>, };
+channels: Array<Channel>, 
+/**
+ * A few of their numbers and addresses, for telling people apart in pickers.
+ */
+reach: Array<string>, };

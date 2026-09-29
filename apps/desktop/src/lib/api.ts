@@ -10,6 +10,9 @@ import type { MemoryNote } from "@/bindings/MemoryNote";
 import type { MemoryOverview } from "@/bindings/MemoryOverview";
 import type { MemorySemantic } from "@/bindings/MemorySemantic";
 import type { MentionCandidate } from "@/bindings/MentionCandidate";
+import type { MergePreview } from "@/bindings/MergePreview";
+import type { MergeRequest } from "@/bindings/MergeRequest";
+import type { MergeResult } from "@/bindings/MergeResult";
 import type { NewHandle } from "@/bindings/NewHandle";
 import type { NewPerson } from "@/bindings/NewPerson";
 import type { Person } from "@/bindings/Person";
@@ -170,9 +173,16 @@ export const api = {
   addHandle: (id: string, h: NewHandle) => call<Person>("POST", `/people/${id}/handles`, h),
   removeHandle: (id: string, handle: string) =>
     call<Person>("DELETE", `/people/${id}/handles/${handle}`),
+  updateHandle: (id: string, handle: string, h: NewHandle) =>
+    call<Person>("PATCH", `/people/${id}/handles/${handle}`, h),
   mergePeople: (keep: string, other: string) =>
     call<Person>("POST", `/people/${keep}/merge`, { other }),
-  splitPerson: (id: string, source_id: string, record: string) =>
+  /** What merging would give: the names to choose from and every way to reach them. */
+  mergePreview: (r: MergeRequest) => call<MergePreview>("POST", "/people/merge/preview", r),
+  mergeMany: (r: MergeRequest) => call<MergeResult>("POST", "/people/merge", r),
+  undoMerge: (mergeId: string) => call<Person>("POST", `/people/merges/${mergeId}/undo`),
+  /** Separates a card: `source_id` null for what the user had added by hand. */
+  splitPerson: (id: string, source_id: string | null, record: string) =>
     call<Person>("POST", `/people/${id}/split`, { source_id, record }),
   duplicates: () => call<DuplicateSuggestion[]>("GET", "/people/duplicates"),
   dismissDuplicate: (a: string, b: string) =>

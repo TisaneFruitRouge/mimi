@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Bell,
   BookOpen,
   Loader2,
   Mail,
+  Merge,
   MessageSquare,
   MoreHorizontal,
   Pencil,
@@ -55,6 +56,8 @@ export function PersonPage({
   onOpenConversation,
   onSection,
   onDelete,
+  onMerge,
+  onMoved,
 }: {
   id: string;
   onOpenPerson: (id: string | null) => void;
@@ -62,9 +65,19 @@ export function PersonPage({
   onOpenConversation: (id: string) => void;
   onSection: (s: Place) => void;
   onDelete: (p: Person) => void;
+  /** "Merge with…": pick who else is this person. */
+  onMerge: (p: Person) => void;
+  /** An old id of someone merged into another person: show them under their id now. */
+  onMoved: (id: string) => void;
 }) {
   const onScroll = useScrollEdge();
   const person = useQuery({ queryKey: keys.person(id), queryFn: () => api.person(id), retry: false });
+  const movedTo = person.data && person.data.id !== id ? person.data.id : null;
+  const moved = useRef(onMoved);
+  moved.current = onMoved;
+  useEffect(() => {
+    if (movedTo) moved.current(movedTo);
+  }, [movedTo]);
 
   return (
     <div className="h-full overflow-y-auto" onScroll={onScroll}>
@@ -77,6 +90,7 @@ export function PersonPage({
             onOpenConversation={onOpenConversation}
             onSection={onSection}
             onDelete={onDelete}
+            onMerge={onMerge}
           />
         ) : person.isError ? (
           <p className="type-body text-muted-foreground">This person isn't in your contacts anymore.</p>
@@ -98,6 +112,7 @@ function Details({
   onOpenConversation,
   onSection,
   onDelete,
+  onMerge,
 }: {
   person: Person;
   onOpenPerson: (id: string | null) => void;
@@ -105,6 +120,7 @@ function Details({
   onOpenConversation: (id: string) => void;
   onSection: (s: Place) => void;
   onDelete: (p: Person) => void;
+  onMerge: (p: Person) => void;
 }) {
   const assistant = useAssistantName();
   const [editing, setEditing] = useState(false);
@@ -143,6 +159,9 @@ function Details({
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => setAdding(true)}>
               <Plus /> Add a way to reach them
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => onMerge(p)}>
+              <Merge /> Merge with…
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" onSelect={() => onDelete(p)}>
@@ -186,11 +205,18 @@ function Details({
       <RecentMail person={p} onOpenMail={() => onSection("mail")} />
       <Conversations person={p} assistant={assistant} onOpen={onOpenConversation} />
 
-      {p.sources.length > 1 && (
+      {combined(p) && (
         <Section title="Combined from">
           <Grouped>
+            {p.manual && (
+              <div className="flex min-h-[48px] items-center gap-3 px-4 py-2 type-callout">
+                <span className="min-w-0 flex-1 truncate">
+                  {p.name} <span className="text-faint">· Added by you</span>
+                </span>
+              </div>
+            )}
             {p.sources.map((s) => (
-              <div key={`${s.source_id}/${s.record}`} className="flex min-h-[48px] items-center gap-3 px-4 py-2 type-callout">
+              <div key={`${s.source_id ?? "own"}/${s.record}`} className="flex min-h-[48px] items-center gap-3 px-4 py-2 type-callout">
                 <span className="min-w-0 flex-1 truncate">
                   {s.name} <span className="text-faint">· {s.source_name}</span>
                 </span>
@@ -219,6 +245,15 @@ function Details({
       <ScheduleDialog item={null} open={reminding} title={`Get back to ${first}`} onClose={() => setReminding(false)} />
     </>
   );
+}
+
+/**
+ * Whether this person is several contacts in one, each of which can be separated:
+ * cards from address books, and what the user had added by hand to someone merged in.
+ */
+function combined(p: Person) {
+  const parts = p.sources.length + (p.manual ? 1 : 0);
+  return parts > 1 || p.sources.some((s) => s.source_id === null);
 }
 
 function NameForm({ person: p, onDone }: { person: Person; onDone: () => void }) {

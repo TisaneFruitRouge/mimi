@@ -106,8 +106,12 @@ function useRoute() {
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
-  const navigate = (next: Route) => {
-    if (hashOf(next) !== location.hash) location.hash = hashOf(next);
+  /** `replace`: the address was an old name for the same place (no new history entry). */
+  const navigate = (next: Route, replace = false) => {
+    if (hashOf(next) !== location.hash) {
+      if (replace) history.replaceState(null, "", hashOf(next));
+      else location.hash = hashOf(next);
+    }
     setRoute(next);
   };
   return [route, navigate] as const;
@@ -130,7 +134,8 @@ function Shell() {
       personId: s === "people" ? last.current.personId : null,
     });
   const setConversationId = (id: string | null) => navigate({ ...home, conversationId: id });
-  const openPerson = (id: string | null) => navigate({ ...home, section: "people", personId: id });
+  const openPerson = (id: string | null, replace = false) =>
+    navigate({ ...home, section: "people", personId: id }, replace);
   const openSettings = () => setSection(last.current.settings);
   /** "Ask Mimi about this": a new chat with the thing already mentioned. */
   const askMimi = (draft: Draft) => {

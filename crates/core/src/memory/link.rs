@@ -122,8 +122,18 @@ pub async fn relink(state: &AppState, hints: &[Uuid]) -> Result<usize, DbError> 
         if note.subject.as_ref().is_some_and(|s| ids.contains(s)) {
             continue;
         }
-        let subject = person_for(&note.path, &note.title, &note.body, &people, hints)
-            .map(|id| id.to_string());
+        // Someone merged into another person: the note follows them.
+        let merged = match note.subject.as_ref().and_then(|s| s.parse::<Uuid>().ok()) {
+            Some(old) => state
+                .db
+                .call(move |c| crate::people::merge::resolve(c, old))
+                .await?
+                .map(|id| id.to_string()),
+            None => None,
+        };
+        let subject = merged.or_else(|| {
+            person_for(&note.path, &note.title, &note.body, &people, hints).map(|id| id.to_string())
+        });
         if subject != note.subject && store::set_subject(&state.db, &note.path, subject).await? {
             changed += 1;
         }
@@ -206,6 +216,7 @@ mod tests {
             name: name.to_owned(),
             nickname: nickname.map(str::to_owned),
             channels: Vec::new(),
+            reach: Vec::new(),
         }
     }
 

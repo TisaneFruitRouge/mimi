@@ -582,6 +582,25 @@ records answers from Google accounts itself.
   name is clear. Chat mentions keep their label and say the person "is no longer in
   their contacts". `DELETE /v1/people/{id}` returns a `RemovedPerson`, or `null` for
   someone added by hand (gone for good); `GET /v1/people/removed` lists them.
+- **Merging** (`people/merge.rs`, migration 0023): the user can merge any people they
+  pick, never Mimi on its own. `POST /v1/people/merge/preview` (`{keep, others}`) gives
+  the names to choose from and every way to reach them, the same number or address
+  once; `POST /v1/people/merge` (`{keep, others, name}`) does it in one transaction:
+  cards, handles and restore marks move to `keep`; memory notes' `subject` and
+  permission exceptions follow (an exception becomes automatic only if it was for
+  everyone merged, else ask); `people_apart` pairs are carried over; each merged-away
+  id is recorded in `people_merged`, so `people::get` (page addresses, @ mentions in old
+  chats) and "Chats about them" still find the person. A chosen name is locked against
+  address-book renames. Someone added by hand has no card to be told apart by, so what
+  a merged-away person had added by hand (their handles, their name) becomes an own
+  card (`person_own_cards`, a `PersonSource` with `source_id: null`); splitting it
+  recreates them, under their old id if it's free. What each merge changed is kept in
+  `people_merges` for a week: `POST /v1/people/merges/{id}/undo` recreates everyone
+  under their own id and puts back their cards, notes, exceptions and pairs, leaving
+  what happened since (new cards, a rename). Only the latest merge into a person can
+  be undone, and not once someone involved was separated, merged or deleted again
+  (409). Removed people and pending restores: a removed person can't be merged (bring
+  them back first); cards on their way back after a restore go to the merged person.
 - **Mentions:** `GET /v1/mentions?q=` suggests people and events (upcoming 30 days;
   with a query, the past month to six months ahead). Event ids encode calendar, uid and
   start (`ev:<ms>:<hex calendar>:<hex uid>`). `SendMessage.mentions` keeps those whose

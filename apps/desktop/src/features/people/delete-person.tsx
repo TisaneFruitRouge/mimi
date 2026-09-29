@@ -34,7 +34,8 @@ export type Doomed = { id: string; name: string };
 /** What deleting someone does, in plain words. */
 function consequences(name: string, p: Person | undefined, assistant: string) {
   const kept = `What ${assistant} remembers about them is kept.`;
-  if (p && p.sources.length === 0) {
+  // Only cards from address books can be brought back; what was added by hand can't.
+  if (p && !p.sources.some((s) => s.source_id !== null)) {
     return `${name} and the ways to reach them you added will be deleted. ${kept} This can't be undone.`;
   }
   const own = p?.handles.some((h) => h.source_id === null)

@@ -87,19 +87,24 @@ pub async fn conversations_mentioning(
             "SELECT DISTINCT m.conversation_id, m.mentions FROM messages m
              WHERE m.role = 'user' AND m.mentions LIKE ?1",
         )?;
-        let pattern = format!("%{person}%");
+        // Mentions of people merged into this one are about them too.
+        let mut people = crate::people::merge::merged_into(c, person)?;
+        people.push(person);
         let mut ids = std::collections::HashSet::new();
-        for row in stmt.query_map([pattern], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        })? {
-            let (conversation, raw) = row?;
-            let mentions: Vec<mimi_protocol::Mention> =
-                serde_json::from_str(&raw).unwrap_or_default();
-            if mentions
-                .iter()
-                .any(|m| m.kind == mimi_protocol::MentionKind::Person && m.id == person.to_string())
-            {
-                ids.insert(conversation);
+        for person in people.iter().map(Uuid::to_string) {
+            let pattern = format!("%{person}%");
+            for row in stmt.query_map([pattern], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })? {
+                let (conversation, raw) = row?;
+                let mentions: Vec<mimi_protocol::Mention> =
+                    serde_json::from_str(&raw).unwrap_or_default();
+                if mentions
+                    .iter()
+                    .any(|m| m.kind == mimi_protocol::MentionKind::Person && m.id == person)
+                {
+                    ids.insert(conversation);
+                }
             }
         }
         let mut stmt = c.prepare(

@@ -4034,6 +4034,290 @@ mod people_removal {
             .await;
         assert_eq!(status, 404);
     }
+
+    /// Someone's id, by name, from the People list.
+    async fn id_named(h: &Harness, name: &str) -> String {
+        let (_, everyone) = h.call(reqwest::Method::GET, "/people", Value::Null).await;
+        everyone
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == name)
+            .unwrap_or_else(|| panic!("{name} not in {everyone}"))["id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    #[tokio::test]
+    async fn people_the_user_picks_merge_and_the_merge_can_be_undone() {
+        let h = Harness::new().await;
+        let book = uuid::Uuid::now_v7();
+        crate::connections::store::upsert(
+            &h.state.db,
+            crate::connections::store::ConnectionRow {
+                id: book,
+                integration: "test".to_owned(),
+                name: "iCloud".to_owned(),
+                config: json!({}),
+                created_at: 0,
+            },
+        )
+        .await
+        .unwrap();
+        let cards = Arc::new(Mutex::new(vec![
+            card("1", "Sam Carter", "sam@example.com"),
+            card("2", "S. Carter", "scarter@work.example"),
+            card("3", "Alex Kim", "alex@example.com"),
+        ]));
+        h.state
+            .people
+            .sources
+            .add(Arc::new(Book(book, cards.clone())));
+        h.call(reqwest::Method::POST, "/people/sync", Value::Null)
+            .await;
+        let (sam, sc) = (
+            id_named(&h, "Sam Carter").await,
+            id_named(&h, "S. Carter").await,
+        );
+        let (_, sammy) = h
+            .call(
+                reqwest::Method::POST,
+                "/people",
+                json!({"name": "Sammy", "handles": [
+                    {"channel": "email", "value": "Sam@Example.com"},
+                    {"channel": "phone", "value": "+41 79 123 45 67", "label": "mobile"}
+                ]}),
+            )
+            .await;
+        let sammy = sammy["id"].as_str().unwrap().to_owned();
+
+        // A chat that mentioned S. Carter.
+        let conversation = uuid::Uuid::now_v7();
+        crate::chat::store::upsert_conversation(
+            &h.state.db,
+            mimi_protocol::Conversation {
+                id: conversation,
+                title: "Lunch".into(),
+                created_at: 1,
+                updated_at: 1,
+            },
+        )
+        .await
+        .unwrap();
+        crate::chat::store::upsert_message(
+            &h.state.db,
+            mimi_protocol::Message {
+                id: uuid::Uuid::now_v7(),
+                conversation_id: conversation,
+                role: mimi_protocol::MessageRole::User,
+                content: "Lunch with @S. Carter".into(),
+                reasoning: String::new(),
+                status: mimi_protocol::MessageStatus::Complete,
+                model: None,
+                locality: None,
+                error: None,
+                created_at: 1,
+                actions: vec![],
+                mentions: vec![mimi_protocol::Mention {
+                    kind: mimi_protocol::MentionKind::Person,
+                    id: sc.clone(),
+                    label: "S. Carter".into(),
+                }],
+            },
+        )
+        .await
+        .unwrap();
+
+        // Refused: themselves, no one, someone who isn't there.
+        for (others, expected) in [
+            (json!([sam]), 400),
+            (json!([]), 400),
+            (json!([uuid::Uuid::now_v7()]), 404),
+        ] {
+            let (status, err) = h
+                .call(
+                    reqwest::Method::POST,
+                    "/people/merge",
+                    json!({"keep": sam, "others": others}),
+                )
+                .await;
+            assert_eq!(status, expected, "{err}");
+        }
+
+        // The preview: names to choose from, and each way to reach them once.
+        let (status, preview) = h
+            .call(
+                reqwest::Method::POST,
+                "/people/merge/preview",
+                json!({"keep": sam, "others": [sc, sammy]}),
+            )
+            .await;
+        assert_eq!(status, 200, "{preview}");
+        assert_eq!(
+            preview["names"],
+            json!(["Sam Carter", "S. Carter", "Sammy"])
+        );
+        let values: Vec<&str> = preview["handles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| h["value"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            values,
+            [
+                "+41 79 123 45 67",
+                "sam@example.com",
+                "scarter@work.example"
+            ]
+        );
+
+        let (status, merged) = h
+            .call(
+                reqwest::Method::POST,
+                "/people/merge",
+                json!({"keep": sam, "others": [sc, sammy], "name": "Sam"}),
+            )
+            .await;
+        assert_eq!(status, 200, "{merged}");
+        assert_eq!(merged["person"]["id"], sam.as_str());
+        assert_eq!(merged["person"]["name"], "Sam");
+        let cards_of = |p: &Value| {
+            p["sources"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| {
+                    (
+                        s["source_id"].clone(),
+                        s["name"].as_str().unwrap().to_owned(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            cards_of(&merged["person"]),
+            [
+                (json!(book), "Sam Carter".to_owned()),
+                (json!(book), "S. Carter".to_owned()),
+                (Value::Null, "Sammy".to_owned()),
+            ]
+        );
+        let merge_id = merged["merge_id"].as_str().unwrap().to_owned();
+
+        // Old links find Sam; the chat about S. Carter is a chat about Sam.
+        let (status, old) = h
+            .call(reqwest::Method::GET, &format!("/people/{sc}"), Value::Null)
+            .await;
+        assert_eq!((status, old["id"].as_str()), (200, Some(sam.as_str())));
+        let (_, chats) = h
+            .call(
+                reqwest::Method::GET,
+                &format!("/people/{sam}/conversations"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(chats[0]["id"], json!(conversation));
+
+        // A refresh keeps them together.
+        h.call(reqwest::Method::POST, "/people/sync", Value::Null)
+            .await;
+        let (_, everyone) = h.call(reqwest::Method::GET, "/people", Value::Null).await;
+        assert_eq!(everyone.as_array().unwrap().len(), 2);
+
+        // Deleted people can't be merged.
+        let alex = id_named(&h, "Alex Kim").await;
+        h.call(
+            reqwest::Method::DELETE,
+            &format!("/people/{alex}"),
+            Value::Null,
+        )
+        .await;
+        let (status, err) = h
+            .call(
+                reqwest::Method::POST,
+                "/people/merge",
+                json!({"keep": sam, "others": [alex]}),
+            )
+            .await;
+        assert_eq!(status, 400);
+        assert!(err["message"].as_str().unwrap().contains("Bring them back"));
+
+        // Undo: everyone is back as they were, under their own ids.
+        let (status, back) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/people/merges/{merge_id}/undo"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(status, 200, "{back}");
+        assert_eq!(back["name"], "Sam Carter");
+        for (id, name) in [(&sc, "S. Carter"), (&sammy, "Sammy")] {
+            let (status, p) = h
+                .call(reqwest::Method::GET, &format!("/people/{id}"), Value::Null)
+                .await;
+            assert_eq!((status, p["name"].as_str()), (200, Some(name)));
+        }
+        let (status, _) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/people/merges/{merge_id}/undo"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(status, 409);
+
+        // The one-at-a-time route still works.
+        let (status, p) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/people/{sam}/merge"),
+                json!({"other": sammy}),
+            )
+            .await;
+        assert_eq!(status, 200, "{p}");
+        assert_eq!(p["sources"].as_array().unwrap().len(), 2);
+
+        // A hand-added number can be changed; an imported one can't.
+        let handle = |p: &Value, value: &str| {
+            p["handles"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|h| h["value"] == value)
+                .unwrap()["id"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        };
+        let phone = handle(&p, "+41 79 123 45 67");
+        let (status, changed) = h
+            .call(
+                reqwest::Method::PATCH,
+                &format!("/people/{sam}/handles/{phone}"),
+                json!({"channel": "phone", "value": "+41 79 000 00 00", "label": "work"}),
+            )
+            .await;
+        assert_eq!(status, 200, "{changed}");
+        assert!(
+            changed["handles"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|h| h["value"] == "+41 79 000 00 00" && h["label"] == "work")
+        );
+        let imported = handle(&changed, "sam@example.com");
+        let (status, _) = h
+            .call(
+                reqwest::Method::PATCH,
+                &format!("/people/{sam}/handles/{imported}"),
+                json!({"channel": "email", "value": "x@example.com"}),
+            )
+            .await;
+        assert_eq!(status, 400);
+    }
 }
 
 /// Guests on events: saved without the calendar emailing anyone, invitations sent only
