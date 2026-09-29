@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="4 1 92 92">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e0f98f"/>
+      <stop offset="1" stop-color="#b4e140"/>
+    </linearGradient>
+    <radialGradient id="blush">
+      <stop offset=".35" stop-color="#ff8aa5" stop-opacity=".8"/>
+      <stop offset="1" stop-color="#ff8aa5" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <path d="M50 19.5C50.4 14 49.4 10.5 47 7.5" fill="none" stroke="#6f9a1c" stroke-width="2.6" stroke-linecap="round"/>
+      <path d="M47.6 9.2C43 3 35 3 32 6C35.5 11.5 42.5 12 47.6 9.2Z" fill="#9ccc2e"/>
+      <path d="M48.6 10.4C51.6 3.6 59.4 2.2 62.8 4.6C60.4 10.8 53.6 12.6 48.6 10.4Z" fill="#b8e24a"/>
+      <path d="M50 18C76 18 91 38 91 60C91 80 74 88 50 88C26 88 9 80 9 60C9 38 24 18 50 18Z" fill="url(#body)"/>
+      <g transform="translate(37.5 54.75) scale(1.3)">
+        <path d="M -5 0 C -5 -9 5 -9 5 0 C 5 9 -5 9 -5 0 Z" fill="#1d1d1f" stroke="#1d1d1f" stroke-width="1.2" stroke-linejoin="round"/>
+      </g>
+      <g transform="translate(62.5 54.75) scale(1.3)">
+        <path d="M -5 0 C -5 -9 5 -9 5 0 C 5 9 -5 9 -5 0 Z" fill="#1d1d1f" stroke="#1d1d1f" stroke-width="1.2" stroke-linejoin="round"/>
+      </g>
+</svg>

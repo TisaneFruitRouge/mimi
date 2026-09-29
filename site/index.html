@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mimi · A private assistant on your own computer</title>
+    <meta
+      name="description"
+      content="Mimi is a free, open-source AI assistant that runs on your own Mac or Linux computer. Chat, memory, calendar, email and reminders, with no account and no Mimi server."
+    />
+    <meta name="theme-color" content="#f5f5f7" />
+    <meta name="color-scheme" content="light" />
+    <link rel="canonical" href="https://mimi-opal.vercel.app/" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Mimi" />
+    <meta property="og:title" content="Mimi · A private assistant on your own computer" />
+    <meta
+      property="og:description"
+      content="A free, open-source AI assistant that runs on your Mac or Linux computer. No account, no Mimi server, nothing collected."
+    />
+    <meta property="og:url" content="https://mimi-opal.vercel.app/" />
+    <meta property="og:image" content="https://mimi-opal.vercel.app/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Mimi, a small lime character with a sprout on its head" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <link rel="preload" href="/assets/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+
+    <header class="bar">
+      <div class="wrap">
+        <a class="brand" href="/" aria-label="Mimi, home">
+          <img src="/assets/icon.svg" alt="" width="30" height="30" />
+          Mimi
+        </a>
+        <nav aria-label="Main">
+          <a class="optional" href="#features">Features</a>
+          <a class="optional" href="#privacy">Privacy</a>
+          <a href="#install">Install</a>
+          <a href="https://github.com/TisaneFruitRouge/mimi">GitHub</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <div class="hero wrap">
+        <svg class="character" viewBox="0 0 100 100" role="img" aria-label="Mimi, a small lime character with a sprout on its head">
+          <defs>
+            <linearGradient id="c-body" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#e0f98f" />
+              <stop offset="1" stop-color="#b4e140" />
+            </linearGradient>
+            <radialGradient id="c-blush">
+              <stop offset=".35" stop-color="#ff8aa5" stop-opacity=".8" />
+              <stop offset="1" stop-color="#ff8aa5" stop-opacity="0" />
+            </radialGradient>
+          </defs>
+          <g class="shadow"><ellipse cx="50" cy="91" rx="28" ry="3" fill="#000" fill-opacity=".08" /></g>
+          <g class="breath">
+            <g class="leaf">
+              <path d="M50 19.5C50.4 14 49.4 10.5 47 7.5" fill="none" stroke="#6f9a1c" stroke-width="2.6" stroke-linecap="round" />
+              <path d="M47.6 9.2C43 3 35 3 32 6C35.5 11.5 42.5 12 47.6 9.2Z" fill="#9ccc2e" />
+              <path d="M48.6 10.4C51.6 3.6 59.4 2.2 62.8 4.6C60.4 10.8 53.6 12.6 48.6 10.4Z" fill="#b8e24a" />
+            </g>
+            <path d="M50 18C76 18 91 38 91 60C91 80 74 88 50 88C26 88 9 80 9 60C9 38 24 18 50 18Z" fill="url(#c-body)" />
+            <ellipse cx="33" cy="30" rx="10.5" ry="5.2" fill="#fff" opacity=".6" transform="rotate(-22 33 30)" />
+            <g opacity=".85">
+              <ellipse cx="24.5" cy="64" rx="8" ry="5" fill="url(#c-blush)" />
+              <ellipse cx="75.5" cy="64" rx="8" ry="5" fill="url(#c-blush)" />
+            </g>
+            <g transform="translate(37.5 54.75)">
+              <g class="eye">
+                <path d="M -5 0 C -5 -9 5 -9 5 0 C 5 9 -5 9 -5 0 Z" fill="#1d1d1f" stroke="#1d1d1f" stroke-width="1.2" stroke-linejoin="round" />
+                <circle cx="1.9" cy="-3.2" r="1.9" fill="#fff" />
+              </g>
+            </g>
+            <g transform="translate(62.5 54.75)">
+              <g class="eye">
+                <path d="M -5 0 C -5 -9 5 -9 5 0 C 5 9 -5 9 -5 0 Z" fill="#1d1d1f" stroke="#1d1d1f" stroke-width="1.2" stroke-linejoin="round" />
+                <circle cx="1.9" cy="-3.2" r="1.9" fill="#fff" />
+              </g>
+            </g>
+            <path d="M46.2 66Q50 69.4 53.8 66" fill="none" stroke="#1d1d1f" stroke-width="2.3" stroke-linecap="round" />
+          </g>
+        </svg>
+
+        <h1>Mimi</h1>
+        <p class="promise">A private assistant that runs on your own computer.</p>
+        <p class="lede">
+          Chat with it, and let it help with your calendar, your email and your reminders. It remembers what you tell
+          it, and keeps all of it on your computer.
+        </p>
+        <div class="actions">
+          <a class="button lime" href="https://github.com/TisaneFruitRouge/mimi/releases">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="m7 10 5 5 5-5" /><path d="M12 15V3" /></svg>
+            Downloads on GitHub
+          </a>
+          <a class="button secondary" href="https://github.com/TisaneFruitRouge/mimi">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4" /><path d="M9 18c-4.51 2-5-2-7-2" /></svg>
+            View on GitHub
+          </a>
+        </div>
+        <ul class="facts" aria-label="At a glance">
+          <li class="pill private"><span class="dot"></span>No account</li>
+          <li class="pill">Free and open source</li>
+          <li class="pill">macOS and Linux</li>
+          <li class="pill">Early version</li>
+        </ul>
+      </div>
+
+      <section id="features" aria-labelledby="features-title">
+        <div class="wrap">
+          <div class="section-head">
+            <p class="eyebrow">What it does</p>
+            <h2 id="features-title">One assistant for the everyday things.</h2>
+            <p>Connect only what you want. Everything else keeps working without it.</p>
+          </div>
+          <div class="grid">
+            <article class="card">
+              <div class="tile lime">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /></svg>
+              </div>
+              <h3>Chat that remembers</h3>
+              <p>
+                Talk to it the way you'd talk to a person. It learns from what you tell it, like names, habits and
+                preferences. You can see, change or delete anything it remembers.
+              </p>
+            </article>
+            <article class="card">
+              <div class="tile">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v4" /><path d="M16 2v4" /><rect width="18" height="18" x="3" y="4" rx="2" /><path d="M3 10h18" /></svg>
+              </div>
+              <h3>Your calendar</h3>
+              <p>
+                Google Calendar, iCloud, Fastmail or Nextcloud. See your week, ask what's coming up, and have it add or
+                move events for you.
+              </p>
+            </article>
+            <article class="card">
+              <div class="tile">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="16" x="2" y="4" rx="2" /><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" /></svg>
+              </div>
+              <h3>Your email</h3>
+              <p>
+                It sorts new mail into what needs a reply, what's important and the rest, sums up each conversation in
+                a line, and drafts replies you can edit. Works with Gmail, iCloud, Fastmail, Proton Mail and more.
+              </p>
+            </article>
+            <article class="card">
+              <div class="tile">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></svg>
+              </div>
+              <h3>Reminders and routines</h3>
+              <p>
+                "Remind me to call the dentist on Monday." Reminders can repeat or come before an event. Routines run
+                on a schedule, like a rundown of your day every morning.
+              </p>
+            </article>
+            <article class="card">
+              <div class="tile">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></svg>
+              </div>
+              <h3>On your phone, through Telegram</h3>
+              <p>
+                Connect your own Telegram bot and talk to Mimi when you're out. Reminders reach you there, and you can
+                approve what it wants to do with a tap.
+              </p>
+            </article>
+            <article class="card">
+              <div class="tile">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>
+              </div>
+              <h3>The people in your life</h3>
+              <p>
+                Your contacts and the people you email, in one list. Type @ and a name to ask about someone, and it
+                knows who you mean.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="privacy" aria-labelledby="privacy-title">
+        <div class="wrap">
+          <div class="section-head">
+            <p class="eyebrow">Private by design</p>
+            <h2 id="privacy-title">Your data stays with you.</h2>
+            <p>
+              Mimi is an app on your computer, not a website. The people who make it never see your conversations,
+              because there's nowhere for them to go.
+            </p>
+          </div>
+          <div class="grouped">
+            <div class="row">
+              <div class="tile private">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.28 2.55a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45L4 16" /></svg>
+              </div>
+              <div>
+                <h3>Runs on your computer</h3>
+                <p>Conversations, memories, email and calendars are kept on your own machine.</p>
+              </div>
+            </div>
+            <div class="row">
+              <div class="tile private">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="16" height="16" x="4" y="4" rx="2" /><rect width="6" height="6" x="9" y="9" rx="1" /><path d="M15 2v2M15 20v2M2 15h2M2 9h2M20 15h2M20 9h2M9 2v2M9 20v2" /></svg>
+              </div>
+              <div>
+                <h3>Local AI models by default</h3>
+                <p>
+                  Mimi looks at your computer, suggests a model that fits, downloads it and runs it itself. No extra
+                  software to install.
+                </p>
+              </div>
+            </div>
+            <div class="row">
+              <div class="tile private">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="m4.9 4.9 14.2 14.2" /></svg>
+              </div>
+              <div>
+                <h3>No Mimi server, no account, no tracking</h3>
+                <p>
+                  The project runs no servers. There's nothing to sign up for, no analytics and no telemetry. Mimi talks
+                  to a service like Google or Telegram only when you use it, and straight from your computer.
+                </p>
+              </div>
+            </div>
+            <div class="row">
+              <div class="tile cloud">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" /></svg>
+              </div>
+              <div>
+                <h3>Cloud models only if you choose</h3>
+                <p>
+                  On an older computer, a cloud model may work better. You can pick one, and Mimi shows it everywhere
+                  it's in use, so you always know.
+                </p>
+              </div>
+            </div>
+            <div class="row">
+              <div class="tile private">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="11" x="3" y="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+              </div>
+              <div>
+                <h3>Encrypted on disk</h3>
+                <p>
+                  Your conversations, memories, mail and passwords are kept in an encrypted database on your computer.
+                </p>
+              </div>
+            </div>
+            <div class="row">
+              <div class="tile lime">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" /><path d="m9 12 2 2 4-4" /></svg>
+              </div>
+              <div>
+                <h3>It asks before it acts</h3>
+                <p>
+                  Before it sends an email or changes your calendar, it shows you exactly what it's about to do and
+                  waits for your OK. You decide what, if anything, it may do without asking.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="install" aria-labelledby="install-title">
+        <div class="wrap">
+          <div class="section-head">
+            <p class="eyebrow">Get Mimi</p>
+            <h2 id="install-title">Install it with one line.</h2>
+            <p>For macOS and Linux. Mimi brings everything it needs, so there's nothing else to set up.</p>
+          </div>
+          <div class="install">
+            <div class="card">
+              <h3 class="plain">The quickest way</h3>
+              <p class="note">Open Terminal, paste this line and press Return:</p>
+              <div class="command">
+                <code id="install-command">curl -fsSL https://raw.githubusercontent.com/TisaneFruitRouge/mimi/main/scripts/install.sh | sh</code>
+                <button class="button secondary small" type="button" data-copy="install-command" hidden>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></svg>
+                  <span>Copy</span>
+                </button>
+              </div>
+              <p class="note">
+                It picks the right installer for your computer from GitHub, checks it and installs it. Run it again
+                later to update. Mimi doesn't look for updates on its own unless you turn that on.
+              </p>
+            </div>
+            <div class="card">
+              <div class="downloads-head">
+                <div>
+                  <h3 class="plain">Or download an installer</h3>
+                  <p>Pick the one for your system from the releases page on GitHub.</p>
+                </div>
+                <a class="button secondary" href="https://github.com/TisaneFruitRouge/mimi/releases">Downloads on GitHub</a>
+              </div>
+              <ul class="packages">
+                <li><strong>macOS</strong><span>.dmg, Apple silicon or Intel</span></li>
+                <li><strong>Debian, Ubuntu</strong><span>.deb</span></li>
+                <li><strong>Fedora, openSUSE</strong><span>.rpm</span></li>
+                <li><strong>Other Linux</strong><span>AppImage</span></li>
+              </ul>
+              <p class="note">
+                Linux builds are for 64-bit Intel and AMD processors. The Mac app isn't notarized by Apple yet, so the
+                first time you open it, right-click Mimi and choose Open.
+              </p>
+              <p class="note">
+                Mimi is at an early stage. If the releases page is still empty, the first version isn't out yet.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="source-title">
+        <div class="wrap">
+          <div class="card source">
+            <img src="/assets/icon.svg" alt="" width="88" height="88" />
+            <div>
+              <h2 id="source-title">Free and open source</h2>
+              <p>
+                Mimi is free software under the GNU AGPL, version 3 or later. You can read every line, build it
+                yourself and change it.
+              </p>
+            </div>
+            <a class="button secondary" href="https://github.com/TisaneFruitRouge/mimi">View on GitHub</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <span>Mimi · AGPL-3.0-or-later</span>
+        <nav aria-label="Footer">
+          <a href="/privacy">Privacy policy</a>
+          <a href="/terms">Terms of use</a>
+          <a href="https://github.com/TisaneFruitRouge/mimi">GitHub</a>
+          <a href="https://github.com/TisaneFruitRouge/mimi/issues">Report a problem</a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="/assets/site.js" defer></script>
+  </body>
+</html>

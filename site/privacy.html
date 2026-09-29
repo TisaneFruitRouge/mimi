@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Privacy policy · Mimi</title>
+    <meta
+      name="description"
+      content="Mimi's privacy policy. Mimi runs on your own computer; the project runs no servers and collects nothing. How Mimi uses Google Calendar data, and how to remove its access."
+    />
+    <meta name="theme-color" content="#f5f5f7" />
+    <meta name="color-scheme" content="light" />
+    <link rel="canonical" href="https://mimi-opal.vercel.app/privacy" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="Mimi" />
+    <meta property="og:title" content="Privacy policy · Mimi" />
+    <meta property="og:description" content="Mimi runs on your own computer. The project runs no servers and collects nothing." />
+    <meta property="og:url" content="https://mimi-opal.vercel.app/privacy" />
+    <meta property="og:image" content="https://mimi-opal.vercel.app/og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <link rel="preload" href="/assets/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+
+    <header class="bar">
+      <div class="wrap">
+        <a class="brand" href="/" aria-label="Mimi, home">
+          <img src="/assets/icon.svg" alt="" width="30" height="30" />
+          Mimi
+        </a>
+        <nav aria-label="Main">
+          <a class="optional" href="/#features">Features</a>
+          <a href="/#install">Install</a>
+          <a href="https://github.com/TisaneFruitRouge/mimi">GitHub</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main" class="wrap doc">
+      <header>
+        <h1>Privacy policy</h1>
+        <p>Last updated <time datetime="2026-09-29">29 September 2026</time></p>
+      </header>
+
+      <div class="card summary">
+        <h2>The short version</h2>
+        <ul>
+          <li>Mimi is an app that runs on your own computer. There is no Mimi server.</li>
+          <li>The Mimi project collects nothing: no account, no analytics, no telemetry.</li>
+          <li>Your conversations, memories, email, calendars and contacts stay on your computer, in an encrypted database.</li>
+          <li>
+            Mimi contacts other services, such as Google or Telegram, only when you use a feature that needs them, and
+            always straight from your computer.
+          </li>
+          <li>Data from Google is used only to show and manage your calendar for you. It is never sent to the Mimi project.</li>
+        </ul>
+      </div>
+
+      <div class="prose">
+        <h2 id="who">Who this covers</h2>
+        <p>
+          This policy covers the Mimi app and this website. Mimi is a free, open-source project published on
+          <a href="https://github.com/TisaneFruitRouge/mimi">GitHub</a>. "We" means the people who make Mimi.
+        </p>
+
+        <h2 id="collect">What we collect</h2>
+        <p>
+          Nothing. Mimi runs entirely on your computer, and we don't operate any server for it. There's no account to
+          create, and the app sends us no analytics, usage statistics, crash reports or telemetry. We never receive
+          your conversations, your memories, your email, your calendars, your contacts or anything else you do in
+          Mimi.
+        </p>
+
+        <h2 id="stored">Where your data is kept</h2>
+        <p>
+          Everything Mimi keeps is stored on your computer: your conversations, what it remembers about you, your email,
+          your contacts, your reminders, and the passwords and sign-ins for the accounts you connect. It's kept in an
+          encrypted database. The key to that database is kept in your computer's keychain, or, on a system without
+          one, in a file that only your user account can read.
+        </p>
+        <p>
+          You can remove any connected account in Mimi's settings, and see, change or delete what it remembers about
+          you. Deleting Mimi's data folder deletes all of it.
+        </p>
+
+        <h2 id="third-parties">When Mimi contacts other services</h2>
+        <p>
+          Mimi connects to another service only when you use a feature that needs it, and always directly from your
+          computer. Nothing passes through us. Each of these services has its own privacy policy.
+        </p>
+        <ul>
+          <li>
+            <strong>Google</strong>, if you connect Google Calendar (by signing in with Google, or with your calendar's
+            private address). See <a href="#google">Google user data</a> below.
+          </li>
+          <li>
+            <strong>Other calendar and contact services</strong> you connect, such as iCloud, Fastmail or Nextcloud.
+          </li>
+          <li>
+            <strong>Your email provider</strong>, to fetch and send your mail if you connect an email account. To find
+            your provider's servers when you set it up, Mimi may look at your email domain's public settings; it doesn't
+            use a lookup service. Pictures in an email are loaded from the internet only when you click "Load images"
+            on that message.
+          </li>
+          <li>
+            <strong>Telegram</strong>, if you connect a Telegram bot. Messages between you and your bot go through
+            Telegram's servers and are not end-to-end encrypted, so Telegram can read them.
+          </li>
+          <li>
+            <strong>Hugging Face</strong>, when you download an AI model for Mimi to run on your computer. Only the
+            model file is requested.
+          </li>
+          <li>
+            <strong>A cloud AI service you choose</strong>, such as OpenAI, Anthropic or Mistral. Mimi uses models on
+            your computer by default. If you choose a cloud model instead, your messages and the information needed to
+            answer them (for example, what Mimi remembers about the topic, or the calendar events or emails you ask
+            about) are sent to that service. Mimi shows clearly whenever a cloud model is in use.
+          </li>
+          <li>
+            <strong>TypeSafe</strong>, only if you choose its Jev model to sort your email, with your own key. The
+            emails it sorts are sent to TypeSafe for that.
+          </li>
+          <li>
+            <strong>GitHub</strong>, only if you turn on "Check for new versions", which is off by default. Mimi then
+            asks GitHub for the latest release about once a day. The request carries no information about you. The install
+            command also downloads Mimi from GitHub.
+          </li>
+        </ul>
+
+        <h2 id="google">Google user data</h2>
+        <p>
+          This section explains how Mimi uses information it receives from Google when you choose "Sign in with Google"
+          to connect Google Calendar.
+        </p>
+
+        <h3>What Mimi asks for, and why</h3>
+        <div class="scopes">
+          <div class="callout">
+            <code>https://www.googleapis.com/auth/calendar.events</code>
+            <p>
+              To show the events on your calendars in Mimi, and to add, change or remove events when you ask it to or
+              have given it permission.
+            </p>
+          </div>
+          <div class="callout">
+            <code>https://www.googleapis.com/auth/calendar.calendarlist.readonly</code>
+            <p>To list your calendars, with their names and colours and whether you can add events to them.</p>
+          </div>
+        </div>
+        <p>Mimi asks for nothing else from your Google account.</p>
+
+        <h3>How it's used</h3>
+        <ul>
+          <li>Only to show your calendar in Mimi and to let the assistant answer your questions about it and manage events for you.</li>
+          <li>
+            Mimi asks for your approval before it adds, changes or removes an event, unless you've told it in Settings ›
+            Permissions that it doesn't need to ask.
+          </li>
+          <li>Mimi never uses it for advertising, never sells it, and never uses it to train AI models.</li>
+        </ul>
+
+        <h3>How it's stored</h3>
+        <p>
+          Mimi talks to Google directly from your computer. Your Google sign-in is stored encrypted in Mimi's database
+          on your device. Mimi reads your events from Google when it needs them rather than keeping a copy, though
+          details you ask about can appear in your conversations and in reminders you set for an event, which stay on
+          your computer too.
+        </p>
+
+        <h3>Sharing</h3>
+        <p>
+          Your Google data is never sent to the Mimi project, and Mimi doesn't give it to anyone else. It leaves your
+          computer only when you direct it to: if you've chosen a cloud AI model, the event details needed to answer a
+          question you ask go to that service as part of your request; and if you have Mimi send you reminders or
+          summaries through Telegram, those messages go through Telegram.
+        </p>
+
+        <h3>Removing Mimi's access</h3>
+        <ul>
+          <li>In Mimi, disconnect Google Calendar in Settings › Connections. This also asks Google to revoke Mimi's access.</li>
+          <li>
+            Or, at any time, in your Google account: go to
+            <a href="https://myaccount.google.com/connections">myaccount.google.com</a> → Security → Third-party access
+            (also called "Your connections to third-party apps and services") and remove Mimi.
+          </li>
+        </ul>
+
+        <h3>Limited Use</h3>
+        <p class="callout">
+          Mimi's use and transfer of information received from Google APIs adheres to the
+          <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>,
+          including the Limited Use requirements.
+        </p>
+
+        <h2 id="website">This website</h2>
+        <p>
+          This website has no cookies, no analytics and no scripts from other companies, and it loads nothing from
+          other sites. It is hosted by Vercel, which handles the technical information any website receives, such as
+          your IP address, in order to deliver the pages.
+        </p>
+
+        <h2 id="changes">Changes to this policy</h2>
+        <p>
+          If Mimi's handling of your data changes, we'll update this page and the date at the top.
+        </p>
+
+        <h2 id="contact">Contact</h2>
+        <p>
+          Questions about this policy or about Mimi's privacy: open an issue on
+          <a href="https://github.com/TisaneFruitRouge/mimi/issues">GitHub</a>.
+        </p>
+      </div>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <span>Mimi · AGPL-3.0-or-later</span>
+        <nav aria-label="Footer">
+          <a href="/">Home</a>
+          <a href="/privacy" aria-current="page">Privacy policy</a>
+          <a href="/terms">Terms of use</a>
+          <a href="https://github.com/TisaneFruitRouge/mimi">GitHub</a>
+        </nav>
+      </div>
+    </footer>
+  </body>
+</html>
