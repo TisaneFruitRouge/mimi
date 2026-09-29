@@ -3,14 +3,15 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use mimi_protocol::{
-    DismissDuplicate, DuplicateSuggestion, Event, MentionCandidate, MergePeople, NewHandle,
-    NewPerson, Person, PersonSummary, PersonUpdate, RemovedPerson, SplitPerson,
+    DismissDuplicate, DuplicateSuggestion, Event, MentionCandidate, MergePeople, MergePreview,
+    MergeRequest, MergeResult, NewHandle, NewPerson, Person, PersonSummary, PersonUpdate,
+    RemovedPerson, SplitPerson,
 };
 use serde::Deserialize;
 use uuid::Uuid;
 
 use super::error::{ApiResult, AppError};
-use crate::people::{self, CardHandle, normalize, store};
+use crate::people::{self, CardHandle, merge, normalize, store};
 use crate::{AppState, now_ms};
 
 #[derive(Deserialize)]
@@ -244,28 +245,116 @@ pub async fn remove_handle(
     found(people::get(&state, id).await?)
 }
 
+pub async fn update_handle(
+    State(state): State<Arc<AppState>>,
+    Path((id, handle)): Path<(Uuid, Uuid)>,
+    Json(h): Json<NewHandle>,
+) -> ApiResult<Person> {
+    let new = valid_handle(&h)?;
+    if !state
+        .db
+        .call(move |c| store::update_manual_handle(c, id, handle, &new))
+        .await?
+    {
+        return Err(AppError::bad_request(
+            "This comes from an address book. Change it there, and Mimi follows.",
+        ));
+    }
+    changed(&state);
+    found(people::get(&state, id).await?)
+}
+
+fn refused(r: &merge::Refusal) -> AppError {
+    match r {
+        merge::Refusal::Missing => AppError::not_found("Person"),
+        other => AppError::bad_request(other.message()),
+    }
+}
+
+/// Merges one person into the one in the URL (the "Possible duplicates" button of older
+/// clients). `POST /people/merge` does several, with a name, and can be undone.
 pub async fn merge(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
     Json(req): Json<MergePeople>,
 ) -> ApiResult<Person> {
-    let other = req.other;
-    if other == id {
-        return Err(AppError::bad_request("That's the same person."));
-    }
-    let both = state
-        .db
-        .call(move |c| Ok(store::exists(c, id)? && store::exists(c, other)?))
-        .await?;
-    if !both {
-        return Err(AppError::not_found("Person"));
-    }
+    let done = merge_people(
+        &state,
+        MergeRequest {
+            keep: id,
+            others: vec![req.other],
+            name: None,
+        },
+    )
+    .await?;
+    Ok(Json(done.person))
+}
+
+/// What merging would give, for the confirmation: names to choose from and every way
+/// to reach them.
+pub async fn merge_preview(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<MergeRequest>,
+) -> ApiResult<MergePreview> {
+    let names = people::source_names(&state).await?;
     state
         .db
-        .call(move |c| store::merge(c, id, other, now_ms()))
-        .await?;
-    changed(&state);
-    found(people::get(&state, id).await?)
+        .call(move |c| merge::preview(c, req.keep, &req.others, &names))
+        .await?
+        .map(Json)
+        .map_err(|r| refused(&r))
+}
+
+/// Merges the people the user picked into `keep`: their own choice, never a guess.
+pub async fn merge_many(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<MergeRequest>,
+) -> ApiResult<MergeResult> {
+    Ok(Json(merge_people(&state, req).await?))
+}
+
+async fn merge_people(state: &AppState, req: MergeRequest) -> Result<MergeResult, AppError> {
+    let name = req.name.as_deref().map(valid_name).transpose()?;
+    let MergeRequest { keep, others, .. } = req;
+    let done = state
+        .db
+        .call(move |c| merge::merge(c, keep, &others, name.as_deref(), now_ms()))
+        .await?
+        .map_err(|r| refused(&r))?;
+    after_merge(state, done.notes_changed, done.settings_changed).await;
+    let person = people::get(state, keep)
+        .await?
+        .ok_or_else(|| AppError::not_found("Person"))?;
+    Ok(MergeResult {
+        person,
+        merge_id: done.id,
+    })
+}
+
+/// Tells every client what a merge (or its undo) changed.
+async fn after_merge(state: &AppState, notes: bool, settings: bool) {
+    changed(state);
+    if notes {
+        state.events.publish(Event::MemoryChanged);
+    }
+    if settings && let Ok(settings) = crate::settings::load(&state.db).await {
+        state.events.publish(Event::SettingsChanged { settings });
+    }
+}
+
+/// Undoes a merge exactly: everyone comes back under their own id. Returns the person
+/// they had been merged into.
+pub async fn undo_merge(
+    State(state): State<Arc<AppState>>,
+    Path(merge_id): Path<Uuid>,
+) -> ApiResult<Person> {
+    let undone = state
+        .db
+        .call(move |c| merge::undo(c, merge_id, now_ms()))
+        .await?
+        .map_err(|r| AppError::new(axum::http::StatusCode::CONFLICT, "conflict", r.message()))?;
+    after_merge(&state, undone.notes_changed, undone.settings_changed).await;
+    found(people::get(&state, undone.keep).await?)
 }
 
 pub async fn split(
@@ -275,7 +364,7 @@ pub async fn split(
 ) -> ApiResult<Person> {
     let fresh = state
         .db
-        .call(move |c| store::split(c, id, &req.source_id, &req.record, now_ms()))
+        .call(move |c| store::split(c, id, req.source_id.as_deref(), &req.record, now_ms()))
         .await?
         .ok_or_else(|| AppError::not_found("Card"))?;
     changed(&state);

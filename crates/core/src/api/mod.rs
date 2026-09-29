@@ -81,6 +81,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/people/sync", post(people::sync))
         .route("/people/removed", get(people::removed))
         .route("/people/removed/{id}/restore", post(people::restore))
+        .route("/people/merge", post(people::merge_many))
+        .route("/people/merge/preview", post(people::merge_preview))
+        .route("/people/merges/{id}/undo", post(people::undo_merge))
         .route(
             "/people/{id}",
             get(people::get)
@@ -90,7 +93,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/people/{id}/handles", post(people::add_handle))
         .route(
             "/people/{id}/handles/{handle}",
-            axum::routing::delete(people::remove_handle),
+            axum::routing::delete(people::remove_handle).patch(people::update_handle),
         )
         .route("/people/{id}/events", get(calendar::person_events))
         .route(

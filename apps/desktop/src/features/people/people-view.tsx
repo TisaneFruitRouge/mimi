@@ -1,14 +1,15 @@
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { MoreHorizontal, Plus, RefreshCw, Search, Trash2, UserX, Users } from "lucide-react";
+import { Merge, MoreHorizontal, Plus, RefreshCw, Search, Trash2, UserX, Users, X } from "lucide-react";
 import { cn } from "cn";
 import { toast } from "sonner";
 
 import type { DuplicateSuggestion } from "@/bindings/DuplicateSuggestion";
+import type { PersonSummary } from "@/bindings/PersonSummary";
 import { Grouped, IconTile, Page, PageHeader, Row, Section } from "@/components/page";
 import { ChannelIcons, PersonAvatar } from "@/components/people";
 import { Button } from "@/components/ui/button";
-import { ContextMenuItem } from "@/components/ui/context-menu";
+import { ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,6 +19,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { DeletePersonDialog, type Doomed, RemovedContactsDialog } from "@/features/people/delete-person";
+import { MergeDialog, MergePicker, type MergePlan, mergedToast, reachLine } from "@/features/people/merge-people";
 import { AddPersonDialog } from "@/features/people/person-dialogs";
 import { PersonPage } from "@/features/people/person-page";
 import type { Section as Place } from "@/features/shell/top-bar";
@@ -34,7 +36,8 @@ export function PeopleView({
   onSection,
 }: {
   personId: string | null;
-  onOpenPerson: (id: string | null) => void;
+  /** `replace`: an old address of the same person (no new history entry). */
+  onOpenPerson: (id: string | null, replace?: boolean) => void;
   onAsk: (draft: Draft) => void;
   onOpenConversation: (id: string) => void;
   onSection: (s: Place) => void;
@@ -44,6 +47,10 @@ export function PeopleView({
   const [syncing, setSyncing] = useState(false);
   const [deleting, setDeleting] = useState<Doomed | null>(null);
   const [showRemoved, setShowRemoved] = useState(false);
+  const [picking, setPicking] = useState<{ id: string; name: string } | null>(null);
+  const [merging, setMerging] = useState<MergePlan | null>(null);
+  /** People chosen together (⌘/Ctrl-click, Shift-click); empty when only one is. */
+  const [chosen, setChosen] = useState<string[]>([]);
   const list = useRef<HTMLDivElement>(null);
   const people = useQuery({
     queryKey: keys.peopleList(query),
@@ -52,6 +59,45 @@ export function PeopleView({
   });
   const duplicates = useQuery({ queryKey: keys.duplicates, queryFn: api.duplicates }).data ?? [];
   const everyone = people.data ?? [];
+  const many = chosen.length > 1;
+  const isChosen = (id: string) => (many ? chosen.includes(id) : id === personId);
+
+  /** The usual list behaviour: ⌘/Ctrl-click adds or removes, Shift-click takes the range. */
+  const choose = (id: string, e: React.MouseEvent) => {
+    const base = many ? chosen : personId ? [personId] : [];
+    if (e.metaKey || e.ctrlKey) {
+      const next = base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
+      setChosen(next.length > 1 ? next : []);
+      if (next.length === 1) onOpenPerson(next[0]);
+      else if (!personId || !next.includes(personId)) onOpenPerson(next[0] ?? null);
+      return;
+    }
+    if (e.shiftKey && personId) {
+      const from = everyone.findIndex((p) => p.id === personId);
+      const to = everyone.findIndex((p) => p.id === id);
+      if (from !== -1 && to !== -1) {
+        const [lo, hi] = from < to ? [from, to] : [to, from];
+        const range = everyone.slice(lo, hi + 1).map((p) => p.id);
+        // The first one clicked stays first: they're the one kept by a merge.
+        setChosen([personId, ...range.filter((x) => x !== personId)]);
+        return;
+      }
+    }
+    setChosen([]);
+    onOpenPerson(id);
+  };
+  /** Merging the people chosen: the first one clicked is kept. */
+  const mergeChosen = () => {
+    const keep = personId && chosen.includes(personId) ? personId : chosen[0];
+    setMerging({ keep, others: chosen.filter((x) => x !== keep) });
+  };
+  const askMerge = (p: { id: string; name: string }) => setPicking({ id: p.id, name: p.name });
+  const afterMerge = (id: string) => {
+    setChosen([]);
+    onOpenPerson(id);
+  };
+  // An old address of someone merged into another person: show them at their own.
+  const moved = useCallback((id: string) => onOpenPerson(id, true), [onOpenPerson]);
 
   const refresh = async () => {
     setSyncing(true);
@@ -66,6 +112,7 @@ export function PeopleView({
 
   /** Selects someone and moves focus to their row, for arrow-key browsing. */
   const select = (id: string) => {
+    setChosen([]);
     onOpenPerson(id);
     requestAnimationFrame(() => list.current?.querySelector<HTMLElement>(`[data-id="${id}"]`)?.focus());
   };
@@ -180,11 +227,15 @@ export function PeopleView({
           role="listbox"
           aria-label="People"
           className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-2 pb-4"
+          aria-multiselectable
           onKeyDown={(e) => {
             if (e.key === "ArrowDown" || e.key === "ArrowUp") {
               e.preventDefault();
               step(e.key === "ArrowDown" ? 1 : -1);
-            } else if (personId && (e.key === "Delete" || (e.key === "Backspace" && (e.metaKey || e.ctrlKey)))) {
+            } else if (e.key === "Escape" && many) {
+              e.preventDefault();
+              setChosen([]);
+            } else if (!many && personId && (e.key === "Delete" || (e.key === "Backspace" && (e.metaKey || e.ctrlKey)))) {
               e.preventDefault();
               askDelete(personId);
             }
@@ -201,26 +252,44 @@ export function PeopleView({
             <p className="px-3 py-2 type-callout text-muted-foreground">No one matches “{query}”.</p>
           )}
           {everyone.map((p) => {
-            const active = p.id === personId;
+            const active = isChosen(p.id);
+            const inGroup = many && active;
             return (
               <ThingMenu
                 key={p.id}
-                onOpen={() => onOpenPerson(p.id)}
+                onOpen={() => select(p.id)}
                 onAsk={() => onAsk(mentionDraft("person", p.id, p.name))}
                 more={
-                  <ContextMenuItem variant="destructive" onSelect={() => setDeleting({ id: p.id, name: p.name })}>
-                    <Trash2 /> Delete contact…
-                  </ContextMenuItem>
+                  inGroup ? (
+                    <>
+                      <ContextMenuItem onSelect={mergeChosen}>
+                        <Merge /> Merge {chosen.length} contacts…
+                      </ContextMenuItem>
+                      <ContextMenuItem onSelect={() => setChosen([])}>
+                        <X /> Clear selection
+                      </ContextMenuItem>
+                    </>
+                  ) : (
+                    <>
+                      <ContextMenuItem onSelect={() => askMerge(p)}>
+                        <Merge /> Merge with…
+                      </ContextMenuItem>
+                      <ContextMenuSeparator />
+                      <ContextMenuItem variant="destructive" onSelect={() => setDeleting({ id: p.id, name: p.name })}>
+                        <Trash2 /> Delete contact…
+                      </ContextMenuItem>
+                    </>
+                  )
                 }
               >
                 <button
                   data-id={p.id}
                   role="option"
                   aria-selected={active}
-                  tabIndex={active || (!personId && p === everyone[0]) ? 0 : -1}
-                  onClick={() => onOpenPerson(p.id)}
+                  tabIndex={p.id === personId || (!personId && p === everyone[0]) ? 0 : -1}
+                  onClick={(e) => choose(p.id, e)}
                   className={cn(
-                    "flex min-h-12 items-center gap-3 rounded-[10px] px-2 py-1.5 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/45",
+                    "flex min-h-12 items-center gap-3 rounded-[10px] px-2 py-1.5 text-left transition-colors outline-none select-none focus-visible:ring-2 focus-visible:ring-ring/45",
                     active ? "bg-[rgb(118_118_128/0.14)]" : "hover:bg-[rgb(118_118_128/0.07)]",
                   )}
                 >
@@ -235,10 +304,27 @@ export function PeopleView({
             );
           })}
         </div>
+        {many && (
+          <div className="material mx-3 mb-3 flex items-center gap-2 rounded-[14px] py-2 pr-2 pl-3 shadow-[var(--shadow-raised)]">
+            <span className="min-w-0 flex-1 truncate type-subhead text-muted-foreground">{chosen.length} selected</span>
+            <Button size="sm" variant="ghost" onClick={() => setChosen([])}>
+              Clear
+            </Button>
+            <Button size="sm" onClick={mergeChosen}>
+              <Merge /> Merge {chosen.length}
+            </Button>
+          </div>
+        )}
       </aside>
 
       <div className="h-full min-w-0 flex-1">
-        {personId ? (
+        {many ? (
+          <Chosen
+            people={chosen.map((id) => everyone.find((p) => p.id === id)).filter((p) => !!p)}
+            onMerge={mergeChosen}
+            onClear={() => setChosen([])}
+          />
+        ) : personId ? (
           <PersonPage
             key={personId}
             id={personId}
@@ -247,6 +333,8 @@ export function PeopleView({
             onOpenConversation={onOpenConversation}
             onSection={onSection}
             onDelete={(p) => setDeleting({ id: p.id, name: p.name })}
+            onMerge={askMerge}
+            onMoved={moved}
           />
         ) : (
           <Page className="max-w-[720px]">
@@ -275,7 +363,7 @@ export function PeopleView({
                   title="Possible duplicates"
                   subtitle="These share a name. If they're the same person, combine them so your assistant sees one person with every way to reach them."
                 />
-                <Duplicates pairs={duplicates} />
+                <Duplicates pairs={duplicates} onMerged={(id) => onOpenPerson(id)} />
               </>
             ) : (
               <div className="mt-24 flex flex-col items-center gap-3 text-center">
@@ -301,11 +389,71 @@ export function PeopleView({
         onRestored={(id) => onOpenPerson(id)}
       />
       <RemovedContactsDialog open={showRemoved} onOpenChange={setShowRemoved} onRestored={(id) => onOpenPerson(id)} />
+      <MergePicker
+        person={picking}
+        onClose={() => setPicking(null)}
+        onPick={(other) => {
+          if (!picking) return;
+          setMerging({ keep: picking.id, others: [other] });
+          setPicking(null);
+        }}
+      />
+      <MergeDialog plan={merging} onClose={() => setMerging(null)} onMerged={afterMerge} />
     </div>
   );
 }
 
-function Duplicates({ pairs }: { pairs: DuplicateSuggestion[] }) {
+/** Several people chosen in the list: who, and merging them. */
+function Chosen({
+  people,
+  onMerge,
+  onClear,
+}: {
+  people: PersonSummary[];
+  onMerge: () => void;
+  onClear: () => void;
+}) {
+  return (
+    <Page className="max-w-[560px]">
+      <div className="mt-16 flex flex-col items-center gap-4 text-center">
+        <div className="flex -space-x-3">
+          {people.slice(0, 5).map((p) => (
+            <span key={p.id} className="rounded-full ring-[3px] ring-canvas">
+              <PersonAvatar id={p.id} name={p.name} size="lg" />
+            </span>
+          ))}
+        </div>
+        <div className="flex flex-col gap-1">
+          <p className="type-title">{people.length} people selected</p>
+          <p className="type-callout text-muted-foreground">
+            If they're all the same person, merge them into one contact with every way to reach them.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="secondary" onClick={onClear}>
+            Clear selection
+          </Button>
+          <Button onClick={onMerge}>
+            <Merge /> Merge {people.length} contacts…
+          </Button>
+        </div>
+      </div>
+      <Grouped>
+        {people.map((p) => (
+          <Row
+            key={p.id}
+            icon={<PersonAvatar id={p.id} name={p.name} />}
+            title={p.name}
+            detail={reachLine(p)}
+            trailing={<ChannelIcons channels={p.channels} />}
+          />
+        ))}
+      </Grouped>
+    </Page>
+  );
+}
+
+function Duplicates({ pairs, onMerged }: { pairs: DuplicateSuggestion[]; onMerged: (id: string) => void }) {
   const [busy, setBusy] = useState<string | null>(null);
   const run = async (key: string, fn: () => Promise<unknown>) => {
     setBusy(key);
@@ -361,7 +509,12 @@ function Duplicates({ pairs }: { pairs: DuplicateSuggestion[] }) {
                     size="sm"
                     variant="secondary"
                     disabled={busy === key}
-                    onClick={() => run(key, () => api.mergePeople(a.id, b.id))}
+                    onClick={() =>
+                      run(key, async () =>
+                        // Same name: nothing to choose, so no confirmation. Undo is in the toast.
+                        mergedToast(await api.mergeMany({ keep: a.id, others: [b.id], name: null }), onMerged),
+                      )
+                    }
                   >
                     Same person
                   </Button>

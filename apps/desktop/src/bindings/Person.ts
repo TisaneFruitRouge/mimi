@@ -8,6 +8,7 @@ export type Person = { id: string, name: string, nickname: string | null, handle
  */
 sources: Array<PersonSource>, 
 /**
- * Added by the user rather than imported.
+ * Added by the user rather than imported. (People merged into them become cards
+ * in `sources` instead.)
  */
 manual: boolean, };

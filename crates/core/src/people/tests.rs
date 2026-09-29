@@ -181,7 +181,7 @@ async fn split_merge_and_manual_people() {
 
     // Wrongly unified? Split the work card off; later syncs keep it apart.
     let other = db
-        .call(move |c| store::split(c, sam, "work", "a", 2))
+        .call(move |c| store::split(c, sam, Some("work"), "a", 2))
         .await
         .unwrap()
         .expect("split");
@@ -194,8 +194,9 @@ async fn split_merge_and_manual_people() {
     assert_eq!(everyone(&db).await.len(), 2);
 
     // Merge them back, and the second person disappears.
-    db.call(move |c| store::merge(c, sam, other, 3))
+    db.call(move |c| super::merge::merge(c, sam, &[other], None, 3))
         .await
+        .unwrap()
         .unwrap();
     let names = SourceNames::from([
         ("icloud".into(), "iCloud".into()),
@@ -264,6 +265,7 @@ fn search_ranks_names_nicknames_and_numbers() {
             name: name.into(),
             nickname: nick.map(Into::into),
             channels: vec![],
+            reach: vec![],
         },
         values: values.iter().map(|v| v.to_string()).collect(),
     };
@@ -469,7 +471,7 @@ async fn deleting_never_swallows_or_resurrects_anyone_else() {
     sync(&db, "icloud", icloud).await;
     let back = person(&db, sam).await.unwrap();
     assert_eq!(back.sources.len(), 1);
-    assert_eq!(back.sources[0].source_id, "icloud");
+    assert_eq!(back.sources[0].source_id.as_deref(), Some("icloud"));
     assert_eq!(person(&db, samantha).await.unwrap().sources.len(), 1);
 }
 
@@ -618,7 +620,11 @@ async fn told_apart_pairs_survive_a_restore_but_not_a_final_deletion() {
     let dupes = db.call(|c| store::duplicates(c)).await.unwrap();
     assert_eq!(dupes.len(), 1);
     let (a, b) = (dupes[0].0.id, dupes[0].1.id);
-    let (home, other) = if person(&db, a).await.unwrap().sources[0].source_id == "icloud" {
+    let (home, other) = if person(&db, a).await.unwrap().sources[0]
+        .source_id
+        .as_deref()
+        == Some("icloud")
+    {
         (a, b)
     } else {
         (b, a)
@@ -644,4 +650,486 @@ async fn told_apart_pairs_survive_a_restore_but_not_a_final_deletion() {
     delete(&db, home).await;
     sync(&db, "icloud", vec![]).await;
     assert_eq!(traces(&db, home).await, 0);
+}
+
+// Merging people the user picks (never automatic), and undoing it.
+
+use super::merge::{self, Refusal, UndoRefusal};
+
+async fn merge_into(
+    db: &Db,
+    keep: uuid::Uuid,
+    others: &[uuid::Uuid],
+    name: Option<&'static str>,
+) -> Result<merge::Merged, Refusal> {
+    let others = others.to_vec();
+    db.call(move |c| merge::merge(c, keep, &others, name, 5))
+        .await
+        .unwrap()
+}
+
+async fn undo(db: &Db, id: uuid::Uuid) -> Result<merge::Undone, UndoRefusal> {
+    db.call(move |c| merge::undo(c, id, 6)).await.unwrap()
+}
+
+async fn resolve(db: &Db, id: uuid::Uuid) -> Option<uuid::Uuid> {
+    db.call(move |c| merge::resolve(c, id)).await.unwrap()
+}
+
+/// Someone added by hand, with these handles (labelled "mobile").
+async fn manual(db: &Db, name: &'static str, handles: &[(Channel, &str)]) -> uuid::Uuid {
+    let handles: Vec<CardHandle> = handles
+        .iter()
+        .map(|(channel, value)| CardHandle {
+            channel: *channel,
+            value: value.to_string(),
+            label: Some("mobile".into()),
+        })
+        .collect();
+    db.call(move |c| store::create_manual(c, name, None, &handles, 1))
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn people_the_user_merges_stay_merged_across_syncs() {
+    let db = db_with_sources(&["icloud", "work"]).await;
+    let home = || {
+        vec![card(
+            "1",
+            "Sam Carter",
+            &[(Channel::Phone, "+41 79 123 45 67")],
+        )]
+    };
+    let work = |email: &str| vec![card("a", "S. Carter", &[(Channel::Email, email)])];
+    sync(&db, "icloud", home()).await;
+    sync(&db, "work", work("sam@work.example")).await;
+    // Nothing in common: two people, not even suggested (the names differ).
+    assert_eq!(everyone(&db).await.len(), 2);
+    let (sam, s) = (
+        id_of(&db, "Sam Carter").await,
+        id_of(&db, "S. Carter").await,
+    );
+
+    let merged = merge_into(&db, sam, &[s], Some("Sam Carter"))
+        .await
+        .unwrap();
+    assert!(!merged.notes_changed && !merged.settings_changed);
+    assert_eq!(
+        everyone(&db).await,
+        [(
+            "Sam Carter".to_owned(),
+            vec![Channel::Phone, Channel::Email]
+        )]
+    );
+
+    // Both address books change, and the cards stay where the user put them. The name
+    // the user chose stays too, although the work card now has more on it.
+    sync(&db, "icloud", home()).await;
+    let mut changed = work("sam@new-job.example");
+    changed[0].handles.push(CardHandle {
+        channel: Channel::Telegram,
+        value: "@samc".into(),
+        label: None,
+    });
+    sync(&db, "work", changed).await;
+    let p = person(&db, sam).await.unwrap();
+    assert_eq!(p.name, "Sam Carter");
+    assert_eq!(p.sources.len(), 2);
+    assert_eq!(
+        p.handles
+            .iter()
+            .map(|h| h.value.as_str())
+            .collect::<Vec<_>>(),
+        ["+41 79 123 45 67", "sam@new-job.example", "@samc"]
+    );
+    // A new card sharing one of their addresses joins them, as always.
+    let mut both = home();
+    both.push(card(
+        "2",
+        "Sammy",
+        &[(Channel::Email, "sam@new-job.example")],
+    ));
+    sync(&db, "icloud", both).await;
+    assert_eq!(everyone(&db).await.len(), 1);
+
+    // The old id still finds them.
+    assert_eq!(resolve(&db, s).await, Some(sam));
+    assert!(person(&db, s).await.is_none());
+
+    // "Not the same person" separates the work card again, for good.
+    let apart = db
+        .call(move |c| store::split(c, sam, Some("work"), "a", 7))
+        .await
+        .unwrap()
+        .unwrap();
+    sync(&db, "work", work("sam@new-job.example")).await;
+    assert_eq!(person(&db, apart).await.unwrap().sources.len(), 1);
+    assert_eq!(person(&db, sam).await.unwrap().sources.len(), 2);
+}
+
+#[tokio::test]
+async fn someone_added_by_hand_merges_and_separates_again() {
+    let db = db_with_sources(&["icloud"]).await;
+    let book = || {
+        vec![card(
+            "1",
+            "Margaret Smith",
+            &[(Channel::Email, "maggie@example.com")],
+        )]
+    };
+    sync(&db, "icloud", book()).await;
+    let maggie = id_of(&db, "Margaret Smith").await;
+    let gran = manual(&db, "Gran", &[(Channel::Phone, "022 555 00 00")]).await;
+    // An empty contact added by hand, with a name only.
+    let nana = manual(&db, "Nana", &[]).await;
+
+    merge_into(&db, maggie, &[gran, nana], None).await.unwrap();
+    let p = person(&db, maggie).await.unwrap();
+    assert_eq!(p.name, "Margaret Smith");
+    assert!(!p.manual);
+    // What was added by hand is a card of its own, one per contact.
+    let cards: Vec<_> = p
+        .sources
+        .iter()
+        .map(|s| (s.source_id.as_deref(), s.name.as_str()))
+        .collect();
+    assert_eq!(
+        cards,
+        [
+            (Some("icloud"), "Margaret Smith"),
+            (None, "Gran"),
+            (None, "Nana")
+        ]
+    );
+    assert_eq!(p.handles.len(), 2);
+    let phone = p
+        .handles
+        .iter()
+        .find(|h| h.channel == Channel::Phone)
+        .unwrap();
+    assert_eq!(phone.source_id, None);
+    assert_eq!(phone.label.as_deref(), Some("mobile"));
+
+    // The address book refreshing keeps what the user added.
+    sync(&db, "icloud", book()).await;
+    assert_eq!(person(&db, maggie).await.unwrap().sources.len(), 3);
+
+    // Separating Gran brings her back as she was, under her own id.
+    let back = db
+        .call(move |c| store::split(c, maggie, None, &gran.to_string(), 8))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(back, gran);
+    let g = person(&db, gran).await.unwrap();
+    assert!(g.manual);
+    assert_eq!(g.name, "Gran");
+    assert_eq!(g.handles[0].value, "022 555 00 00");
+    assert_eq!(resolve(&db, gran).await, Some(gran));
+    // Hand-added handles are still the user's: they can be removed again.
+    let handle = g.handles[0].id;
+    assert!(
+        db.call(move |c| store::remove_manual_handle(c, gran, handle))
+            .await
+            .unwrap()
+    );
+
+    // The address book dropping Margaret keeps her: Nana's card is still hers.
+    sync(&db, "icloud", vec![]).await;
+    let p = person(&db, maggie).await.unwrap();
+    assert_eq!(p.sources.len(), 1);
+    assert_eq!(p.sources[0].name, "Nana");
+
+    // Someone added by hand as the one kept: an imported card merges in and splits off.
+    let db = db_with_sources(&["icloud"]).await;
+    sync(&db, "icloud", book()).await;
+    let maggie = id_of(&db, "Margaret Smith").await;
+    let gran = manual(&db, "Gran", &[(Channel::Phone, "022 555 00 00")]).await;
+    merge_into(&db, gran, &[maggie], None).await.unwrap();
+    let g = person(&db, gran).await.unwrap();
+    assert!(g.manual);
+    assert_eq!(g.name, "Gran");
+    assert_eq!(g.sources.len(), 1);
+    let apart = db
+        .call(move |c| store::split(c, gran, Some("icloud"), "1", 9))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(person(&db, apart).await.unwrap().name, "Margaret Smith");
+    assert_eq!(person(&db, gran).await.unwrap().handles.len(), 1);
+}
+
+async fn settings_with_exceptions(db: &Db, rules: Vec<mimi_protocol::PermissionRule>) {
+    use mimi_protocol::{Autonomy, KindPermission, Permissions, Settings};
+    let settings = Settings {
+        permissions: Permissions(
+            [(
+                "send_mail".to_owned(),
+                KindPermission {
+                    autonomy: Autonomy::Ask,
+                    rules,
+                },
+            )]
+            .into(),
+        ),
+        ..Settings::default()
+    };
+    crate::settings::save(db, &settings).await.unwrap();
+}
+
+async fn exceptions(db: &Db) -> Vec<mimi_protocol::PermissionRule> {
+    crate::settings::load(db).await.unwrap().permissions.0["send_mail"]
+        .rules
+        .clone()
+}
+
+async fn subject(db: &Db, path: &'static str) -> Option<String> {
+    db.call(move |c| {
+        c.query_row(
+            "SELECT subject FROM memory_notes WHERE path = ?1",
+            [path],
+            |r| r.get(0),
+        )
+    })
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn everything_about_a_merged_person_follows_them_and_an_undo_puts_it_back() {
+    use mimi_protocol::{Autonomy, PermissionRule, PermissionTarget};
+    let db = db_with_sources(&["icloud", "work"]).await;
+    sync(
+        &db,
+        "icloud",
+        vec![
+            card("1", "Léa Martin", &[(Channel::Phone, "+33 6 12 34 56 78")]),
+            card("2", "Alex Kim", &[(Channel::Email, "alex@example.com")]),
+        ],
+    )
+    .await;
+    sync(
+        &db,
+        "work",
+        vec![card("a", "Lea M.", &[(Channel::Email, "lea@work.example")])],
+    )
+    .await;
+    let (lea, lm, alex) = (
+        id_of(&db, "Léa Martin").await,
+        id_of(&db, "Lea M.").await,
+        id_of(&db, "Alex Kim").await,
+    );
+    let loulou = manual(&db, "Loulou", &[]).await;
+    db.call(move |c| {
+        store::set_apart(c, lm, alex)?;
+        store::set_apart(c, lea, lm)?;
+        c.execute(
+            "INSERT INTO memory_notes (path, title, body, subject, source, created_at, updated_at)
+             VALUES ('people/lea-m.md', 'Lea M.', 'Works with the user', ?1, 'learned', 0, 0),
+                    ('people/loulou.md', 'Loulou', 'The user''s sister', ?2, 'learned', 0, 0)",
+            [lm.to_string(), loulou.to_string()],
+        )
+    })
+    .await
+    .unwrap();
+    // Emails to the work address could go without asking; to Léa's others, never.
+    let rule = |p, autonomy| PermissionRule {
+        target: PermissionTarget::Person(p),
+        autonomy,
+    };
+    settings_with_exceptions(
+        &db,
+        vec![
+            rule(lm, Autonomy::Automatic),
+            rule(alex, Autonomy::Automatic),
+        ],
+    )
+    .await;
+
+    let merged = merge_into(&db, lea, &[lm, loulou], Some("Léa"))
+        .await
+        .unwrap();
+    assert!(merged.notes_changed && merged.settings_changed);
+    let p = person(&db, lea).await.unwrap();
+    assert_eq!(p.name, "Léa");
+    assert_eq!(p.sources.len(), 3);
+    // Notes about them are about Léa now.
+    assert_eq!(subject(&db, "people/lea-m.md").await, Some(lea.to_string()));
+    assert_eq!(
+        subject(&db, "people/loulou.md").await,
+        Some(lea.to_string())
+    );
+    // Told apart from Alex: Léa still is. (Told apart from Léa herself: gone.)
+    let pairs = db
+        .call(|c| {
+            let mut stmt = c.prepare("SELECT a, b FROM people_apart")?;
+            stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .await
+        .unwrap();
+    let (a, b) = if lea < alex { (lea, alex) } else { (alex, lea) };
+    assert_eq!(pairs, [(a.to_string(), b.to_string())]);
+    // Automatic only if it was for everyone merged: Léa's own number asked (by default).
+    assert_eq!(
+        exceptions(&db).await,
+        [rule(alex, Autonomy::Automatic), rule(lea, Autonomy::Ask)]
+    );
+    // Everyone merged away is found under Léa.
+    let mut into = db.call(move |c| merge::merged_into(c, lea)).await.unwrap();
+    into.sort();
+    let mut expected = vec![lm, loulou];
+    expected.sort();
+    assert_eq!(into, expected);
+
+    // Undo: everyone is back under their own id, with everything they had.
+    let undone = undo(&db, merged.id).await.unwrap();
+    assert_eq!(undone.keep, lea);
+    assert_eq!(person(&db, lea).await.unwrap().name, "Léa Martin");
+    assert_eq!(person(&db, lm).await.unwrap().sources[0].record, "a");
+    let l = person(&db, loulou).await.unwrap();
+    assert!(l.manual && l.sources.is_empty());
+    assert_eq!(subject(&db, "people/lea-m.md").await, Some(lm.to_string()));
+    assert_eq!(
+        subject(&db, "people/loulou.md").await,
+        Some(loulou.to_string())
+    );
+    assert_eq!(
+        exceptions(&db).await,
+        [
+            rule(alex, Autonomy::Automatic),
+            rule(lm, Autonomy::Automatic)
+        ]
+    );
+    assert_eq!(resolve(&db, lm).await, Some(lm));
+    let pairs = db
+        .call(|c| {
+            c.query_row("SELECT COUNT(*) FROM people_apart", [], |r| {
+                r.get::<_, i64>(0)
+            })
+        })
+        .await
+        .unwrap();
+    assert_eq!(pairs, 2);
+    assert_eq!(everyone(&db).await.len(), 4);
+    // Once is enough.
+    assert_eq!(undo(&db, merged.id).await, Err(UndoRefusal::Gone));
+}
+
+#[tokio::test]
+async fn an_undo_never_loses_what_happened_since() {
+    let db = db_with_sources(&["icloud"]).await;
+    let a = manual(&db, "Ann", &[]).await;
+    let b = manual(&db, "Annie", &[]).await;
+    let c = manual(&db, "A.", &[]).await;
+
+    // Separated again since: the undo would take Annie's id from her.
+    let first = merge_into(&db, a, &[b], None).await.unwrap();
+    db.call(move |conn| store::split(conn, a, None, &b.to_string(), 7))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(undo(&db, first.id).await, Err(UndoRefusal::Moved));
+
+    // Merged again since: only the latest merge can be undone.
+    let second = merge_into(&db, a, &[b], None).await.unwrap();
+    let third = merge_into(&db, a, &[c], None).await.unwrap();
+    assert_eq!(undo(&db, second.id).await, Err(UndoRefusal::Moved));
+    undo(&db, third.id).await.unwrap();
+    undo(&db, second.id).await.unwrap();
+    assert_eq!(everyone(&db).await.len(), 3);
+
+    // Renamed since: the undo keeps the user's new name.
+    let fourth = merge_into(&db, a, &[b], Some("Ann B.")).await.unwrap();
+    db.call(move |conn| store::rename(conn, a, Some("Annabel"), None, 8))
+        .await
+        .unwrap();
+    undo(&db, fourth.id).await.unwrap();
+    assert_eq!(person(&db, a).await.unwrap().name, "Annabel");
+    assert_eq!(person(&db, b).await.unwrap().name, "Annie");
+}
+
+#[tokio::test]
+async fn merges_are_refused_for_the_same_missing_or_removed_people() {
+    let db = db_with_sources(&["icloud"]).await;
+    let cards = || {
+        vec![
+            card("1", "Sam", &[(Channel::Phone, "+41791234567")]),
+            card("2", "Alex", &[(Channel::Phone, "+41797654321")]),
+        ]
+    };
+    sync(&db, "icloud", cards()).await;
+    let (sam, alex) = (id_of(&db, "Sam").await, id_of(&db, "Alex").await);
+    assert_eq!(merge_into(&db, sam, &[sam], None).await, Err(Refusal::Same));
+    assert_eq!(
+        merge_into(&db, sam, &[alex, alex], None).await,
+        Err(Refusal::Same)
+    );
+    assert_eq!(merge_into(&db, sam, &[], None).await, Err(Refusal::Nobody));
+    assert_eq!(
+        merge_into(&db, sam, &[uuid::Uuid::now_v7()], None).await,
+        Err(Refusal::Missing)
+    );
+    // Nothing was done halfway.
+    assert_eq!(everyone(&db).await.len(), 2);
+    // Someone deleted can't be merged until they're brought back…
+    delete(&db, alex).await;
+    assert_eq!(
+        merge_into(&db, sam, &[alex], None).await,
+        Err(Refusal::Removed("Alex".into()))
+    );
+    // …and once they are, their cards on the way back join whoever they're merged into.
+    restore(&db, alex).await;
+    merge_into(&db, sam, &[alex], None).await.unwrap();
+    sync(&db, "icloud", cards()).await;
+    assert_eq!(everyone(&db).await.len(), 1);
+    assert_eq!(person(&db, sam).await.unwrap().sources.len(), 2);
+    assert_eq!(traces(&db, alex).await, 0);
+}
+
+#[tokio::test]
+async fn the_preview_shows_every_way_to_reach_them_once() {
+    let db = db_with_sources(&["icloud"]).await;
+    sync(
+        &db,
+        "icloud",
+        vec![card(
+            "1",
+            "Sam Carter",
+            &[
+                (Channel::Phone, "+41 79 123 45 67"),
+                (Channel::Email, "sam@home.example"),
+            ],
+        )],
+    )
+    .await;
+    let sam = id_of(&db, "Sam Carter").await;
+    let s = manual(
+        &db,
+        "Sammy",
+        &[
+            (Channel::Email, "SAM@home.example"),
+            (Channel::Phone, "022 555 00 00"),
+        ],
+    )
+    .await;
+    let names = SourceNames::new();
+    let preview = db
+        .call(move |c| merge::preview(c, s, &[sam], &names))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(preview.names, ["Sammy", "Sam Carter"]);
+    assert_eq!(preview.people[0].id, s);
+    let values: Vec<_> = preview.handles.iter().map(|h| h.value.as_str()).collect();
+    assert_eq!(
+        values,
+        ["022 555 00 00", "+41 79 123 45 67", "SAM@home.example"]
+    );
+    // Summaries carry a hint of how to reach them, for pickers.
+    assert_eq!(
+        preview.people[1].reach,
+        ["+41 79 123 45 67", "sam@home.example"]
+    );
 }

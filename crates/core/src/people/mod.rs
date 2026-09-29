@@ -19,6 +19,7 @@ use crate::{AppState, now_ms};
 
 pub mod carddav;
 pub mod mentions;
+pub mod merge;
 pub mod normalize;
 pub mod store;
 pub mod tools;
@@ -157,9 +158,17 @@ pub async fn source_names(state: &AppState) -> Result<store::SourceNames, DbErro
         .collect())
 }
 
+/// A person by id. An id merged into someone else finds that person (whose `id`
+/// then differs from the one asked for).
 pub async fn get(state: &AppState, id: uuid::Uuid) -> Result<Option<Person>, DbError> {
     let names = source_names(state).await?;
-    state.db.call(move |c| store::get(c, id, &names)).await
+    state
+        .db
+        .call(move |c| match merge::resolve(c, id)? {
+            Some(id) => store::get(c, id, &names),
+            None => Ok(None),
+        })
+        .await
 }
 
 /// People matching `query` (name, nickname, number, address…), best first. An empty

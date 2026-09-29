@@ -392,6 +392,19 @@ than inventing their own.
   a person back under the same id. Hand-added people and handles are simply deleted.
   Memory notes are kept (their link clears and comes back on restore). Tests in
   `people/tests.rs` cover the edge cases; keep a deleted card from resurrecting anyone.
+- **Merging** (`people/merge.rs`, migration 0023) is only ever the user's choice, of
+  any people: "Merge with…" (a person's "…" and right-click menus, a searchable picker),
+  or several chosen in the list (⌘/Ctrl- or Shift-click), then a sheet with the name
+  and every way to reach them (`POST /people/merge/preview`, `POST /people/merge`;
+  `/people/{id}/merge` still takes one). Everything pointing at a merged-away id
+  follows the kept one in the same transaction: cards, handles, memory `subject`,
+  permission exceptions (automatic only if it was for all of them), `people_apart`,
+  restore marks; old ids resolve through `people_merged` (`people::get`, mentions,
+  chats about them). What a merged-away person had added by hand becomes a card of its
+  own (`person_own_cards`, `source_id: null`), so "Not the same person" can separate
+  anyone again, under their old id. `POST /people/merges/{id}/undo` (the toast's Undo)
+  puts everything back exactly; only the latest merge into a person, within a week,
+  and never over a later split, merge or deletion. Removed people can't be merged.
 - **Mentions:** `Mention { kind: person | event | mail_thread | mail_message, id, label }`,
   with `@label` in the message text for people and events and `#label` for email
   (`MentionKind::sigil`, `mentionSigil` in `lib/draft.ts`). The engine resolves them

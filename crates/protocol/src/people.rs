@@ -32,13 +32,17 @@ pub struct Handle {
     pub source_name: String,
 }
 
-/// A contact card from a source, attached to a person.
+/// A contact card attached to a person: from a source, or what the user had added by
+/// hand to someone they later merged into this person. Each can be separated again
+/// ("Not the same person", `POST /people/{id}/split`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct PersonSource {
-    pub source_id: String,
+    /// The connection the card comes from, or `None` for what the user added by hand.
+    pub source_id: Option<String>,
     pub source_name: String,
-    /// The card's id within its source.
+    /// The card's id within its source; for what the user added, the id that contact
+    /// had before the merge.
     pub record: String,
     /// The name on that card.
     pub name: String,
@@ -53,7 +57,8 @@ pub struct Person {
     pub handles: Vec<Handle>,
     /// The cards merged into this person. Several means it was unified.
     pub sources: Vec<PersonSource>,
-    /// Added by the user rather than imported.
+    /// Added by the user rather than imported. (People merged into them become cards
+    /// in `sources` instead.)
     pub manual: bool,
 }
 
@@ -66,6 +71,9 @@ pub struct PersonSummary {
     pub nickname: Option<String>,
     /// Distinct channels, in a stable order.
     pub channels: Vec<Channel>,
+    /// A few of their numbers and addresses, for telling people apart in pickers.
+    #[serde(default)]
+    pub reach: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -96,6 +104,8 @@ pub struct PersonUpdate {
     pub nickname: Option<String>,
 }
 
+/// `POST /people/{id}/merge`: one person into another. `POST /people/merge` takes
+/// several at once, and a name.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct MergePeople {
@@ -103,10 +113,49 @@ pub struct MergePeople {
     pub other: Uuid,
 }
 
+/// The user's choice to merge people (`POST /people/merge`; `POST
+/// /people/merge/preview` shows the result first). Never automatic: contacts only
+/// unify on their own through a shared number, address or username.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MergeRequest {
+    /// Whose id stays. Old links to the others find this person.
+    pub keep: Uuid,
+    /// Folded into `keep`, then gone.
+    pub others: Vec<Uuid>,
+    /// The merged person's name; `None` keeps `keep`'s.
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// What a merge would give, for the confirmation.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MergePreview {
+    /// Everyone being merged, `keep` first.
+    pub people: Vec<PersonSummary>,
+    /// Their different names, `keep`'s first: the names to choose from.
+    pub names: Vec<String>,
+    /// Every way to reach the merged person; the same number or address counts once.
+    pub handles: Vec<Handle>,
+}
+
+/// A merge that happened.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MergeResult {
+    pub person: Person,
+    /// Undoes it exactly, while nothing has come to depend on it:
+    /// `POST /people/merges/{merge_id}/undo`.
+    pub merge_id: Uuid,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct SplitPerson {
-    pub source_id: String,
+    /// The card's `PersonSource.source_id`: `None` for what the user added by hand.
+    #[serde(default)]
+    pub source_id: Option<String>,
     pub record: String,
 }
 

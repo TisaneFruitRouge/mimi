@@ -266,7 +266,7 @@ fn forget_empty_removals(c: &Connection) -> rusqlite::Result<bool> {
 }
 
 /// An imported person's name follows their first card, unless the user renamed them.
-fn refresh_name(c: &Connection, person: Uuid, now: i64) -> rusqlite::Result<()> {
+pub(super) fn refresh_name(c: &Connection, person: Uuid, now: i64) -> rusqlite::Result<()> {
     // The fullest card names the person ("Sam Carter" with a phone and an email, not a
     // "Sam C." holding only a Signal number), whatever order the cards arrived in.
     let first: Option<String> = c
@@ -291,11 +291,12 @@ fn refresh_name(c: &Connection, person: Uuid, now: i64) -> rusqlite::Result<()> 
 
 /// Removes an imported person once nothing is left of them (and nothing is on its way
 /// back to them after a restore).
-fn drop_if_empty(c: &Connection, person: Uuid) -> rusqlite::Result<()> {
+pub(super) fn drop_if_empty(c: &Connection, person: Uuid) -> rusqlite::Result<()> {
     c.execute(
         "DELETE FROM people WHERE id = ?1 AND manual = 0
            AND NOT EXISTS (SELECT 1 FROM person_records WHERE person_id = ?1)
            AND NOT EXISTS (SELECT 1 FROM person_handles WHERE person_id = ?1)
+           AND NOT EXISTS (SELECT 1 FROM person_own_cards WHERE person_id = ?1)
            AND NOT EXISTS (SELECT 1 FROM person_records_removed
                            WHERE person_id = ?1 AND restoring = 1)",
         [person.to_string()],
@@ -389,6 +390,28 @@ pub fn rename(
 
 pub fn add_handle(c: &Connection, person: Uuid, h: &CardHandle, now: i64) -> rusqlite::Result<()> {
     insert_handle(c, person, h, None, None, now)
+}
+
+/// Changes a handle the user added. Imported ones can't be changed here.
+pub fn update_manual_handle(
+    c: &Connection,
+    person: Uuid,
+    handle: Uuid,
+    h: &CardHandle,
+) -> rusqlite::Result<bool> {
+    c.execute(
+        "UPDATE person_handles SET channel = ?1, value = ?2, match_key = ?3, label = ?4
+         WHERE id = ?5 AND person_id = ?6 AND source IS NULL",
+        params![
+            enum_str(h.channel),
+            h.value,
+            match_key(h.channel, &h.value),
+            h.label,
+            handle.to_string(),
+            person.to_string()
+        ],
+    )
+    .map(|n| n > 0)
 }
 
 /// Removes a handle the user added. Imported ones can't be removed here.
@@ -518,63 +541,94 @@ pub fn restore(c: &mut Connection, person: Uuid, now: i64) -> rusqlite::Result<b
     Ok(true)
 }
 
-/// Folds `other` into `keep`: every card and handle moves over.
-pub fn merge(c: &mut Connection, keep: Uuid, other: Uuid, now: i64) -> rusqlite::Result<()> {
-    let tx = c.transaction()?;
-    let (k, o) = (keep.to_string(), other.to_string());
-    tx.execute(
-        "UPDATE person_records SET person_id = ?1 WHERE person_id = ?2",
-        [&k, &o],
-    )?;
-    tx.execute(
-        "UPDATE person_handles SET person_id = ?1 WHERE person_id = ?2",
-        [&k, &o],
-    )?;
-    tx.execute(
-        "UPDATE people SET
-           manual = manual OR (SELECT manual FROM people WHERE id = ?2),
-           nickname = COALESCE(nickname, (SELECT nickname FROM people WHERE id = ?2)),
-           updated_at = ?3
-         WHERE id = ?1",
-        params![k, o, now],
-    )?;
-    tx.execute("DELETE FROM people_apart WHERE a = ?1 OR b = ?1", [&o])?;
-    tx.execute("DELETE FROM people WHERE id = ?1", [&o])?;
-    tx.commit()
-}
-
-/// Moves one card (and its handles) out into a person of its own. Returns the new
-/// person, or `None` if that card isn't this person's.
+/// Moves one card (and its handles) out into a person of its own: a card from a source
+/// (`source` is its id), or what the user had added by hand to someone merged into
+/// this person (`source` is `None`, `record` that contact's old id, which they get back
+/// if it's free). Returns the new person, or `None` if that card isn't this person's.
 pub fn split(
     c: &mut Connection,
     person: Uuid,
-    source: &str,
+    source: Option<&str>,
     record: &str,
     now: i64,
 ) -> rusqlite::Result<Option<Uuid>> {
     let tx = c.transaction()?;
-    let name: Option<String> = tx
-        .query_row(
-            "SELECT name FROM person_records WHERE person_id = ?1 AND source = ?2 AND record = ?3",
-            params![person.to_string(), source, record],
-            |r| r.get(0),
-        )
-        .optional()?;
-    let Some(name) = name else { return Ok(None) };
-    let fresh = insert_person(&tx, &name, None, false, now)?;
-    tx.execute(
-        "UPDATE person_records SET person_id = ?1 WHERE source = ?2 AND record = ?3",
-        params![fresh.to_string(), source, record],
-    )?;
-    tx.execute(
-        "UPDATE person_handles SET person_id = ?1 WHERE source = ?2 AND record = ?3",
-        params![fresh.to_string(), source, record],
-    )?;
+    let fresh = match source {
+        Some(source) => {
+            let name: Option<String> = tx
+                .query_row(
+                    "SELECT name FROM person_records WHERE person_id = ?1 AND source = ?2 AND record = ?3",
+                    params![person.to_string(), source, record],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let Some(name) = name else { return Ok(None) };
+            let fresh = insert_person(&tx, &name, None, false, now)?;
+            tx.execute(
+                "UPDATE person_records SET person_id = ?1 WHERE source = ?2 AND record = ?3",
+                params![fresh.to_string(), source, record],
+            )?;
+            tx.execute(
+                "UPDATE person_handles SET person_id = ?1 WHERE source = ?2 AND record = ?3",
+                params![fresh.to_string(), source, record],
+            )?;
+            fresh
+        }
+        None => match split_own(&tx, person, record, now)? {
+            Some(fresh) => fresh,
+            None => return Ok(None),
+        },
+    };
     set_apart(&tx, person, fresh)?;
     refresh_name(&tx, person, now)?;
     drop_if_empty(&tx, person)?;
     tx.commit()?;
     Ok(Some(fresh))
+}
+
+/// Separates a hand-added card (see [`split`]) into someone added by hand again.
+fn split_own(
+    c: &Connection,
+    person: Uuid,
+    record: &str,
+    now: i64,
+) -> rusqlite::Result<Option<Uuid>> {
+    let card: Option<(String, Option<String>, i64)> = c
+        .query_row(
+            "SELECT name, nickname, created_at FROM person_own_cards WHERE record = ?1 AND person_id = ?2",
+            params![record, person.to_string()],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?;
+    let Some((name, nickname, created_at)) = card else {
+        return Ok(None);
+    };
+    // Their old id, so old links find them again, unless someone has it by now.
+    let id = match record.parse::<Uuid>() {
+        Ok(old)
+            if !c.query_row(
+                "SELECT EXISTS (SELECT 1 FROM people WHERE id = ?1)
+                     OR EXISTS (SELECT 1 FROM people_removed WHERE id = ?1)",
+                [old.to_string()],
+                |r| r.get::<_, bool>(0),
+            )? =>
+        {
+            old
+        }
+        _ => Uuid::now_v7(),
+    };
+    c.execute(
+        "INSERT INTO people (id, name, nickname, manual, created_at, updated_at) VALUES (?1, ?2, ?3, 1, ?4, ?5)",
+        params![id.to_string(), name, nickname, created_at, now],
+    )?;
+    c.execute(
+        "UPDATE person_handles SET person_id = ?1, record = NULL
+         WHERE person_id = ?2 AND source IS NULL AND record = ?3",
+        params![id.to_string(), person.to_string(), record],
+    )?;
+    c.execute("DELETE FROM person_own_cards WHERE record = ?1", [record])?;
+    c.execute("DELETE FROM people_merged WHERE id = ?1", [id.to_string()])?;
+    Ok(Some(id))
 }
 
 pub fn set_apart(c: &Connection, a: Uuid, b: Uuid) -> rusqlite::Result<()> {
@@ -625,17 +679,31 @@ pub fn get(c: &Connection, id: Uuid, names: &SourceNames) -> rusqlite::Result<Op
     let mut stmt = c.prepare(
         "SELECT source, record, name FROM person_records WHERE person_id = ?1 ORDER BY rowid",
     )?;
-    let sources = stmt
+    let mut sources: Vec<PersonSource> = stmt
         .query_map([id.to_string()], |r| {
             let source: String = r.get(0)?;
             Ok(PersonSource {
                 source_name: source_name(names, Some(&source)),
-                source_id: source,
+                source_id: Some(source),
                 record: r.get(1)?,
                 name: r.get(2)?,
             })
         })?
         .collect::<Result<_, _>>()?;
+    // What the user had added to people merged into this one.
+    let mut stmt = c.prepare(
+        "SELECT record, name FROM person_own_cards WHERE person_id = ?1 ORDER BY created_at, rowid",
+    )?;
+    for card in stmt.query_map([id.to_string()], |r| {
+        Ok(PersonSource {
+            source_id: None,
+            source_name: MANUAL_SOURCE_NAME.to_owned(),
+            record: r.get(0)?,
+            name: r.get(1)?,
+        })
+    })? {
+        sources.push(card?);
+    }
     Ok(Some(Person {
         id,
         name,
@@ -679,6 +747,9 @@ pub fn match_keys_of(c: &Connection, person: Uuid) -> rusqlite::Result<Vec<Strin
         .collect()
 }
 
+/// How many numbers and addresses a summary carries as a hint.
+const REACH_HINTS: usize = 3;
+
 /// Everyone, with their channels and the text search matches against.
 pub struct Indexed {
     pub summary: PersonSummary,
@@ -692,32 +763,56 @@ pub fn all(c: &Connection) -> rusqlite::Result<Vec<Indexed>> {
     let people: Vec<(Uuid, String, Option<String>)> = stmt
         .query_map([], |r| Ok((parse_uuid(r, 0)?, r.get(1)?, r.get(2)?)))?
         .collect::<Result<_, _>>()?;
-    let mut stmt = c.prepare("SELECT person_id, channel, value FROM person_handles")?;
-    let mut handles: HashMap<Uuid, (BTreeSet<Channel>, Vec<String>)> = HashMap::new();
+    let mut stmt = c.prepare(
+        "SELECT person_id, channel, value, match_key FROM person_handles ORDER BY created_at, rowid",
+    )?;
+    #[derive(Default)]
+    struct Found {
+        channels: BTreeSet<Channel>,
+        values: Vec<String>,
+        /// (channel, value) once per match key, for `reach`.
+        reach: Vec<(Channel, String)>,
+        keys: HashSet<String>,
+    }
+    let mut handles: HashMap<Uuid, Found> = HashMap::new();
     for row in stmt.query_map([], |r| {
         Ok((
             parse_uuid(r, 0)?,
             parse_enum::<Channel>(r, 1)?,
             r.get::<_, String>(2)?,
+            r.get::<_, Option<String>>(3)?,
         ))
     })? {
-        let (person, channel, value) = row?;
+        let (person, channel, value, key) = row?;
         let entry = handles.entry(person).or_default();
-        entry.0.insert(channel);
-        entry.1.push(value.to_lowercase());
+        entry.channels.insert(channel);
+        entry.values.push(value.to_lowercase());
+        if entry
+            .keys
+            .insert(key.unwrap_or_else(|| value.to_lowercase()))
+        {
+            entry.reach.push((channel, value));
+        }
     }
     Ok(people
         .into_iter()
         .map(|(id, name, nickname)| {
-            let (channels, values) = handles.remove(&id).unwrap_or_default();
+            let found = handles.remove(&id).unwrap_or_default();
+            let mut reach = found.reach;
+            reach.sort_by_key(|(channel, _)| *channel);
             Indexed {
                 summary: PersonSummary {
                     id,
                     name,
                     nickname,
-                    channels: channels.into_iter().collect(),
+                    channels: found.channels.into_iter().collect(),
+                    reach: reach
+                        .into_iter()
+                        .take(REACH_HINTS)
+                        .map(|(_, v)| v)
+                        .collect(),
                 },
-                values,
+                values: found.values,
             }
         })
         .collect())
