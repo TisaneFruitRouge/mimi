@@ -218,15 +218,22 @@ fn builder(dir: &std::path::Path, passphrase: &str) -> matrix_sdk::ClientBuilder
 /// A plain sentence for a failed request. Never includes addresses or tokens.
 fn plain_error(e: &matrix_sdk::Error) -> String {
     match e.client_api_error_kind() {
-        Some(ErrorKind::Forbidden) => {
-            "Your Matrix server didn't accept that address and password.".to_owned()
-        }
-        Some(ErrorKind::UserDeactivated) => "That Matrix account was deactivated.".to_owned(),
         Some(ErrorKind::LimitExceeded(_)) => {
             "Your Matrix server asked to slow down. Try again in a minute.".to_owned()
         }
         Some(_) => "Your Matrix server refused the request.".to_owned(),
         None => "Couldn't reach your Matrix server.".to_owned(),
+    }
+}
+
+/// A plain sentence for a refused sign-in.
+fn login_error(e: &matrix_sdk::Error) -> String {
+    match e.client_api_error_kind() {
+        Some(ErrorKind::Forbidden) => {
+            "Your Matrix server didn't accept that address and password.".to_owned()
+        }
+        Some(ErrorKind::UserDeactivated) => "That Matrix account was deactivated.".to_owned(),
+        _ => plain_error(e),
     }
 }
 
@@ -285,7 +292,7 @@ async fn sign_in(
         .initial_device_display_name(&name)
         .send()
         .await
-        .map_err(|e| plain_error(&e))?;
+        .map_err(|e| login_error(&e))?;
     let user_id = login.user_id.to_string();
 
     let taken = store::list(&state.db)
