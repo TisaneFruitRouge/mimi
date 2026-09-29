@@ -266,6 +266,98 @@ and "Default", which empties it.
   instructions_reach_the_model_but_cannot_skip_approval`). The prompt also says not to
   save them to memory, since they're already known.
 
+## Messaging apps
+
+- **One layer for all apps** (`channels/`). A paired app is a `Channel`: `send`,
+  `typing`, `ask_approval`, `remind`. The app's code receives the user's messages and
+  hands them to `channels::converse`, which runs the chat turn in the app's own
+  conversation and relays the reply and any approval it waits for, on the same channel.
+  Reminders, routine results and a routine's approvals go to every paired app through
+  `channels::owners`. Apps without buttons answer prompts in text (`channels::replies`):
+  a quoted reply or a reaction answers the prompt it points at; a bare "yes"/"no" the
+  only approval waiting on that channel, a bare "done"/"snooze" the latest reminder of
+  the hour.
+
+### Signal
+
+- **Linked device.** Mimi links to the user's own Signal account as a secondary device,
+  like Signal Desktop, with presage (<https://github.com/whisperfish/presage>,
+  AGPL-3.0-only, pinned to a revision; without its `cdsi` feature, which needs BoringSSL
+  and a forked SQLite). Its libraries generate code from `.proto` files, so building
+  needs `protoc`. The device is named after the assistant.
+- **Its own thread** (`worker.rs`). presage uses `spawn_local` and libsignal's stores
+  aren't `Send`, so each connection runs presage on a dedicated thread with a
+  current-thread Tokio runtime and a `LocalSet` (64 MB stack: libsignal's futures are
+  several MB unoptimised). The daemon holds a `Worker` handle (commands in: send these
+  pieces to Note to Self, answered with their timestamps) and reads `Report`s (a code, linked,
+  online, offline, unlinked, a message).
+- **Linking.** `ConnectionSetup::Signal {}` saves the one Signal connection (or reuses
+  it: "Link again" keeps its conversation) and starts linking. presage's provisioning
+  address (`sgnl://linkdevice?uuid=…&pub_key=…`) becomes the connection's
+  `action_url` with status `needs_action`, so `ConnectionsChanged` carries it to the
+  dialog, which draws it as a QR code with the `qrcode` package on this computer. It is
+  never opened as a link. When Signal closes a code nobody scanned, a new one follows at
+  once; failing to reach Signal shows "Can't reach Signal right now. Retrying…" and backs
+  off. After an hour without a scan linking stops ("Show a new code"); a daemon restart
+  within that hour resumes it. Once linked, the connection says "Linked as <profile
+  name, else number>", and after the first catch-up Mimi greets the user in Note to Self,
+  saying how it works and that its messages arrive silently.
+- **Note to Self is the conversation.** What the user writes there reaches the linked
+  device as a "sent" transcript from another of their devices, addressed to their own
+  account. `classify.rs` keeps exactly that (and a plain message to themselves, which some
+  apps may send) plus reactions in Note to Self. Messages from this device or with a
+  timestamp Mimi used (the last 256) are its own echoes. Everything else (other people,
+  groups, what the user sends others, receipts, typing, calls, stories, edits, messages
+  without text) is dropped on the Signal thread, unread and unlogged. Messages go to a
+  "Signal" conversation through `channels::converse`; `/new` starts another.
+- **Mimi's messages** are sent to the account itself, which libsignal-service turns into
+  a "sent" transcript for the user's other devices: they show in Note to Self as the
+  user's own. So each starts with the assistant's name in bold on its own line. Markdown
+  becomes plain text with Signal's style ranges (bold, italic, monospace,
+  strikethrough, counted in UTF-16; `format.rs`), links as "label (address)", split at
+  1,500 characters at line breaks, each piece headed again. Signal doesn't notify anyone
+  about their own Note to Self, so these messages are silent: the dialog, the
+  connection's line and the welcome say so. Approvals and reminders are text with
+  `APPROVAL_HINT` / `REMINDER_HINT`, remembered by the timestamps they were sent with;
+  a reply quotes that timestamp (`quote.id`), a reaction targets it
+  (`target_sent_timestamp`). No typing indicator: in Note to Self it would show nowhere
+  useful.
+- **Staying linked.** Signal forgets linked devices that stay away about 30 days, so the
+  receive loop always reconnects: after a dropped connection in a second, after a failed
+  one with backoff (2 s → 5 min), still sending meanwhile. Three refusals of the
+  device's credentials in a row (HTTP 401/403, also inside a websocket handshake error)
+  mean the user removed it on their phone: the connection shows "Unlinked from your
+  phone. Link again to keep using Signal." and stops. A linked device can't remove itself
+  from the account, so disconnecting deletes everything Mimi kept and tells the user to
+  remove it under Linked devices too.
+- **Storage** (`store.rs`, migration 0024). presage's `Store` traits are implemented on
+  Mimi's SQLCipher database (not presage-store-sqlite, whose forked libsqlite3-sys clashes
+  with rusqlite's), adapting presage-store-sqlite's protocol stores: `signal_kv`
+  (registration data with the device's password, identity key pairs, sender
+  certificate, master key and account entropy pool, the Note to Self timer),
+  `signal_sessions`, `signal_identities`, `signal_pre_keys`, `signal_signed_pre_keys`,
+  `signal_kyber_pre_keys` (+ `signal_base_keys_seen`), `signal_sender_keys`, each per
+  ACI/PNI identity. Every row has the connection id with `ON DELETE CASCADE`: removing
+  the connection removes them all, and a Signal thread still running can't write any
+  more. Nothing about messages or other people is kept: `save_message` stores nothing,
+  contacts other than the account's own and all profiles, avatars, groups and sticker
+  packs are dropped. presage would otherwise fetch every new sender's profile and every
+  group from Signal (its profile code even panics on a profile it can't decrypt, and
+  release builds abort on panics), so the store answers with stand-ins: every contact
+  exists (nameless, a timer version that never updates), every group is at the latest
+  revision, a sender's profile key is known from their message (in memory only), and an
+  unknown one is an error rather than "unknown", which stops the fetch.
+- **Logs.** presage and libsignal log linking codes and who wrote or deleted what in
+  other chats at info and warning level, so `mimid`'s default filter keeps only their
+  errors.
+- **Tests.** There is no fake Signal server: `classify`, `format` and the store are
+  unit-tested (every protocol store round-trips; removing the connection leaves no row;
+  a message's text, a contact's name and a group's title are nowhere in the database),
+  and `api/tests.rs › signal_flow` drives the channel with a stand-in worker and a
+  scripted model (a note becomes a chat turn, 👍 on the prompt approves, the reply comes
+  back styled and headed, `/new`, reminders). Linking itself needs a phone; see
+  `AGENTS.md` › Trying Signal for real.
+
 ## Reminders and routines
 
 `crates/core/src/schedule/`. Reminders tell the user something at the right time;
@@ -299,6 +391,8 @@ at 7, send me my day").
   fatal):
   - Telegram, to the paired owner, with Done / Snooze 10 min / 1 hour buttons. Only the
     owner's taps count; a second tap on a settled one answers "Already handled".
+  - Signal, in Note to Self (silently), answered by a reply ("done", "snooze 1h") or a
+    reaction (✅, 💤).
   - A desktop notification from the daemon (notify-rust over D-Bus on Linux, the
     notification center on macOS), when `Settings.desktop_notifications` is on.
   - The app: a `schedule_delivered` event (toast with Done / Snooze) and the history.
@@ -306,10 +400,11 @@ at 7, send me my day").
 - **Routines.** Each has its own conversation, created on first run and titled with the
   routine's name. A run is a normal chat turn (`chat::send_with_context`) whose
   instruction is the user message, plus a hidden `<routine>` note telling the model it's
-  a scheduled run. The answer goes to Telegram (Markdown converted to Telegram HTML, split
-  to fit) and to a desktop notification. Anything the model wants to send, change or
-  delete still needs approval: pending approvals are relayed to Telegram as Approve /
-  Don't buttons and announced on the desktop. The run waits for them in its own task (up
+  a scheduled run. The answer goes to every paired messaging app (Markdown as Telegram
+  HTML or Signal text styles, split to fit) and to a desktop notification. Anything the
+  model wants to send, change or delete still needs approval: pending approvals are
+  relayed to Telegram as Approve / Don't buttons, to Signal as a prompt to answer yes or
+  no, and announced on the desktop. The run waits for them in its own task (up
   to 30 minutes), so reminders keep going meanwhile; a run that comes due while the
   previous one is still going is skipped.
 - **Tools** for the model: `reminder_add` and `routine_add` (when: `at`, `in_minutes`,
@@ -783,7 +878,8 @@ The onboarding (`apps/desktop/src/features/onboarding/`) replaces the old setup 
    recommended downloads for it (built-in runtime, else Ollama), local servers found
    running, or a cloud service (with the trade-off said plainly; recommended first on
    weak machines).
-3. **Connections** (optional): calendar and Telegram, through the Connections dialogs.
+3. **Connections** (optional): calendar, email, Telegram and Signal, through the
+   Connections dialogs.
 4. **About you** (optional): name, place and free text, appended to the memory profile.
 5. **Finish**: waits for the download if one is running; "Start chatting".
 

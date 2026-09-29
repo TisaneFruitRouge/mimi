@@ -231,6 +231,36 @@ than inventing their own.
   inbound connections). A one-time `/start <code>` pairs it with its owner; every other
   chat is ignored. Messages go into a "Telegram" conversation; approval cards are sent as
   inline Approve / Don't buttons. Bot messages aren't end-to-end encrypted: say so.
+- **Signal** (`connections/signal/`; details in `docs/architecture.md` › Messaging apps ›
+  Signal): Mimi links to the user's own account as a device (presage, AGPL-3.0-only,
+  pinned, no `cdsi`; building needs `protoc`). One Signal connection at a time;
+  `ConnectionSetup::Signal {}` (and "Link again") reuse it. The linking address
+  (`sgnl://linkdevice…`) is the connection's `action_url`, drawn as a QR code on this
+  computer (`SignalCode` in `connect-dialogs.tsx`), never opened; expired codes are
+  replaced by themselves, and linking pauses after an hour. The conversation is **Note
+  to Self**: `classify.rs` keeps only what the user writes there (a "sent" transcript to
+  their own account from another of their devices) and reactions in it; other chats,
+  groups, receipts, calls and stories are dropped unread and never logged. Mimi answers
+  in Note to Self, every message headed with the assistant's name in bold (in Note to
+  Self everything looks like the user's), Markdown as Signal text styles (`format.rs`).
+  Signal doesn't notify for Note to Self: say so. Approvals and reminders are text with
+  `replies::APPROVAL_HINT`/`REMINDER_HINT`, answered by a quoted reply or a reaction
+  (`channels::replies`). presage runs on its own thread (`worker.rs`: current-thread
+  runtime + `LocalSet`, 64 MB stack). Its store (`store.rs`, migration 0024) is Mimi's
+  SQLCipher database, every row keyed by connection (`ON DELETE CASCADE`), and keeps
+  keys and sessions only: never messages, contacts, profiles or groups of other people
+  (stand-ins stop presage from fetching them). Refused credentials three times in a row
+  = unlinked from the phone. A linked device can't unlink itself: disconnecting deletes
+  everything here and tells the user to remove it on the phone. presage and libsignal
+  log only errors by default (`main.rs` filter): they log codes and other chats' metadata.
+- **Trying Signal for real** needs a phone, and a scratch daemon, never the user's own:
+  `export MIMI_HOME=$(mktemp -d) MIMI_KEY_STORE=file MIMI_PORT=7493
+  MIMI_NO_NOTIFICATIONS=1`, run `target/debug/mimid`, then `pnpm web` in the same shell
+  (it opens the web UI of the daemon in `$MIMI_HOME`) › Settings › Connections › Signal.
+  Scan the code (Signal › Settings › Linked devices › +), write in Note to Self, then
+  disconnect, remove the device on the phone, and delete `$MIMI_HOME`. Without the UI:
+  `POST /v1/connections {"integration":"signal"}` with the token in
+  `$MIMI_HOME/daemon.json`, and read the code from `GET /v1/connections`.
 - **Calendar panel APIs** (`api/calendar.rs`): `GET /v1/calendars` (id, name, colour,
   writable), `GET /v1/calendar/events?from&to` (ms, at most ~a year; events of every
   calendar merged, recurrence expanded, organizer/guests matched to People by email),
@@ -571,13 +601,14 @@ than inventing their own.
 - **Event-relative items** re-find their event (calendar + uid, closest occurrence)
   every 15 minutes and right before firing; gone → `ended` with a plain reason;
   calendar unreachable → keep the last known time.
-- **Delivery:** reminders go to the Telegram owner (Done / Snooze 10 min / 1 hour
-  buttons, `done:`/`snooze:`/`snooze60:` callbacks), desktop notifications
+- **Delivery:** reminders go to every paired messaging app (`channels::owners`): the
+  Telegram owner (Done / Snooze 10 min / 1 hour buttons, `done:`/`snooze:`/`snooze60:`
+  callbacks), Signal's Note to Self (answered by reply or reaction); desktop notifications
   (`notify.rs`, fail-soft, `Settings.desktop_notifications`; `MIMI_NO_NOTIFICATIONS=1`
   and tests never show one), and the app (`ScheduleDelivered` event → toast). Sending
   runs in spawned tasks so one slow channel never holds up the loop.
 - **Routines keep the approval rule.** Their tool calls go through approvals like any
-  chat; pending ones are relayed to Telegram and the desktop, and the run waits (up to
+  chat; pending ones are relayed to the messaging apps and the desktop, and the run waits (up to
   30 minutes) in its own task, never blocking the scheduler. A run whose previous run
   is still going is skipped, not queued.
 - **Tools** (`schedule/tools.rs`): `reminder_add`, `routine_add`, `schedule_list`,
