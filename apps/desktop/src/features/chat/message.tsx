@@ -6,6 +6,7 @@ import type { Action } from "@/bindings/Action";
 import type { Message } from "@/bindings/Message";
 import { Actions } from "@/features/chat/actions";
 import { MentionText } from "@/features/chat/mentions/mention-text";
+import { MessagePhotos, ModelsLink } from "@/features/chat/photos";
 import { AssistantAvatar } from "@/components/assistant-avatar";
 import { LocalityIcon } from "@/components/locality-badge";
 import { Markdown } from "@/components/markdown";
@@ -19,14 +20,24 @@ import {
 } from "@/components/ui/context-menu";
 import { openExternal } from "@/lib/transport";
 
-export function MessageView({ message }: { message: Message }) {
+export function MessageView({ message, onModels }: { message: Message; onModels?: () => void }) {
   if (message.role === "user") {
+    const photos = message.attachments ?? [];
     return (
       <MessageMenu text={message.content}>
-        <div className="flex justify-end pl-16">
-          <div className="rounded-[20px] rounded-br-[6px] bg-[#e9e9ee] px-4 py-2.5 type-body whitespace-pre-wrap">
-            <MentionText text={message.content} mentions={message.mentions} />
-          </div>
+        <div className="flex flex-col items-end gap-1.5 pl-16">
+          {photos.length > 0 && <MessagePhotos attachments={photos} />}
+          {message.content && (
+            <div className="rounded-[20px] rounded-br-[6px] bg-[#e9e9ee] px-4 py-2.5 type-body whitespace-pre-wrap">
+              <MentionText text={message.content} mentions={message.mentions} />
+            </div>
+          )}
+          {message.attachments_unseen && photos.length > 0 && (
+            <p className="max-w-[460px] text-right type-footnote text-faint">
+              This model couldn't see {photos.length === 1 ? "this photo" : "these photos"}. Choose one
+              that can in <ModelsLink onModels={onModels} />.
+            </p>
+          )}
         </div>
       </MessageMenu>
     );

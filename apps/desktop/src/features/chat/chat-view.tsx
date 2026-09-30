@@ -1,11 +1,21 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, CalendarDays, ChevronDown, Lightbulb, PenLine, Pencil, Trash2 } from "lucide-react";
+import {
+  ArrowDown,
+  CalendarDays,
+  ChevronDown,
+  ImagePlus,
+  Lightbulb,
+  PenLine,
+  Pencil,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import type { ConversationDetail } from "@/bindings/ConversationDetail";
 import type { Mention } from "@/bindings/Mention";
+import type { NewAttachment } from "@/bindings/NewAttachment";
 import type { Message } from "@/bindings/Message";
 import { AssistantAvatar } from "@/components/assistant-avatar";
 import { LocalityBadge } from "@/components/locality-badge";
@@ -29,6 +39,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Composer, type ComposerHandle } from "@/features/chat/composer";
 import { MessageView } from "@/features/chat/message";
+import { imageFiles } from "@/features/chat/photos";
 import type { Section } from "@/features/shell/top-bar";
 import { DaemonError, api, keys } from "@/lib/api";
 import { takeDraft } from "@/lib/draft";
@@ -76,7 +87,11 @@ export function ChatView({
     return () => observer.disconnect();
   }, []);
 
-  const send = async (content: string, mentions: Mention[]): Promise<boolean> => {
+  const send = async (
+    content: string,
+    mentions: Mention[],
+    attachments: NewAttachment[],
+  ): Promise<boolean> => {
     try {
       let id = conversationId;
       if (!id) {
@@ -86,7 +101,7 @@ export function ChatView({
         qc.setQueryData<ConversationDetail>(keys.conversation(id), { conversation, messages: [] });
         onCreated(id);
       }
-      const sent = await api.send(id, { content, model: null, mentions });
+      const sent = await api.send(id, { content, model: null, mentions, attachments });
       // Events usually get here first; only fill in what's missing.
       qc.setQueryData<ConversationDetail>(keys.conversation(id), (d) =>
         d
@@ -107,14 +122,40 @@ export function ChatView({
 
   const empty = !conversationId || (!detail.isLoading && messages.length === 0);
 
+  // Photos dropped anywhere on the chat join the message being written.
+  const [dropping, setDropping] = useState(false);
+  const carriesFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes("Files");
+
   return (
-    <div className="relative h-full">
+    <div
+      className="relative h-full"
+      onDragEnter={(e) => {
+        if (carriesFiles(e)) setDropping(true);
+      }}
+      onDragOver={(e) => {
+        if (!carriesFiles(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropping(false);
+      }}
+      onDrop={(e) => {
+        if (!carriesFiles(e)) return;
+        e.preventDefault();
+        setDropping(false);
+        const files = imageFiles(e.dataTransfer.files);
+        if (files.length) composer.current?.addPhotos(files);
+        else toast.error("Only photos can be added to a message.");
+      }}
+    >
       {empty ? (
         <EmptyState bottom={dockHeight} onStarter={(t) => composer.current?.setText(t)} />
       ) : (
         <MessageList
           messages={messages}
           loading={detail.isLoading}
+          onModels={() => onSection("models")}
           bottom={dockHeight}
           header={
             detail.data && (
@@ -142,6 +183,27 @@ export function ChatView({
           />
         </div>
       </div>
+      <AnimatePresence>
+        {dropping && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="pointer-events-none absolute inset-3 top-[64px] z-30 flex items-center justify-center rounded-[22px] bg-[rgb(200_242_93/0.14)] shadow-[inset_0_0_0_1.5px_rgb(86_118_13/0.22)]"
+          >
+            <motion.div
+              initial={{ scale: 0.96, y: 6 }}
+              animate={{ scale: 1, y: 0 }}
+              transition={{ type: "spring", stiffness: 480, damping: 34 }}
+              className="material-thick flex items-center gap-2 rounded-full px-4 py-2 type-callout font-medium shadow-[var(--shadow-raised)]"
+            >
+              <ImagePlus className="size-4 text-lime-deep" />
+              Drop photos to add them
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -328,11 +390,13 @@ function MessageList({
   loading,
   bottom,
   header,
+  onModels,
 }: {
   messages: Message[];
   loading: boolean;
   bottom: number;
   header: React.ReactNode;
+  onModels: () => void;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
@@ -377,7 +441,7 @@ function MessageList({
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ type: "spring", stiffness: 420, damping: 34 }}
               >
-                <MessageView message={m} />
+                <MessageView message={m} onModels={onModels} />
               </motion.div>
             ))}
           </AnimatePresence>
