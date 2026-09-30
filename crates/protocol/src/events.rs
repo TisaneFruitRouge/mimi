@@ -4,8 +4,8 @@ use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::{
-    Connection, Conversation, Delivery, Message, ModelPull, Provider, RuntimeStatus, Settings,
-    UpdateStatus,
+    Connection, Conversation, Delivery, GuestApproval, Message, ModelPull, Provider, RuntimeStatus,
+    Settings, UpdateStatus,
 };
 
 /// Pushed by the daemon to every client connected to `GET /v1/events` (WebSocket, one
@@ -64,6 +64,15 @@ pub enum Event {
     /// A reminder went off, or a routine finished: show it now.
     ScheduleDelivered {
         delivery: Delivery,
+    },
+    /// What someone in People may ask the assistant changed: refetch their access.
+    PersonAccessChanged {
+        person_id: Uuid,
+    },
+    /// Something a trusted person asked for waits for the user's OK, or was settled
+    /// (then `action.status` isn't `pending_approval` anymore). Never their conversation.
+    GuestApproval {
+        approval: GuestApproval,
     },
     /// This client fell behind and missed events. Refetch any state you display.
     Resync,

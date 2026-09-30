@@ -250,6 +250,11 @@ struct Snapshot {
     /// Permission exceptions about anyone merged, by kind, before and after.
     rules_before: Vec<(String, PermissionRule)>,
     rules_after: Vec<(String, PermissionRule)>,
+    /// What everyone merged could ask the assistant (`access`), before and after.
+    #[serde(default)]
+    access_before: Vec<crate::access::Row>,
+    #[serde(default)]
+    access_after: Option<crate::access::Row>,
 }
 
 /// What a merge did.
@@ -286,6 +291,8 @@ pub fn merge(
         keep: row(&tx, keep)?,
         ..Snapshot::default()
     };
+    // Before anyone's row goes (their access would go with it).
+    merge_access(&tx, keep, others, &mut snap, now)?;
 
     for &other in others {
         let Some(gone) = row(&tx, other)? else {
@@ -526,6 +533,47 @@ fn merge_permissions(
     Ok(changed)
 }
 
+/// What everyone merged could ask the assistant becomes the merged person's: the
+/// stricter choice (`access::combine`).
+fn merge_access(
+    c: &Connection,
+    keep: Uuid,
+    others: &[Uuid],
+    snap: &mut Snapshot,
+    now: i64,
+) -> rusqlite::Result<()> {
+    for id in std::iter::once(keep).chain(others.iter().copied()) {
+        if let Some(r) = crate::access::row(c, id)? {
+            snap.access_before.push(r);
+        }
+    }
+    if snap.access_before.is_empty() {
+        return Ok(());
+    }
+    for other in others {
+        crate::access::delete_row(c, *other)?;
+    }
+    let merged = crate::access::combine(&snap.access_before, keep, now);
+    if let Some(merged) = &merged {
+        crate::access::put_row(c, merged)?;
+    }
+    snap.access_after = merged;
+    Ok(())
+}
+
+/// Puts back everyone's access as it was before the merge, unless the user changed the
+/// merged person's since.
+fn unmerge_access(c: &Connection, keep: Uuid, snap: &Snapshot) -> rusqlite::Result<()> {
+    if snap.access_before.is_empty() || crate::access::row(c, keep)? != snap.access_after {
+        return Ok(());
+    }
+    crate::access::delete_row(c, keep)?;
+    for r in &snap.access_before {
+        crate::access::put_row(c, r)?;
+    }
+    Ok(())
+}
+
 /// Puts back the exceptions a merge replaced, unless the user changed them since.
 fn unmerge_permissions(c: &Connection, snap: &Snapshot) -> rusqlite::Result<bool> {
     if snap.rules_after.is_empty() {
@@ -696,6 +744,7 @@ pub fn undo(
         )?;
     }
     let settings_changed = unmerge_permissions(&tx, &snap)?;
+    unmerge_access(&tx, keep, &snap)?;
     tx.execute(
         "DELETE FROM people_merged WHERE merge_id = ?1",
         [merge_id.to_string()],

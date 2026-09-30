@@ -162,6 +162,26 @@ pub async fn resolve(state: &AppState, inputs: &[String]) -> Result<Vec<Guest>, 
     Ok(out)
 }
 
+/// Guests given as email addresses only, never looked up in People: what a trusted
+/// person's turn may invite, since it has no business in the user's contacts.
+pub fn addresses_only(inputs: &[String]) -> Result<Vec<Guest>, String> {
+    let mut out: Vec<Guest> = Vec::new();
+    for raw in inputs.iter().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        let guest = Guest::parse(raw)
+            .filter(|_| raw.contains('@'))
+            .ok_or_else(|| format!("Ask them for {raw}'s email address."))?;
+        if !out.iter().any(|o| o.email == guest.email) {
+            out.push(guest);
+        }
+    }
+    if out.len() > MAX_GUESTS {
+        return Err(format!(
+            "That's more than {MAX_GUESTS} guests. Add the others in the calendar app."
+        ));
+    }
+    Ok(out)
+}
+
 async fn person_guest(state: &AppState, id: Uuid) -> Result<Guest, String> {
     let person = crate::people::get(state, id)
         .await

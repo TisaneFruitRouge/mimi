@@ -63,6 +63,13 @@ pub trait Messenger: Send + Sync {
     async fn leave(&self, room: &str);
     /// Sends Markdown to a room the assistant is in, formatted as Matrix HTML.
     async fn send(&self, room: &str, markdown: &str) -> Result<(), String>;
+    /// Sends one message as plain text and Matrix HTML to a room the assistant is in.
+    /// Its event id, so a reply or reaction to it can be matched.
+    async fn send_html(&self, room: &str, body: &str, html: &str) -> Result<String, String>;
+    /// Shows, or stops showing, that the assistant is writing in a room.
+    async fn typing(&self, _room: &str, _on: bool) {}
+    /// Whether a room the assistant is in is end-to-end encrypted.
+    async fn encrypted(&self, room: &str) -> bool;
 }
 
 /// A readable room of the running client, by id.
@@ -204,5 +211,30 @@ impl Messenger for Live {
                 .map_err(|e| plain_error(&e))?;
         }
         Ok(())
+    }
+
+    async fn send_html(&self, room: &str, body: &str, html: &str) -> Result<String, String> {
+        let room = joined_room(self, room)
+            .ok_or_else(|| "Your assistant isn't in that chat.".to_owned())?;
+        room.send(RoomMessageEventContent::text_html(body, html))
+            .await
+            .map(|r| r.response.event_id.to_string())
+            .map_err(|e| plain_error(&e))
+    }
+
+    async fn typing(&self, room: &str, on: bool) {
+        if let Some(room) = joined_room(self, room) {
+            let _ = room.typing_notice(on).await;
+        }
+    }
+
+    async fn encrypted(&self, room: &str) -> bool {
+        match joined_room(self, room) {
+            Some(room) => room
+                .latest_encryption_state()
+                .await
+                .is_ok_and(|s| s.is_encrypted()),
+            None => false,
+        }
     }
 }

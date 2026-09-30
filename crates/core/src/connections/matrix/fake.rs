@@ -28,6 +28,8 @@ pub struct World {
     pub sent: Vec<(String, String)>,
     /// (room, user) for every direct chat opened.
     pub opened: Vec<(String, String)>,
+    /// Rooms that are end-to-end encrypted.
+    pub encrypted: Vec<String>,
     next: u32,
 }
 
@@ -90,6 +92,33 @@ impl FakeMessenger {
 
     pub fn sent(&self) -> Vec<(String, String)> {
         self.world().sent.clone()
+    }
+
+    /// What was sent to one room, in order.
+    pub fn sent_to(&self, room: &str) -> Vec<String> {
+        self.world()
+            .sent
+            .iter()
+            .filter(|(r, _)| r == room)
+            .map(|(_, text)| text.clone())
+            .collect()
+    }
+
+    /// A direct chat someone opened with the assistant (they invited it, it joined).
+    pub fn add_direct(&self, room: &str, user: &str, encrypted: bool) {
+        let mut w = self.world();
+        w.members
+            .insert(room.to_owned(), vec![self.me.clone(), user.to_owned()]);
+        w.joined.push(RoomInfo {
+            id: room.to_owned(),
+            members: 2,
+            direct: true,
+            creator: Some(user.to_owned()),
+            ..Default::default()
+        });
+        if encrypted {
+            w.encrypted.push(room.to_owned());
+        }
     }
 
     fn server(&self) -> String {
@@ -174,6 +203,21 @@ impl Messenger for FakeMessenger {
         w.sent.push((room.to_owned(), markdown.to_owned()));
         Ok(())
     }
+
+    async fn send_html(&self, room: &str, body: &str, _html: &str) -> Result<String, String> {
+        let mut w = self.world();
+        if !w.joined.iter().any(|r| r.id == room) {
+            return Err("Your assistant isn't in that chat.".to_owned());
+        }
+        w.next += 1;
+        let id = format!("$event{}", w.next);
+        w.sent.push((room.to_owned(), body.to_owned()));
+        Ok(id)
+    }
+
+    async fn encrypted(&self, room: &str) -> bool {
+        self.world().encrypted.iter().any(|r| r == room)
+    }
 }
 
 /// Saves a paired Matrix connection for `me`, owned by `owner` in the chat `owner_room`,
@@ -213,6 +257,7 @@ pub async fn paired_connection(
             direct: true,
             ..Default::default()
         });
+        w.encrypted.push(owner_room.to_owned());
     }
     store::upsert(
         &state.db,

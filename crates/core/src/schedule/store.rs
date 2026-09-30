@@ -26,6 +26,10 @@ pub struct Item {
     pub anchor_at: i64,
     pub created_at: i64,
     pub updated_at: i64,
+    /// Set up for someone the user trusts (`access`): it reaches them, not the user,
+    /// and only their turns see it. Never changes.
+    #[serde(default)]
+    pub for_person: Option<Uuid>,
 }
 
 impl Item {
@@ -42,7 +46,8 @@ impl Item {
 }
 
 const COLUMNS: &str = "id, kind, title, instruction, schedule, paused, next_at, snoozed_until, \
-    last_at, ended, event_start, conversation_id, created_in, anchor_at, created_at, updated_at";
+    last_at, ended, event_start, conversation_id, created_in, anchor_at, created_at, updated_at, \
+    for_person";
 
 fn opt_uuid(row: &Row, idx: usize) -> rusqlite::Result<Option<Uuid>> {
     let raw: Option<String> = row.get(idx)?;
@@ -70,6 +75,7 @@ fn item(row: &Row) -> rusqlite::Result<Item> {
         anchor_at: row.get(13)?,
         created_at: row.get(14)?,
         updated_at: row.get(15)?,
+        for_person: opt_uuid(row, 16)?,
     })
 }
 
@@ -100,7 +106,7 @@ pub async fn upsert(db: &Db, i: Item) -> Result<(), DbError> {
         c.execute(
             &format!(
                 "INSERT INTO schedule_items ({COLUMNS})
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
                  ON CONFLICT (id) DO UPDATE SET kind = excluded.kind, title = excluded.title,
                    instruction = excluded.instruction, schedule = excluded.schedule,
                    paused = excluded.paused, next_at = excluded.next_at,
@@ -126,6 +132,7 @@ pub async fn upsert(db: &Db, i: Item) -> Result<(), DbError> {
                 i.anchor_at,
                 i.created_at,
                 i.updated_at,
+                i.for_person.map(|u| u.to_string()),
             ],
         )?;
         Ok(())
@@ -209,18 +216,20 @@ pub async fn delivery_by_id(db: &Db, id: Uuid) -> Result<Option<Delivery>, DbErr
     .await
 }
 
+/// The owner's latest deliveries (not those of people they trust).
 pub async fn recent(db: &Db, limit: usize) -> Result<Vec<Delivery>, DbError> {
     db.call(move |c| {
         let mut stmt = c.prepare(&format!(
             "SELECT {DELIVERY_COLUMNS} FROM schedule_deliveries d
-             JOIN schedule_items i ON i.id = d.item_id ORDER BY d.at DESC LIMIT ?1"
+             JOIN schedule_items i ON i.id = d.item_id WHERE i.for_person IS NULL
+             ORDER BY d.at DESC LIMIT ?1"
         ))?;
         stmt.query_map([limit as i64], delivery)?.collect()
     })
     .await
 }
 
-/// Deliveries that were due in `[from, to)`, oldest first, at most `limit`.
+/// The owner's deliveries that were due in `[from, to)`, oldest first, at most `limit`.
 pub async fn due_between(
     db: &Db,
     from: i64,
@@ -231,7 +240,8 @@ pub async fn due_between(
         let mut stmt = c.prepare(&format!(
             "SELECT {DELIVERY_COLUMNS} FROM schedule_deliveries d
              JOIN schedule_items i ON i.id = d.item_id
-             WHERE d.due_at >= ?1 AND d.due_at < ?2 ORDER BY d.due_at, d.at LIMIT ?3"
+             WHERE d.due_at >= ?1 AND d.due_at < ?2 AND i.for_person IS NULL
+             ORDER BY d.due_at, d.at LIMIT ?3"
         ))?;
         stmt.query_map(params![from, to, limit as i64], delivery)?
             .collect()

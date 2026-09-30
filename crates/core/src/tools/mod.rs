@@ -32,6 +32,9 @@ pub use permissions::{CallTarget, Governs};
 pub struct ToolContext {
     pub state: Arc<AppState>,
     pub conversation_id: Uuid,
+    /// Who the turn is for: the user, or someone they trust (`access`). Tools that work
+    /// for guests check it themselves (their calendars only, their own reminders).
+    pub principal: crate::access::Principal,
 }
 
 pub trait Tool: Send + Sync {

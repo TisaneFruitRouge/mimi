@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use mimi_protocol::{KeyStorage, Paths};
 
+pub mod access;
 pub mod api;
 pub mod channels;
 pub mod chat;
@@ -66,6 +67,8 @@ pub struct AppState {
     pub mail: mail::Mail,
     /// "Check for new versions": the test endpoint and the loop's wake-up.
     pub updates: updates::Updates,
+    /// Which conversations belong to people the user trusts, kept from their clients.
+    pub access: access::Access,
 }
 
 impl AppState {
@@ -102,6 +105,7 @@ impl AppState {
             scheduler: Default::default(),
             mail: Default::default(),
             updates: Default::default(),
+            access: Default::default(),
         }
     }
 }

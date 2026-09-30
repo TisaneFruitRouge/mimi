@@ -326,16 +326,32 @@ fn deliver_reminder(state: &Arc<AppState>, item: &Item, due: i64, now: i64, fire
         conversation_id: None,
     };
     let state = state.clone();
+    let for_person = item.for_person;
     tokio::spawn(async move {
         if let Err(e) = store::record(&state.db, delivery.clone()).await {
             tracing::error!("recording a reminder failed: {e}");
+        }
+        let late = (delivery.status == DeliveryStatus::Late)
+            .then(|| format!("It was due at {}.", local_time(delivery.due_at)));
+        // Someone the user trusts gets theirs in their own chat, and only there.
+        if let Some(person) = for_person {
+            let mut reached = Vec::new();
+            for channel in crate::access::lines(&state, person).await {
+                match channel.remind(&delivery, late.as_deref()).await {
+                    Ok(()) => reached.push(channel.kind()),
+                    Err(e) => {
+                        tracing::warn!("sending a reminder to {} failed: {e}", channel.kind())
+                    }
+                }
+            }
+            state.events.publish(Event::ScheduleChanged);
+            tracing::info!(item = %delivery.item_id, channels = ?reached, "a trusted person's reminder delivered");
+            return;
         }
         state.events.publish(Event::ScheduleDelivered {
             delivery: delivery.clone(),
         });
         state.events.publish(Event::ScheduleChanged);
-        let late = (delivery.status == DeliveryStatus::Late)
-            .then(|| format!("It was due at {}.", local_time(delivery.due_at)));
         let mut reached = vec!["app"];
         reached.extend(channels::remind_everywhere(&state, &delivery, late.as_deref()).await);
         if desktop_notifications(&state).await {
@@ -361,6 +377,10 @@ async fn desktop_notifications(state: &AppState) -> bool {
 }
 
 async fn routine_conversation(state: &AppState, item: &Item) -> Option<Uuid> {
+    if let Some(person) = item.for_person {
+        // Theirs, like everything they say to the assistant.
+        return crate::access::routine_conversation(state, person, &item.title).await;
+    }
     let conversation = crate::chat::new_conversation(Some(item.title.clone()));
     crate::chat::store::upsert_conversation(&state.db, conversation.clone())
         .await
@@ -447,8 +467,21 @@ async fn run_routine(state: &Arc<AppState>, item: Item, due: i64, now: i64, fire
         }
     };
     let assistant = sent.assistant_message.id;
-    let owners = channels::owners(state).await;
+    // Where the answer goes: the owner's apps, or a trusted person's own chat. Their
+    // approvals go to them, or only as a card to the owner if their card says so.
+    let guest = match item.for_person {
+        Some(person) => crate::access::guest(state, person).await,
+        None => None,
+    };
+    let owners = match item.for_person {
+        Some(person) => crate::access::lines(state, person).await,
+        None => channels::owners(state).await,
+    };
+    let owner_approves = guest
+        .as_ref()
+        .filter(|g| g.approver == mimi_protocol::Approver::Owner);
     let mut announced = std::collections::HashSet::new();
+    let mut settled = std::collections::HashSet::new();
     let deadline = tokio::time::sleep(ROUTINE_TIMEOUT);
     tokio::pin!(deadline);
     let message = loop {
@@ -458,10 +491,26 @@ async fn run_routine(state: &Arc<AppState>, item: Item, due: i64, now: i64, fire
                     // Approvals go where the user is: their messaging apps and a desktop nudge.
                     for action in &message.actions {
                         if action.status == ActionStatus::PendingApproval && announced.insert(action.id) {
-                            channels::ask_all(&owners, action).await;
-                            if desktop_notifications(state).await {
-                                notify::show(format!("{} needs your OK", item.title), action.summary.clone()).await;
+                            match (owner_approves, item.for_person) {
+                                (Some(g), _) => {
+                                    let theirs: Vec<&dyn channels::Channel> =
+                                        owners.iter().map(|c| c.as_ref()).collect();
+                                    crate::access::ask_owner(state, g, action, &theirs).await
+                                }
+                                (None, Some(_)) => channels::ask_all(&owners, action).await,
+                                (None, None) => {
+                                    channels::ask_all(&owners, action).await;
+                                    if desktop_notifications(state).await {
+                                        notify::show(format!("{} needs your OK", item.title), action.summary.clone()).await;
+                                    }
+                                }
                             }
+                        } else if action.status != ActionStatus::PendingApproval
+                            && announced.contains(&action.id)
+                            && settled.insert(action.id)
+                            && let Some(g) = owner_approves
+                        {
+                            crate::access::settled(state, g, action);
                         }
                     }
                     if message.status != MessageStatus::Streaming {
@@ -505,7 +554,7 @@ async fn run_routine(state: &Arc<AppState>, item: Item, due: i64, now: i64, fire
         &Outgoing::reply(Some(item.title.clone()), &message),
     )
     .await;
-    if desktop_notifications(state).await {
+    if item.for_person.is_none() && desktop_notifications(state).await {
         notify::show(item.title.clone(), plain_preview(content, 180)).await;
     }
     delivery.at = crate::now_ms();
@@ -635,7 +684,11 @@ pub async fn occurrences(
     to: i64,
 ) -> Result<Vec<ScheduleOccurrence>, AppError> {
     let tz = zone();
-    let items = store::list(&state.db).await?;
+    let items: Vec<Item> = store::list(&state.db)
+        .await?
+        .into_iter()
+        .filter(|i| i.for_person.is_none())
+        .collect();
     let history = store::due_between(&state.db, from, to, MAX_HISTORY).await?;
     let mut out = Vec::new();
     for item in &items {
@@ -696,12 +749,22 @@ pub async fn occurrences(
     Ok(out)
 }
 
+/// The owner's reminders and routines. Those of people they trust are theirs alone.
 pub async fn list(state: &AppState) -> Result<Vec<ScheduleItem>, AppError> {
     Ok(store::list(&state.db)
         .await?
         .iter()
+        .filter(|i| i.for_person.is_none())
         .map(to_public)
         .collect())
+}
+
+/// The owner's item with this id: someone else's is as good as missing to them.
+pub async fn owners_item(state: &AppState, id: Uuid) -> Result<Item, AppError> {
+    store::get(&state.db, id)
+        .await?
+        .filter(|i| i.for_person.is_none())
+        .ok_or_else(|| AppError::not_found("Reminder"))
 }
 
 fn clean_title(title: &str) -> Result<String, AppError> {
@@ -735,6 +798,17 @@ pub async fn create(
     new: NewScheduleItem,
     created_in: Option<Uuid>,
 ) -> Result<Item, AppError> {
+    create_for(state, new, created_in, None).await
+}
+
+/// Like [`create`], for someone the user trusts when `for_person` is set: it reaches
+/// them in their own chat, never the user.
+pub async fn create_for(
+    state: &AppState,
+    new: NewScheduleItem,
+    created_in: Option<Uuid>,
+    for_person: Option<Uuid>,
+) -> Result<Item, AppError> {
     rules::validate(&new.schedule).map_err(AppError::bad_request)?;
     let now = now_ms();
     let mut item = Item {
@@ -754,6 +828,7 @@ pub async fn create(
         anchor_at: now,
         created_at: now,
         updated_at: now,
+        for_person,
     };
     arm(state, &mut item, ts(now), &zone()).await;
     if item.ended.is_some() {

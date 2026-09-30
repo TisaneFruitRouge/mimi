@@ -53,6 +53,7 @@ async fn daily_due(state: &AppState, title: &str, due: &str) -> Item {
         anchor_at: now,
         created_at: now,
         updated_at: now,
+        for_person: None,
     };
     store::upsert(&state.db, item.clone()).await.unwrap();
     item

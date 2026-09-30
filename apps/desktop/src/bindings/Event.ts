@@ -2,6 +2,7 @@
 import type { Connection } from "./Connection";
 import type { Conversation } from "./Conversation";
 import type { Delivery } from "./Delivery";
+import type { GuestApproval } from "./GuestApproval";
 import type { Message } from "./Message";
 import type { ModelPull } from "./ModelPull";
 import type { Provider } from "./Provider";
@@ -13,4 +14,4 @@ import type { UpdateStatus } from "./UpdateStatus";
  * Pushed by the daemon to every client connected to `GET /v1/events` (WebSocket, one
  * JSON event per text frame).
  */
-export type Event = { "type": "settings_changed", settings: Settings, } | { "type": "providers_changed", providers: Array<Provider>, } | { "type": "conversation_updated", conversation: Conversation, } | { "type": "conversation_deleted", id: string, } | { "type": "message_updated", message: Message, } | { "type": "message_delta", conversation_id: string, message_id: string, content: string, reasoning: string, } | { "type": "people_changed" } | { "type": "mail_changed" } | { "type": "connections_changed", connections: Array<Connection>, } | { "type": "model_pull", pull: ModelPull, } | { "type": "runtime_changed", runtime: RuntimeStatus, } | { "type": "update_changed", update: UpdateStatus, } | { "type": "memory_changed" } | { "type": "schedule_changed" } | { "type": "schedule_delivered", delivery: Delivery, } | { "type": "resync" };
+export type Event = { "type": "settings_changed", settings: Settings, } | { "type": "providers_changed", providers: Array<Provider>, } | { "type": "conversation_updated", conversation: Conversation, } | { "type": "conversation_deleted", id: string, } | { "type": "message_updated", message: Message, } | { "type": "message_delta", conversation_id: string, message_id: string, content: string, reasoning: string, } | { "type": "people_changed" } | { "type": "mail_changed" } | { "type": "connections_changed", connections: Array<Connection>, } | { "type": "model_pull", pull: ModelPull, } | { "type": "runtime_changed", runtime: RuntimeStatus, } | { "type": "update_changed", update: UpdateStatus, } | { "type": "memory_changed" } | { "type": "schedule_changed" } | { "type": "schedule_delivered", delivery: Delivery, } | { "type": "person_access_changed", person_id: string, } | { "type": "guest_approval", approval: GuestApproval, } | { "type": "resync" };

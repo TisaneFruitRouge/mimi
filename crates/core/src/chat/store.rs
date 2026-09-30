@@ -4,6 +4,10 @@ use uuid::Uuid;
 
 use crate::db::{Db, DbError, enum_str, parse_enum, parse_uuid};
 
+const OWNERS_CONVERSATIONS: &str = "SELECT id, title, created_at, updated_at FROM conversations
+     WHERE id NOT IN (SELECT conversation_id FROM guest_conversations)
+     ORDER BY updated_at DESC";
+
 fn conversation(row: &Row) -> rusqlite::Result<Conversation> {
     Ok(Conversation {
         id: parse_uuid(row, 0)?,
@@ -64,11 +68,11 @@ fn message(row: &Row) -> rusqlite::Result<Message> {
     })
 }
 
+/// The owner's conversations, newest first. Trusted people's conversations belong to
+/// them and are never listed (`access`).
 pub async fn list_conversations(db: &Db) -> Result<Vec<Conversation>, DbError> {
     db.call(|c| {
-        let mut stmt = c.prepare(
-            "SELECT id, title, created_at, updated_at FROM conversations ORDER BY updated_at DESC",
-        )?;
+        let mut stmt = c.prepare(OWNERS_CONVERSATIONS)?;
         stmt.query_map([], conversation)?.collect()
     })
     .await
@@ -107,9 +111,7 @@ pub async fn conversations_mentioning(
                 }
             }
         }
-        let mut stmt = c.prepare(
-            "SELECT id, title, created_at, updated_at FROM conversations ORDER BY updated_at DESC",
-        )?;
+        let mut stmt = c.prepare(OWNERS_CONVERSATIONS)?;
         let all: Vec<Conversation> = stmt
             .query_map([], conversation)?
             .collect::<Result<_, _>>()?;

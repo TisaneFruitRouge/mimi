@@ -263,6 +263,7 @@ async fn permissions_decide_for_every_recipient_and_strangers_always_ask() {
     let ctx = ToolContext {
         state: state.clone(),
         conversation_id: Uuid::now_v7(),
+        principal: Default::default(),
     };
     let prepared = |to: serde_json::Value| {
         let (tool, ctx) = (&tool, &ctx);
@@ -406,6 +407,7 @@ async fn sending_opens_one_chat_per_person_and_joins_public_groups() {
     let ctx = ToolContext {
         state: state.clone(),
         conversation_id: Uuid::now_v7(),
+        principal: Default::default(),
     };
     let send = |to: serde_json::Value| {
         let (tool, ctx) = (&tool, &ctx);

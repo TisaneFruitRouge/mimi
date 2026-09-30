@@ -43,6 +43,20 @@ struct Sent {
     at: i64,
 }
 
+/// The key a chat on a connection keeps its prompts under, for chats other than the
+/// owner's (a trusted person's own chat, `access`): their answers can only ever reach
+/// their own prompts, and the owner's only the owner's (which use the connection's id).
+pub fn line(connection: Uuid, chat: &str) -> Uuid {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    hash.update(connection.as_bytes());
+    hash.update(chat.as_bytes());
+    let digest = hash.finalize();
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    Uuid::from_bytes(bytes)
+}
+
 /// How many prompts are remembered, across channels.
 const REMEMBERED: usize = 200;
 /// How long a bare "done" or "snooze" still means the latest reminder.

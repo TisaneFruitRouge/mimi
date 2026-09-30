@@ -104,6 +104,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/people/{id}/merge", post(people::merge))
         .route("/people/{id}/split", post(people::split))
         .route("/people/{id}/memory", get(memory::person_notes))
+        .route(
+            "/people/{id}/access",
+            get(people::access).put(people::set_access),
+        )
+        .route("/access/approvals", get(people::guest_approvals))
         .route("/mentions", get(people::mentions))
         .route("/calendars", get(calendar::calendars))
         .route(

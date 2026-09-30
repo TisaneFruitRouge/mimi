@@ -163,10 +163,14 @@ pub async fn converse(
         }
     };
     let assistant = sent.assistant_message.id;
+    // In a trusted person's conversation whose card says the owner approves, the card
+    // goes to the owner instead (only the card: `access::ask_owner`).
+    let owner_approves = crate::access::owner_approves_for(state, conversation).await;
     let mut typing = tokio::time::interval(Duration::from_secs(4));
     let deadline = tokio::time::sleep(REPLY_TIMEOUT);
     tokio::pin!(deadline);
     let mut announced = std::collections::HashSet::new();
+    let mut settled = std::collections::HashSet::new();
     let message = loop {
         tokio::select! {
             event = events.recv() => match event {
@@ -174,9 +178,27 @@ pub async fn converse(
                     for action in &message.actions {
                         if action.status == ActionStatus::PendingApproval
                             && announced.insert(action.id)
-                            && let Err(e) = channel.ask_approval(action).await
                         {
-                            tracing::warn!("asking {} for approval failed: {e}", channel.kind());
+                            match &owner_approves {
+                                Some(guest) => {
+                                    crate::access::ask_owner(state, guest, action, &[channel])
+                                        .await
+                                }
+                                None => {
+                                    if let Err(e) = channel.ask_approval(action).await {
+                                        tracing::warn!(
+                                            "asking {} for approval failed: {e}",
+                                            channel.kind()
+                                        );
+                                    }
+                                }
+                            }
+                        } else if action.status != ActionStatus::PendingApproval
+                            && announced.contains(&action.id)
+                            && settled.insert(action.id)
+                            && let Some(guest) = &owner_approves
+                        {
+                            crate::access::settled(state, guest, action);
                         }
                     }
                     if message.status != MessageStatus::Streaming {

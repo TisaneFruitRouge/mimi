@@ -133,6 +133,11 @@ struct NotePlan {
 
 /// Learns from what's new in a conversation. Returns how many notes changed.
 pub async fn learn_from(state: &Arc<AppState>, conversation_id: Uuid) -> Result<usize, String> {
+    // Memory is the owner's: what someone they trust says in their own conversation
+    // (`access`) is never learned from.
+    if state.access.is_guest_conversation(conversation_id) {
+        return Ok(0);
+    }
     let db = &state.db;
     let settings = crate::settings::load(db).await.map_err(|e| e.to_string())?;
     let messages = crate::chat::store::messages(db, conversation_id)

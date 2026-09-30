@@ -86,7 +86,10 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         scheduler: Default::default(),
         mail: Default::default(),
         updates: Default::default(),
+        access: Default::default(),
     });
+    // Before anything is served or sent: trusted people's conversations stay theirs.
+    crate::access::load(&state).await;
     #[cfg(debug_assertions)]
     if std::env::var(crate::tools::dev::ENV).is_ok_and(|v| v == "1") {
         tracing::warn!("development tools enabled");
@@ -112,6 +115,10 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
     tokio::spawn(crate::memory::learn::run(state.clone()));
     tokio::spawn(crate::memory::semantic::run(state.clone()));
     crate::people::install(&state);
+    {
+        let state = state.clone();
+        tokio::spawn(async move { crate::access::tidy(&state).await });
+    }
     crate::schedule::install(&state);
     crate::mail::install(&state);
     tokio::spawn(crate::updates::run(state.clone()));

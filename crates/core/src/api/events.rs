@@ -10,14 +10,21 @@ use crate::AppState;
 
 pub async fn subscribe(State(state): State<Arc<AppState>>, ws: WebSocketUpgrade) -> Response {
     let rx = state.events.subscribe();
-    ws.on_upgrade(move |socket| forward(socket, rx))
+    ws.on_upgrade(move |socket| forward(state, socket, rx))
 }
 
-async fn forward(mut socket: WebSocket, mut rx: tokio::sync::broadcast::Receiver<Event>) {
+async fn forward(
+    state: Arc<AppState>,
+    mut socket: WebSocket,
+    mut rx: tokio::sync::broadcast::Receiver<Event>,
+) {
     loop {
         tokio::select! {
             event = rx.recv() => {
                 let event = match event {
+                    // A trusted person's conversation belongs to them: nothing about it
+                    // reaches the owner's clients.
+                    Ok(event) if state.access.hides(&event) => continue,
                     Ok(event) => event,
                     Err(RecvError::Lagged(_)) => Event::Resync,
                     Err(RecvError::Closed) => return,

@@ -146,6 +146,8 @@ pub async fn sync_all(state: &AppState) {
     }
     if changed {
         state.events.publish(Event::PeopleChanged);
+        // Someone a sync dropped takes what they had with the assistant along.
+        crate::access::tidy(state).await;
     }
 }
 

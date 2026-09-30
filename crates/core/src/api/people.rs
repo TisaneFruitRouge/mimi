@@ -3,9 +3,9 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use mimi_protocol::{
-    DismissDuplicate, DuplicateSuggestion, Event, MentionCandidate, MergePeople, MergePreview,
-    MergeRequest, MergeResult, NewHandle, NewPerson, Person, PersonSummary, PersonUpdate,
-    RemovedPerson, SplitPerson,
+    DismissDuplicate, DuplicateSuggestion, Event, GuestApproval, MentionCandidate, MergePeople,
+    MergePreview, MergeRequest, MergeResult, NewHandle, NewPerson, Person, PersonAccess,
+    PersonAccessUpdate, PersonSummary, PersonUpdate, RemovedPerson, SplitPerson,
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -84,6 +84,31 @@ fn changed(state: &AppState) {
     state.events.publish(Event::PeopleChanged);
 }
 
+/// What someone may ask the assistant (their card's section).
+pub async fn access(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<PersonAccess> {
+    Ok(Json(crate::access::view(&state, id).await?))
+}
+
+/// The user's own choice for someone: whether they may ask the assistant things, the
+/// calendars shared with them, and who approves. Turning it off deletes their
+/// conversations and reminders.
+pub async fn set_access(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    Json(change): Json<PersonAccessUpdate>,
+) -> ApiResult<PersonAccess> {
+    Ok(Json(crate::access::update(&state, id, change).await?))
+}
+
+/// What people the user trusts asked for that waits for the user's own OK (only the
+/// actions, never their conversations).
+pub async fn guest_approvals(State(state): State<Arc<AppState>>) -> ApiResult<Vec<GuestApproval>> {
+    Ok(Json(crate::access::waiting_for_owner(&state).await))
+}
+
 pub async fn create(
     State(state): State<Arc<AppState>>,
     Json(new): Json<NewPerson>,
@@ -144,6 +169,8 @@ pub async fn delete(
         .await?
         .ok_or_else(|| AppError::not_found("Person"))?;
     changed(&state);
+    // What they had with the assistant goes with them (their access went with the row).
+    crate::access::revoke(&state, id).await;
     if !restorable {
         return Ok(Json(None));
     }

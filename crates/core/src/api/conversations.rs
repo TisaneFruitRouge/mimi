@@ -29,10 +29,20 @@ pub async fn create(
     Ok(Json(conversation))
 }
 
+/// A trusted person's conversation belongs to them: to the owner's clients it doesn't
+/// exist (`access`).
+fn theirs(state: &AppState, id: Uuid) -> Result<(), AppError> {
+    if state.access.is_guest_conversation(id) {
+        return Err(AppError::not_found("Conversation"));
+    }
+    Ok(())
+}
+
 pub async fn get(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<ConversationDetail> {
+    theirs(&state, id)?;
     let conversation = store::get_conversation(&state.db, id)
         .await?
         .ok_or_else(|| AppError::not_found("Conversation"))?;
@@ -48,6 +58,7 @@ pub async fn update(
     Path(id): Path<Uuid>,
     Json(update): Json<ConversationUpdate>,
 ) -> ApiResult<Conversation> {
+    theirs(&state, id)?;
     let mut conversation = store::get_conversation(&state.db, id)
         .await?
         .ok_or_else(|| AppError::not_found("Conversation"))?;
@@ -67,6 +78,7 @@ pub async fn update(
 }
 
 pub async fn delete(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>) -> ApiResult<()> {
+    theirs(&state, id)?;
     state.generations.cancel(id);
     if !store::delete_conversation(&state.db, id).await? {
         return Err(AppError::not_found("Conversation"));
@@ -80,6 +92,7 @@ pub async fn send(
     Path(id): Path<Uuid>,
     Json(req): Json<SendMessage>,
 ) -> ApiResult<SendMessageResult> {
+    theirs(&state, id)?;
     Ok(Json(
         chat::send(state, id, req.content, req.model, req.mentions).await?,
     ))
@@ -87,6 +100,7 @@ pub async fn send(
 
 /// Stops the reply being written in this conversation, keeping what was written so far.
 pub async fn cancel(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>) -> ApiResult<()> {
+    theirs(&state, id)?;
     state.generations.cancel(id);
     Ok(Json(()))
 }

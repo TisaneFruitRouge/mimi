@@ -2063,6 +2063,7 @@ SUMMARY:Dentist\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
     }
 }
 
+mod access_flow;
 mod matrix_live;
 
 /// A fake Telegram Bot API: queued updates go out through getUpdates, and everything

@@ -162,6 +162,32 @@ pub fn calendars(accounts: &[Account]) -> Vec<CalendarRef> {
     out
 }
 
+/// The accounts cut down to the calendars in `allowed` (ids from [`calendar_id`]):
+/// what a trusted person's turn works with, so the other calendars are never even read.
+pub fn restrict(accounts: Vec<Account>, allowed: &[String]) -> Vec<Account> {
+    let keep = |id: String| allowed.contains(&id);
+    accounts
+        .into_iter()
+        .filter_map(|account| match account {
+            Account::Google { id, name, config } => {
+                keep(calendar_id(id, None)).then_some(Account::Google { id, name, config })
+            }
+            Account::CalDav { id, mut config } => {
+                config
+                    .calendars
+                    .retain(|c| keep(calendar_id(id, Some(&c.url))));
+                (!config.calendars.is_empty()).then_some(Account::CalDav { id, config })
+            }
+            Account::GoogleApi { id, mut config } => {
+                config
+                    .calendars
+                    .retain(|c| keep(calendar_id(id, Some(&c.id))));
+                (!config.calendars.is_empty()).then_some(Account::GoogleApi { id, config })
+            }
+        })
+        .collect()
+}
+
 /// Normalizes and checks a secret iCal address as pasted by the user.
 pub fn parse_ics_url(raw: &str) -> Result<Url, String> {
     let raw = raw.trim();

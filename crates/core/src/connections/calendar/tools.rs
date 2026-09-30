@@ -50,6 +50,51 @@ impl ToolSource for CalendarTools {
     }
 }
 
+/// The calendar tools for a trusted person's turn: only the calendars shared with them
+/// (`allowed`), and writes only to those saved into directly (a pre-filled Google page
+/// would open in their browser, not the user's). None while nothing is shared.
+pub async fn for_guest(state: &AppState, allowed: &[String]) -> Vec<Arc<dyn Tool>> {
+    let accounts = super::restrict(crate::connections::calendar_accounts(state).await, allowed);
+    if accounts.is_empty() {
+        return Vec::new();
+    }
+    let targets: Vec<Target> = super::targets(&accounts)
+        .into_iter()
+        .filter(|t| !matches!(t, Target::Google { .. }))
+        .collect();
+    let mut tools = vec![Arc::new(ReadEvents) as Arc<dyn Tool>];
+    if !targets.is_empty() {
+        tools.push(Arc::new(AddEvent { targets }));
+        tools.push(Arc::new(ChangeEvent));
+        tools.push(Arc::new(RemoveEvent));
+    }
+    tools
+}
+
+/// The calendar accounts this turn may use: all of them for the user, only the shared
+/// calendars for someone they trust. Every tool reads and writes through this.
+async fn accounts_for(ctx: &ToolContext) -> Vec<super::Account> {
+    let all = crate::connections::calendar_accounts(&ctx.state).await;
+    match ctx.principal.calendars() {
+        Some(allowed) => super::restrict(all, allowed),
+        None => all,
+    }
+}
+
+/// For a trusted person's turn, whether a calendar is one shared with them. The user's
+/// own turns may use any.
+fn may_use(ctx: &ToolContext, calendar_id: &str) -> bool {
+    ctx.principal
+        .calendars()
+        .is_none_or(|allowed| allowed.iter().any(|c| c == calendar_id))
+}
+
+/// What an event that isn't found, or isn't in a calendar this turn may use, is called:
+/// the same words either way, so a guest can't tell which.
+fn not_found() -> String {
+    "That event isn't in the calendar anymore, or the id is wrong. Look it up again with calendar_events.".to_owned()
+}
+
 /// Longest range read at once, so a vague question can't pull years of events.
 const MAX_DAYS: i64 = 92;
 
@@ -108,13 +153,27 @@ impl Tool for ReadEvents {
             let start = local_midnight(from)?;
             let end = local_midnight(to + Duration::days(1))?;
             let state = &ctx.state;
-            let accounts = crate::connections::calendar_accounts(state).await;
+            let accounts = accounts_for(ctx).await;
+            if accounts.is_empty() && ctx.principal.guest().is_some() {
+                return Err("No calendar is shared with them yet.".to_owned());
+            }
             let (events, problems) =
                 super::events_between(&state.http, &state.connections.feeds, &accounts, start, end)
                     .await;
+            // Checked again, whatever the accounts held.
+            let events: Vec<&CalEvent> = events
+                .iter()
+                .filter(|e| may_use(ctx, &e.calendar_id))
+                .collect();
+            // A guest isn't told about the user's other accounts, even by name.
+            let problems = if ctx.principal.guest().is_some() && !problems.is_empty() {
+                vec!["Some of the shared calendars couldn't be read right now.".to_owned()]
+            } else {
+                problems
+            };
             Ok(json!({
                 "time_zone": jiff::tz::TimeZone::system().iana_name().unwrap_or("local"),
-                "events": events.iter().map(event_json).collect::<Vec<_>>(),
+                "events": events.into_iter().map(event_json).collect::<Vec<_>>(),
                 "unavailable": problems,
             }))
         }
@@ -161,12 +220,22 @@ fn guests_schema() -> Value {
 
 /// What the result says about invitations: that nothing was emailed, to whom it could
 /// go, and that the user decides. The chat shows a button for each offer.
-async fn follow_up(state: &AppState, out: &mut Value, outcome: &Outcome) {
+async fn follow_up(ctx: &ToolContext, out: &mut Value, outcome: &Outcome) {
+    let state = &ctx.state;
     if let Some(note) = &outcome.note {
         out["note"] = json!(note);
     }
     let offers = invite::views(state, &outcome.offers).await;
     if offers.is_empty() {
+        return;
+    }
+    // Someone the user trusts can't send mail from the user's account: the user can
+    // send the invitations from the Calendar panel.
+    if let Some(guest) = ctx.principal.guest() {
+        out["next"] = json!(format!(
+            "Nothing was emailed to the guests. {} can send them the invitation from their calendar.",
+            guest.owner
+        ));
         return;
     }
     let mut lines = vec!["Nothing was emailed to the guests.".to_owned()];
@@ -286,8 +355,15 @@ impl Tool for AddEvent {
             if raw.is_empty() {
                 return Ok(args);
             }
-            let list = guests::resolve(&ctx.state, &raw).await?;
+            let list = if ctx.principal.guest().is_some() {
+                guests::addresses_only(&raw)?
+            } else {
+                guests::resolve(&ctx.state, &raw).await?
+            };
             let target = self.target(&args).ok_or("No calendar is connected.")?;
+            if !may_use(ctx, target.id()) {
+                return Err("That calendar isn't shared with them.".to_owned());
+            }
             match guests::organizer_for(&ctx.state, target).await {
                 Ok(_) => args["guests"] = mailboxes(&list),
                 Err(why) => {
@@ -343,6 +419,11 @@ impl Tool for AddEvent {
             let mut event = parse_event(&args)?;
             event.guests = guests::parse_all(&list_arg(&args["guests"]))?;
             let target = self.target(&args).ok_or("No calendar is connected.")?;
+            if !may_use(ctx, target.id())
+                || (ctx.principal.guest().is_some() && matches!(target, Target::Google { .. }))
+            {
+                return Err("That calendar isn't shared with them.".to_owned());
+            }
             let state = &ctx.state;
             let start = event.start;
             let (created, outcome) = invite::add(state, target, event).await?;
@@ -358,7 +439,7 @@ impl Tool for AddEvent {
                     "note": "A pre-filled Google Calendar page opens for the user; the event exists only once they press Save there."
                 }),
             };
-            follow_up(state, &mut out, &outcome).await;
+            follow_up(ctx, &mut out, &outcome).await;
             Ok(out)
         }
         .boxed()
@@ -434,16 +515,32 @@ pub(crate) async fn find_event(
     state: &AppState,
     id: &str,
 ) -> Result<(EventRef, super::Located), String> {
-    let not_found = || {
-        "That event isn't in the calendar anymore, or the id is wrong. Look it up again with calendar_events.".to_owned()
-    };
-    let (start, wanted) = parse_id(id).ok_or_else(not_found)?;
     let accounts = crate::connections::calendar_accounts(state).await;
+    find_event_in(state, &accounts, id).await
+}
+
+/// [`find_event`] among the calendars this turn may use: for someone the user trusts,
+/// an event anywhere else is as good as missing.
+async fn find_event_for(ctx: &ToolContext, id: &str) -> Result<(EventRef, super::Located), String> {
+    let accounts = accounts_for(ctx).await;
+    let found = find_event_in(&ctx.state, &accounts, id).await?;
+    if !may_use(ctx, &found.0.calendar_id) {
+        return Err(not_found());
+    }
+    Ok(found)
+}
+
+async fn find_event_in(
+    state: &AppState,
+    accounts: &[super::Account],
+    id: &str,
+) -> Result<(EventRef, super::Located), String> {
+    let (start, wanted) = parse_id(id).ok_or_else(not_found)?;
     let later = start + Duration::seconds(1);
     let (events, _) = super::events_between(
         &state.http,
         &state.connections.feeds,
-        &accounts,
+        accounts,
         start,
         later,
     )
@@ -457,7 +554,7 @@ pub(crate) async fn find_event(
         uid: event.uid.clone(),
         start: event.start,
     };
-    let located = super::locate(&state.http, &state.connections.feeds, &accounts, &r).await?;
+    let located = super::locate(&state.http, &state.connections.feeds, accounts, &r).await?;
     Ok((r, located))
 }
 
@@ -575,7 +672,7 @@ impl Tool for ChangeEvent {
     ) -> BoxFuture<'a, Result<Value, String>> {
         async move {
             let state = &ctx.state;
-            let (r, found) = find_event(state, args["event"].as_str().unwrap_or("")).await?;
+            let (r, found) = find_event_for(ctx, args["event"].as_str().unwrap_or("")).await?;
             let changes = Self::changes(&args, &found.event)?;
             let add_raw = list_arg(&args["add_guests"]);
             let remove_raw = list_arg(&args["remove_guests"]);
@@ -603,8 +700,14 @@ impl Tool for ChangeEvent {
                     .ok_or("That calendar isn't connected anymore.")?;
                 guests::organizer_for(state, &target).await?;
                 let current = guests::guests_of(&found.event, &me);
-                let added: Vec<Guest> = guests::resolve(state, &add_raw)
-                    .await?
+                // Addresses only for a guest: their turn doesn't look into the user's
+                // contacts.
+                let resolved = if ctx.principal.guest().is_some() {
+                    guests::addresses_only(&add_raw)?
+                } else {
+                    guests::resolve(state, &add_raw).await?
+                };
+                let added: Vec<Guest> = resolved
                     .into_iter()
                     .filter(|g| !current.iter().any(|c| c.email == g.email) && !me.contains(&g.email))
                     .collect();
@@ -694,7 +797,7 @@ impl Tool for ChangeEvent {
     ) -> BoxFuture<'a, Result<Value, String>> {
         async move {
             let state = &ctx.state;
-            let (r, found) = find_event(state, args["event"].as_str().unwrap_or("")).await?;
+            let (r, found) = find_event_for(ctx, args["event"].as_str().unwrap_or("")).await?;
             // What was approved is what runs: the same event, in the same calendar.
             if args["calendar_id"].as_str() != Some(r.calendar_id.as_str()) {
                 return Err(
@@ -725,7 +828,7 @@ impl Tool for ChangeEvent {
                 "calendar": found.event.calendar,
                 "event": after.as_ref().map(|a| event_ref_id(&a.event)),
             });
-            follow_up(state, &mut out, &outcome).await;
+            follow_up(ctx, &mut out, &outcome).await;
             Ok(out)
         }
         .boxed()
@@ -777,7 +880,7 @@ impl Tool for RemoveEvent {
         args: Value,
     ) -> BoxFuture<'a, Result<Value, String>> {
         async move {
-            let (_, found) = find_event(&ctx.state, args["event"].as_str().unwrap_or("")).await?;
+            let (_, found) = find_event_for(ctx, args["event"].as_str().unwrap_or("")).await?;
             Ok(describe_found(args, &found))
         }
         .boxed()
@@ -812,7 +915,7 @@ impl Tool for RemoveEvent {
     ) -> BoxFuture<'a, Result<Value, String>> {
         async move {
             let state = &ctx.state;
-            let (r, found) = find_event(state, args["event"].as_str().unwrap_or("")).await?;
+            let (r, found) = find_event_for(ctx, args["event"].as_str().unwrap_or("")).await?;
             if args["calendar_id"].as_str() != Some(r.calendar_id.as_str()) {
                 return Err(
                     "The event moved to another calendar meanwhile. Look it up again.".to_owned(),
@@ -820,7 +923,7 @@ impl Tool for RemoveEvent {
             }
             let outcome = invite::remove(state, &r, &found, which_is_all(&args)).await?;
             let mut out = json!({ "status": "removed", "calendar": found.event.calendar });
-            follow_up(state, &mut out, &outcome).await;
+            follow_up(ctx, &mut out, &outcome).await;
             Ok(out)
         }
         .boxed()

@@ -476,7 +476,7 @@ async fn by_name(s: &Scene<'_>, raw: &str) -> Result<Recipient, String> {
 }
 
 /// The name People has for a Matrix address, when exactly one person has it.
-async fn people_name(state: &AppState, user: &str) -> Option<String> {
+pub(crate) async fn people_name(state: &AppState, user: &str) -> Option<String> {
     let key = crate::people::normalize::match_key(mimi_protocol::Channel::Matrix, user)?;
     let names: Vec<String> = state
         .db

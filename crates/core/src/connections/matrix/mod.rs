@@ -41,6 +41,7 @@ use crate::{AppState, now_ms};
 #[cfg(test)]
 pub mod fake;
 pub mod format;
+pub mod guests;
 pub mod messenger;
 pub mod rooms;
 pub mod send;
@@ -522,12 +523,30 @@ pub enum Invitation {
     Join,
     /// The owner invites the assistant into a group: join and stay.
     KeepGroup,
+    /// Someone the owner lets ask it things (`access`) opens a direct chat with it:
+    /// join and keep it as their chat.
+    KeepDirect,
 }
 
 /// Anyone's invitation is accepted until paired (the code still has to come); then only
 /// the owner's: to a group, or to a new direct chat after they left theirs. Everyone
 /// else's is declined.
 pub fn answer_invite(config: &MatrixConfig, inviter: Option<&str>, direct: bool) -> Invitation {
+    answer_invite_from(config, inviter, direct, false)
+}
+
+/// [`answer_invite`], knowing whether the inviter is someone the owner lets ask the
+/// assistant things (`trusted`): their direct chats are joined and kept. Their groups
+/// aren't: only the owner brings the assistant into groups.
+pub fn answer_invite_from(
+    config: &MatrixConfig,
+    inviter: Option<&str>,
+    direct: bool,
+    trusted: bool,
+) -> Invitation {
+    if trusted && direct && config.owner.is_some() && inviter != config.owner.as_deref() {
+        return Invitation::KeepDirect;
+    }
     match &config.owner {
         None => Invitation::Join,
         Some(owner) if inviter != Some(owner.as_str()) => Invitation::Decline,
@@ -902,8 +921,46 @@ async fn handle(
                 .ok()
                 .and_then(|i| i.inviter)
                 .map(|m| m.user_id().to_string());
-            let direct = room.is_direct().await.unwrap_or(false);
-            match answer_invite(config, inviter.as_deref(), direct) {
+            let direct =
+                room.is_direct().await.unwrap_or(false) || room.active_members_count() <= 2;
+            let trusted = match inviter.as_deref() {
+                Some(who) if config.owner.as_deref() != Some(who) => {
+                    crate::access::find(state, mimi_protocol::Channel::Matrix, who)
+                        .await
+                        .is_some()
+                }
+                _ => false,
+            };
+            match answer_invite_from(config, inviter.as_deref(), direct, trusted) {
+                Invitation::KeepDirect => {
+                    let id = room.room_id().to_string();
+                    // Recorded first, so the sync doesn't leave the chat it's joining.
+                    let _ = rooms::keep(
+                        state,
+                        live.connection,
+                        &id,
+                        Why::Direct,
+                        inviter.as_deref(),
+                        None,
+                    )
+                    .await;
+                    match room.join().await {
+                        Ok(()) => {
+                            tracing::info!(connection = %live.connection, room = %id, "joined a chat someone the owner trusts opened");
+                            // Like the owner's chat: end-to-end encrypted if it can be.
+                            tokio::spawn(async move {
+                                let _ = ensure_encrypted(&room).await;
+                            });
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "joining a trusted person's chat failed: {}",
+                                plain_error(&e)
+                            );
+                            let _ = rooms::forget(state, live.connection, &id).await;
+                        }
+                    }
+                }
                 Invitation::Join => {
                     if let Err(e) = room.join().await {
                         tracing::warn!("joining a Matrix room failed: {}", plain_error(&e));
@@ -998,22 +1055,28 @@ async fn handle(
                     }
                 }
                 Sender::Owner => on_owner_text(state, live, config, &room, text, quoted).await,
-                // Nobody else gives instructions. A reply in a chat the assistant opened
-                // to message someone is passed on to the owner as it is, never to the
-                // model.
+                // Someone the owner lets ask it things talks with it in their own chat;
+                // anyone else's reply in a chat it opened is passed on to the owner as it
+                // is, never to the model (`guests.rs`).
                 Sender::Stranger => {
-                    if let Some(kept) =
-                        rooms::kept_room(state, live.connection, room_id.as_str()).await
-                        && kept.why == Why::Direct
-                        && kept.user_id.as_deref() == Some(sender.as_str())
-                        && (sealed
-                            || !room
-                                .latest_encryption_state()
-                                .await
-                                .is_ok_and(|s| s.is_encrypted()))
-                    {
-                        forward_reply(live, config, &room, &sender, &text).await;
-                    }
+                    let Some(messenger) = state.connections.matrix.messenger(live.connection)
+                    else {
+                        return;
+                    };
+                    guests::on_text(
+                        state,
+                        live.connection,
+                        config,
+                        messenger,
+                        guests::Inbound {
+                            room: room_id.to_string(),
+                            sender: sender.to_string(),
+                            text,
+                            quoted: quoted.map(|q| q.to_string()),
+                            sealed,
+                        },
+                    )
+                    .await;
                 }
             }
         }
@@ -1026,6 +1089,18 @@ async fn handle(
             // Matrix apps never encrypt reactions, so these count even in an encrypted
             // chat. They only ever answer a prompt the assistant sent.
             if classify(config, room.as_str(), sender.as_str()) != Sender::Owner {
+                if let Some(messenger) = state.connections.matrix.messenger(live.connection) {
+                    guests::on_reaction(
+                        state,
+                        live.connection,
+                        messenger,
+                        room.as_str(),
+                        sender.as_str(),
+                        target.as_str(),
+                        &key,
+                    )
+                    .await;
+                }
                 return;
             }
             if let Some(line) =
@@ -1036,12 +1111,19 @@ async fn handle(
             }
         }
         Incoming::Unreadable { room, sender } => {
-            if classify(config, room.as_str(), sender.as_str()) == Sender::Owner
-                && let Some(room) = client.get_room(&room)
-            {
-                let _ = send_plain(
-                    &room,
-                    "I couldn't unlock your last message: its encryption keys didn't reach me. Try sending it again.",
+            if classify(config, room.as_str(), sender.as_str()) == Sender::Owner {
+                tracing::warn!(connection = %live.connection, room = %room, "couldn't decrypt a message from the owner");
+                if let Some(room) = client.get_room(&room) {
+                    let _ = send_plain(&room, UNREADABLE).await;
+                }
+            } else if let Some(messenger) = state.connections.matrix.messenger(live.connection) {
+                guests::on_unreadable(
+                    state,
+                    live.connection,
+                    config,
+                    messenger,
+                    room.as_str(),
+                    sender.as_str(),
                 )
                 .await;
             }
@@ -1069,40 +1151,12 @@ async fn handle(
     }
 }
 
+/// Said when an encrypted message couldn't be read.
+pub const UNREADABLE: &str =
+    "I couldn't read your last message: its encryption keys didn't reach me. Try sending it again.";
+
 /// Most characters of someone's reply passed on to the owner.
 const FORWARD_LIMIT: usize = 2_000;
-
-/// Passes a reply from someone the assistant messaged on to the owner's chat, quoted as
-/// it is: the model never sees it, so it can't give instructions.
-async fn forward_reply(
-    live: &Arc<Live>,
-    config: &MatrixConfig,
-    room: &Room,
-    sender: &UserId,
-    text: &str,
-) {
-    let Some(owner_room) = config
-        .room_id
-        .as_deref()
-        .and_then(|r| OwnedRoomId::try_from(r).ok())
-        .and_then(|r| live.client.get_room(&r))
-    else {
-        return;
-    };
-    let name = room
-        .get_member_no_sync(sender)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|m| m.display_name().and_then(send::clean_name));
-    let (body, html) = forward_text(name.as_deref(), sender.as_str(), text);
-    if let Err(e) = owner_room
-        .send(RoomMessageEventContent::text_html(body, html))
-        .await
-    {
-        tracing::warn!(connection = %live.connection, "passing on a Matrix reply failed: {}", plain_error(&e));
-    }
-}
 
 /// "Sam Carter (@sam:example.org) replied:" and their message, quoted, as plain text and
 /// as Matrix HTML with everything they wrote escaped.
@@ -1447,35 +1501,47 @@ impl Channel for MatrixChannel {
     }
 
     async fn ask_approval(&self, action: &Action) -> Result<(), String> {
-        let body = format!(
-            "Waiting for you: {}\n{}",
-            action.summary,
-            replies::APPROVAL_HINT
-        );
-        let html = format!(
-            "<b>Waiting for you</b><br>{}<br><i>{}</i>",
-            format::escape_html(&action.summary),
-            format::escape_html(replies::APPROVAL_HINT)
-        );
+        let (body, html) = approval_prompt(action);
         self.prompt(body, html, Target::Approval(action.id)).await
     }
 
     async fn remind(&self, delivery: &Delivery, late: Option<&str>) -> Result<(), String> {
-        let body = format!(
-            "⏰ {}{}\n{}",
-            delivery.title,
-            late.map(|l| format!("\n{l}")).unwrap_or_default(),
-            replies::REMINDER_HINT
-        );
-        let html = format!(
-            "⏰ <b>{}</b>{}<br><i>{}</i>",
-            format::escape_html(&delivery.title),
-            late.map(|l| format!("<br><i>{}</i>", format::escape_html(l)))
-                .unwrap_or_default(),
-            format::escape_html(replies::REMINDER_HINT)
-        );
+        let (body, html) = reminder_prompt(delivery, late);
         self.prompt(body, html, Target::Reminder(delivery.id)).await
     }
+}
+
+/// An approval prompt, as plain text and Matrix HTML.
+pub fn approval_prompt(action: &Action) -> (String, String) {
+    let body = format!(
+        "Waiting for you: {}\n{}",
+        action.summary,
+        replies::APPROVAL_HINT
+    );
+    let html = format!(
+        "<b>Waiting for you</b><br>{}<br><i>{}</i>",
+        format::escape_html(&action.summary),
+        format::escape_html(replies::APPROVAL_HINT)
+    );
+    (body, html)
+}
+
+/// A due reminder, as plain text and Matrix HTML.
+pub fn reminder_prompt(delivery: &Delivery, late: Option<&str>) -> (String, String) {
+    let body = format!(
+        "⏰ {}{}\n{}",
+        delivery.title,
+        late.map(|l| format!("\n{l}")).unwrap_or_default(),
+        replies::REMINDER_HINT
+    );
+    let html = format!(
+        "⏰ <b>{}</b>{}<br><i>{}</i>",
+        format::escape_html(&delivery.title),
+        late.map(|l| format!("<br><i>{}</i>", format::escape_html(l)))
+            .unwrap_or_default(),
+        format::escape_html(replies::REMINDER_HINT)
+    );
+    (body, html)
 }
 
 #[cfg(test)]
