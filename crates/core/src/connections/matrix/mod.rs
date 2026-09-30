@@ -990,6 +990,14 @@ async fn handle(
                 }
                 // Declining is leaving.
                 Invitation::Decline => {
+                    // Said in the log: someone replying by opening a chat of their own
+                    // would otherwise vanish without a trace.
+                    tracing::info!(
+                        connection = %live.connection,
+                        room = %room.room_id(),
+                        inviter = inviter.as_deref().unwrap_or("unknown"),
+                        "declined an invitation from someone who isn't the owner or trusted"
+                    );
                     let _ = room.leave().await;
                 }
             }

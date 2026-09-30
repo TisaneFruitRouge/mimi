@@ -738,8 +738,12 @@ async fn deliver(
                     Some(room) => (room, How::Existing),
                     None => {
                         let room = messenger.create_dm(id).await?;
-                        let _ = rooms::keep(state, account.id, &room, Why::Direct, Some(id), None)
-                            .await;
+                        // Without this record, replies there would go unheard.
+                        if let Err(e) =
+                            rooms::keep(state, account.id, &room, Why::Direct, Some(id), None).await
+                        {
+                            tracing::warn!("recording a chat the assistant opened failed: {e}");
+                        }
                         (room, How::Opened)
                     }
                 }
