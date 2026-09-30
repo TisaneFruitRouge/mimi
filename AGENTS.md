@@ -284,7 +284,7 @@ than inventing their own.
   is encrypted. matrix-sdk pulls in `decancer`, whose `AddAssign` impl for `String`
   breaks `s += &string` inference in mimi-core: write `s += &*string` or `push_str`.
 - **Matrix messages to others** (`matrix/send.rs`): `matrix_send` (to people and groups
-  on the assistant's **own server only**; anything elsewhere is refused before a card)
+  on any server; "everyone on the server" only ever covers the assistant's own server)
   and `matrix_rooms` (read: its groups and the server's public ones). `Tool::resolve`
   turns every recipient (an address, `#alias`, `!room`, someone in People by id or by a
   name that comes down to one Matrix address, a group it's in by name; never a guess)
@@ -322,8 +322,7 @@ than inventing their own.
   minus `--generate-config …`): `MIMI_TEST_MATRIX=http://127.0.0.1:8008 cargo test -p
   mimi-core live_matrix -- --ignored` registers an assistant, an owner, a stranger and a
   friend, and drives the owner and the friend with matrix-sdk clients (approval, E2EE
-  delivery, automatic sending, forwarded replies, another server refused, the owner's
-  group). Append a newline to the generated `homeserver.yaml` before adding lines, set
+  delivery, automatic sending, forwarded replies, the owner's group). Append a newline to the generated `homeserver.yaml` before adding lines, set
   `trusted_key_servers: []`, and use a spare port. Never point it at matrix.org.
 
 ## Email

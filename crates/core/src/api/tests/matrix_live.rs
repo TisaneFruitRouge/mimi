@@ -266,11 +266,6 @@ async fn live_matrix() {
                 "matrix_send",
                 json!({"to": [to_friend], "text": format!("Hello from **{asked}**")}),
             )
-        } else if asked.contains("elsewhere") {
-            Reply::Call(
-                "matrix_send",
-                json!({"to": ["@someone:matrix.org"], "text": "Hi"}),
-            )
         } else if asked.contains("group") {
             Reply::Call(
                 "matrix_send",
@@ -606,23 +601,6 @@ async fn live_matrix() {
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert_eq!(llm.requests().len(), requests, "the model never saw it");
     assert_eq!(friend_app.count(&bot, "calendar"), 0);
-
-    // Someone on another server: refused before any card, with nothing sent anywhere.
-    let requests = llm.requests().len();
-    say(&room, "Write to someone elsewhere").await;
-    eventually("the refusal to reach the model", async || {
-        llm.requests().iter().skip(requests).any(|r| {
-            r["messages"].as_array().unwrap().iter().any(|m| {
-                m["role"] == "tool"
-                    && m["content"]
-                        .as_str()
-                        .unwrap_or("")
-                        .contains("another Matrix server")
-            })
-        })
-    })
-    .await;
-    assert_eq!(owner.count(&bot, "Waiting for you"), prompts);
 
     // The owner invites the assistant into a group: it joins and stays, and posts
     // there on its own (the owner brought it in, so the group is known).

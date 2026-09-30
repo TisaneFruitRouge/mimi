@@ -731,8 +731,8 @@ Commands that can ask for the password do, so it stays out of the shell's histor
 
 #### Messages to other people
 
-The assistant can write for the user to other people and groups, from its own account
-and only on its own server (`matrix/send.rs`, `rooms.rs`, `messenger.rs`).
+The assistant can write for the user to other people and groups on any Matrix server,
+from its own account (`matrix/send.rs`, `rooms.rs`, `messenger.rs`).
 
 - **`matrix_send`** (`to`, `text` in Markdown; `from` when several accounts are paired)
   is governed by `send_messages`: a card by default. `Tool::resolve` turns each
@@ -742,9 +742,11 @@ and only on its own server (`matrix/send.rs`, `rooms.rs`, `messenger.rs`).
   addresses, `#aliases`, room ids, `matrix.to` links, people from People by id (an
   @ mention) or by a name that comes down to exactly one Matrix address, and the name of
   a group it's in; a name that fits a group and a person, or several people, is refused
-  so the model asks. Anything on another server (the user id's server, an alias's, a
-  room id's, or for room ids without one, its creator's) is refused before any card or
-  request. `run` resolves again and delivers: to the owner in their chat; to a person in
+  so the model asks. Other servers are fine (someone there is known like anyone else:
+  People, messaged before; the "everyone on the server" switch never covers them). A
+  group elsewhere named by its address, that the assistant isn't in, is joined as part
+  of the send: only its own server's list says whether it's public, so a private one
+  fails then. `run` resolves again and delivers: to the owner in their chat; to a person in
   the direct chat it opened with them (still there, they haven't left), else a new
   end-to-end encrypted one (`create_dm`, `is_direct`); to a group it's in; to a public
   group listed on its server, which it joins first. The output lists who it reached, the

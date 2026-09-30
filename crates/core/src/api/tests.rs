@@ -5284,6 +5284,7 @@ mod matrix_flow {
         let fake = FakeMessenger::new(ME);
         fake.add_user(SAM, Some("Sammy"));
         fake.add_user(LEA, Some("Léa"));
+        fake.add_user("@x:matrix.org", Some("X"));
         fake.add_group("!family:home.org", "Family", None, &[OWNER, SAM]);
         fake.add_group(
             "!mixed:home.org",
@@ -5384,20 +5385,6 @@ mod matrix_flow {
         assert_eq!(reply.actions[0].status, ActionStatus::Rejected);
         assert_eq!(fake.sent().len(), 2);
 
-        // Another server: refused before any card.
-        let id = start(&h, "Write to someone elsewhere").await;
-        let (reply, _) = h.wait_for_reply(&id).await;
-        assert_eq!(reply.actions[0].status, ActionStatus::Failed);
-        assert!(
-            reply.actions[0]
-                .error
-                .as_deref()
-                .unwrap()
-                .contains("another Matrix server"),
-            "{:?}",
-            reply.actions[0].error
-        );
-
         // Automatic, with everyone on the server counting as known: Léa goes too. A
         // group with someone from elsewhere still asks.
         let (status, _) = h
@@ -5416,6 +5403,13 @@ mod matrix_flow {
         let id = start(&h, "Post in mixed").await;
         let action = pending(&mut h, &id).await;
         assert_eq!(action.arguments["recipients"], json!(["Group “Mixed”"]));
+        assert_eq!(fake.sent().len(), 4);
+
+        // Someone on another server can be written to, but isn't covered by "everyone on
+        // the server": still a card.
+        let id = start(&h, "Write to someone elsewhere").await;
+        let action = pending(&mut h, &id).await;
+        assert_eq!(action.arguments["to"], json!(["@x:matrix.org"]));
         assert_eq!(fake.sent().len(), 4);
     }
 }

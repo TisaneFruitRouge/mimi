@@ -1,5 +1,5 @@
 //! Messages the assistant sends for the user to other people and groups, from its own
-//! Matrix account, on its own server only (`matrix_send`), and the groups it can see
+//! Matrix account, on any server (`matrix_send`), and the groups it can see
 //! (`matrix_rooms`).
 //!
 //! Sending always waits for the user's OK unless Settings › Permissions › Send messages
@@ -193,17 +193,10 @@ struct Scene<'a> {
     kept: Vec<Kept>,
 }
 
-fn other_server(who: &str, theirs: &str, ours: &str) -> String {
-    format!(
-        "{who} is on another Matrix server ({theirs}). Your assistant only sends messages to people and groups on its own server, {ours}."
-    )
-}
-
 /// Turns what the user or the model named into exact recipients: Matrix addresses,
 /// group addresses and room ids, people from People (by id, or by name when that comes
-/// down to one Matrix address), or the name of a group the assistant is in. Only on the
-/// assistant's own server. Anything else is refused with a plain message, so the
-/// assistant asks instead of guessing.
+/// down to one Matrix address), or the name of a group the assistant is in. Anything
+/// else is refused with a plain message, so the assistant asks instead of guessing.
 pub async fn resolve_all(
     state: &AppState,
     paired: &Paired,
@@ -252,10 +245,6 @@ async fn resolve_one(s: &Scene<'_>, raw: &str) -> Result<Recipient, String> {
     if raw.starts_with('#') {
         let alias =
             RoomAliasId::parse(raw).map_err(|_| format!("“{raw}” isn't a group address."))?;
-        let theirs = alias.server_name().as_str().to_lowercase();
-        if theirs != s.server {
-            return Err(other_server(raw, &theirs, &s.server));
-        }
         let room = s
             .paired
             .messenger
@@ -283,10 +272,6 @@ async fn person(s: &Scene<'_>, user: &str, name: Option<String>) -> Result<Recip
             name: name.or_else(|| config.owner_name.as_deref().and_then(clean_name)),
         });
     }
-    let theirs = server_of_user(user).unwrap_or_default();
-    if theirs != s.server {
-        return Err(other_server(user, &theirs, &s.server));
-    }
     let known_as = match name {
         Some(n) => Some(n),
         None => people_name(s.state, user).await,
@@ -297,15 +282,14 @@ async fn person(s: &Scene<'_>, user: &str, name: Option<String>) -> Result<Recip
             name: known_as.or_else(|| display.as_deref().and_then(clean_name)),
         }),
         Err(Lookup::Missing) => Err(format!(
-            "There's no one with the address {user} on {}.",
-            s.server
+            "There's no Matrix account with the address {user}."
         )),
         Err(Lookup::Failed(e)) => Err(e),
     }
 }
 
 /// A room by id: the owner's chat, a direct chat the assistant opened, a group it's in,
-/// or a public group on its server it can join.
+/// a public group on its server it can join, or a group on another server by address.
 async fn room_recipient(
     s: &Scene<'_>,
     room: &str,
@@ -325,30 +309,13 @@ async fn room_recipient(
     {
         return person(s, &user, None).await;
     }
-    let shown = alias.clone().unwrap_or_else(|| "That group".to_owned());
     if let Some(info) = s.joined.iter().find(|r| r.id == room) {
-        let on_server = match server_of_room(room) {
-            Some(theirs) => theirs == s.server,
-            None => {
-                info.creator.as_deref().and_then(server_of_user).as_deref()
-                    == Some(s.server.as_str())
-            }
-        };
-        if !on_server {
-            let theirs = server_of_room(room).unwrap_or_else(|| "elsewhere".to_owned());
-            return Err(other_server(&shown, &theirs, &s.server));
-        }
         return Ok(Recipient::Group {
             id: room.to_owned(),
             name: info.name.as_deref().and_then(clean_name),
             alias: info.alias.clone().or(alias),
             join: false,
         });
-    }
-    if let Some(theirs) = server_of_room(room)
-        && theirs != s.server
-    {
-        return Err(other_server(&shown, &theirs, &s.server));
     }
     // Not in it: a public group listed on its own server can be joined to post there.
     let directory = s.paired.messenger.directory().await?;
@@ -359,6 +326,22 @@ async fn room_recipient(
             alias: info.alias.or(alias),
             join: true,
         }),
+        // A group on another server, named by its address: only its own server's list
+        // says whether it's public, so joining is tried as part of the approved send.
+        _ if alias.is_some()
+            && server_of_room(room).is_none_or(|theirs| theirs != s.server)
+            && alias
+                .as_deref()
+                .and_then(|a| a.rsplit_once(':'))
+                .is_some_and(|(_, theirs)| !theirs.eq_ignore_ascii_case(&s.server)) =>
+        {
+            Ok(Recipient::Group {
+                id: room.to_owned(),
+                name: None,
+                alias,
+                join: true,
+            })
+        }
         _ => Err(
             "Your assistant isn't in that group. Invite it to the group first, from your own Matrix account."
                 .to_owned(),
@@ -535,12 +518,13 @@ impl Tool for SendMessage {
 
     fn description(&self) -> &str {
         "Send a Matrix message for the user, from your own Matrix account, to other people or \
-         groups on your Matrix server. Only when the user asked for it; to message the user \
+         groups on Matrix (any server). Only when the user asked for it; to message the user \
          themselves, use message_me. `to` takes Matrix addresses (@name:server), people from \
          their contacts (by name), group addresses (#name:server), or the name of a group \
          you're in (matrix_rooms lists them). Depending on the user's settings it may go out \
          straight away, so write the whole message exactly as it should be sent, in Markdown. \
-         Never invent an address."
+         Never invent an address: if their contacts don't have it, ask the user for it and \
+         suggest adding it to that person in People."
     }
 
     fn parameters(&self) -> Value {

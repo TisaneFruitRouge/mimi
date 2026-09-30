@@ -132,32 +132,52 @@ async fn recipients_become_exactly_who_and_what_is_reached() {
 }
 
 #[tokio::test]
-async fn only_the_assistants_own_server_and_never_a_guess() {
-    let (state, _, _) = setup().await;
+async fn any_server_but_never_a_guess() {
+    let (state, fake, _) = setup().await;
+    // Other servers are fine: people, group addresses (joined as part of sending, since
+    // only that server knows whether it's public) and people from People.
+    fake.add_user("@remi:matrix.org", Some("Rémi"));
+    fake.world().aliases.insert(
+        "#hikes:matrix.org".to_owned(),
+        "!hikes:matrix.org".to_owned(),
+    );
+    let [Recipient::Person { id, .. }] = &resolve(&state, &["@remi:matrix.org"]).await.unwrap()[..]
+    else {
+        panic!("one person");
+    };
+    assert_eq!(id, "@remi:matrix.org");
+    let [
+        Recipient::Group {
+            id, join, alias, ..
+        },
+    ] = &resolve(&state, &["#hikes:matrix.org"]).await.unwrap()[..]
+    else {
+        panic!("one group");
+    };
+    assert_eq!((id.as_str(), *join), ("!hikes:matrix.org", true));
+    assert_eq!(alias.as_deref(), Some("#hikes:matrix.org"));
+    person(&state, "Rémi", Some("@remi:matrix.org")).await;
+    assert!(resolve(&state, &["Rémi"]).await.is_ok());
+
     let err = |inputs: &'static [&'static str]| {
         let state = state.clone();
         async move { resolve(&state, inputs).await.unwrap_err() }
     };
-    let e = err(&["@someone:matrix.org"]).await;
+    // Addresses that lead nowhere, here or elsewhere.
     assert!(
-        e.contains("another Matrix server (matrix.org)") && e.contains("home.org"),
-        "{e}"
-    );
-    assert!(
-        err(&["#room:matrix.org"])
+        err(&["@nobody:home.org"])
             .await
-            .contains("another Matrix server")
+            .contains("no Matrix account")
     );
     assert!(
-        err(&["!room:matrix.org"])
+        err(&["@someone:matrix.org"])
             .await
-            .contains("another Matrix server")
+            .contains("no Matrix account")
     );
-    // Addresses on its server that lead nowhere.
-    assert!(err(&["@nobody:home.org"]).await.contains("no one"));
     assert!(err(&["#nothing:home.org"]).await.contains("No group"));
-    // A group it isn't in and can't join.
+    // A group it isn't in and can't join: on its own server, or by room id elsewhere.
     assert!(err(&["!private:home.org"]).await.contains("Invite it"));
+    assert!(err(&["!room:matrix.org"]).await.contains("Invite it"));
     assert!(err(&[ME]).await.contains("own address"));
     assert!(
         err(&["not an address"])
@@ -171,8 +191,6 @@ async fn only_the_assistants_own_server_and_never_a_guess() {
     person(&state, "Alex One", Some("@alex1:home.org")).await;
     person(&state, "Alex Two", Some("@alex2:home.org")).await;
     assert!(err(&["Alex"]).await.contains("Several people"));
-    person(&state, "Rémi", Some("@remi:matrix.org")).await;
-    assert!(err(&["Rémi"]).await.contains("another Matrix server"));
     // A group and a person with the same name: ask.
     person(&state, "Family", Some(SAM)).await;
     assert!(err(&["Family"]).await.contains("group or a person"));
