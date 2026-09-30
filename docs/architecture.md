@@ -660,7 +660,7 @@ user picks the address, and the dialog shows the command that makes the account 
 their server program (`matrixServers` in `connect-dialogs.tsx`: Synapse's
 `register_new_matrix_user`, also in Docker; `!admin users create-user` in the admin room
 of Tuwunel, conduwuit or Continuwuity; `mas-cli manage register-user`; Dendrite's
-`create-account`), with a password generated on this computer and already filled in.
+`create-account`, also in Docker), with a password generated on this computer and already filled in.
 Commands that can ask for the password do, so it stays out of the shell's history.
 
 - **Signing in** (`connect`): the server comes from the address through

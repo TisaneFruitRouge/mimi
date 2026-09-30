@@ -695,9 +695,18 @@ const matrixServers = [
     id: "dendrite",
     name: "Dendrite",
     where: "On the server, in a terminal:",
-    command: (name: string) => `create-account -config dendrite.yaml -username ${name}`,
+    command: (name: string) => `create-account -config /etc/dendrite/dendrite.yaml -username ${name}`,
     asks: true,
     note: "Change the path if your dendrite.yaml is somewhere else.",
+  },
+  {
+    id: "dendrite-docker",
+    name: "Dendrite in Docker",
+    where: "On the server, in a terminal:",
+    command: (name: string) =>
+      `docker exec -it dendrite-monolith-1 create-account -config /etc/dendrite/dendrite.yaml -username ${name}`,
+    asks: true,
+    note: "Change dendrite-monolith-1 to your container's name if it's different (docker ps shows it).",
   },
 ] as const;
 
