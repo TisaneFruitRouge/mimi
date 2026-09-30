@@ -5,6 +5,7 @@ import { cn } from "cn";
 import { toast } from "sonner";
 
 import type { Action } from "@/bindings/Action";
+import { Markdown } from "@/components/markdown";
 import { Button } from "@/components/ui/button";
 import { InvitationOffers } from "@/features/calendar/invitations";
 import { describeArgs } from "@/features/chat/action-formatters";
@@ -220,7 +221,9 @@ function ApprovalCard({ action: a }: { action: Action }) {
           {rows.map((r, i) => (
             <div key={`${i}-${r.label}`} className="contents">
               <dt className="text-muted-foreground">{r.label}</dt>
-              <dd className="min-w-0 break-words whitespace-pre-wrap">{r.value}</dd>
+              <dd className={cn("min-w-0 break-words", !r.markdown && "whitespace-pre-wrap")}>
+                {r.markdown ? <Markdown compact>{r.value}</Markdown> : r.value}
+              </dd>
             </div>
           ))}
         </dl>
@@ -328,7 +331,9 @@ function DecidedCard({ action: a, automatic = false }: { action: Action; automat
           {rows.map((r, i) => (
             <div key={`${i}-${r.label}`} className="contents">
               <dt className="text-muted-foreground">{r.label}</dt>
-              <dd className="min-w-0 break-words whitespace-pre-wrap">{r.value}</dd>
+              <dd className={cn("min-w-0 break-words", !r.markdown && "whitespace-pre-wrap")}>
+                {r.markdown ? <Markdown compact>{r.value}</Markdown> : r.value}
+              </dd>
             </div>
           ))}
         </dl>

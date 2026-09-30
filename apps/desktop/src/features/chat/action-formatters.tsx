@@ -2,7 +2,12 @@
  * How each tool's arguments read on an approval card. Integrations add an entry for
  * their tools; anything without one falls back to a tidy list of its arguments.
  */
-export type ArgRow = { label: string; value: string };
+export type ArgRow = {
+  label: string;
+  value: string;
+  /** The value is Markdown to show formatted, as the recipient will see it. */
+  markdown?: boolean;
+};
 
 type Formatter = {
   /** Arguments the rows cover (or deliberately leave out). Any other is listed after them. */
