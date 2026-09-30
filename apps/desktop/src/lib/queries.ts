@@ -108,3 +108,17 @@ export function useActiveModel() {
   const sourceName = models?.find((m) => m.id === ref.model)?.name;
   return { ref, provider, ...info(ref.model, sourceName) };
 }
+
+/** Whether the default model can see photos; `null` while that isn't known yet. */
+export function useSeesImages(): boolean | null {
+  const ref = useSettings().data?.default_model ?? null;
+  const vision = useQuery({
+    queryKey: keys.vision(ref?.provider_id ?? "", ref?.model ?? ""),
+    queryFn: () => api.vision(ref!.provider_id, ref!.model),
+    enabled: !!ref,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  if (!ref) return null;
+  return vision.data?.sees_images ?? null;
+}

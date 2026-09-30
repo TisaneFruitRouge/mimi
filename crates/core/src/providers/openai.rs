@@ -45,6 +45,36 @@ pub struct ChatMessage {
     /// back instead of `content` and `tool_calls` by providers that need it.
     #[serde(skip)]
     pub replay: Option<serde_json::Value>,
+    /// Pictures that go with a user message, for models that can see them.
+    #[serde(skip)]
+    pub images: Vec<ImagePart>,
+}
+
+/// A picture for the model: already normalised (JPEG or PNG, small enough).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImagePart {
+    /// `image/jpeg` or `image/png`.
+    pub mime: String,
+    pub data: std::sync::Arc<Vec<u8>>,
+}
+
+impl ImagePart {
+    pub fn new(mime: impl Into<String>, data: Vec<u8>) -> Self {
+        Self {
+            mime: mime.into(),
+            data: std::sync::Arc::new(data),
+        }
+    }
+
+    pub fn base64(&self) -> String {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.encode(self.data.as_slice())
+    }
+
+    /// As a `data:` URL, the way OpenAI-compatible servers take pictures.
+    pub fn data_url(&self) -> String {
+        format!("data:{};base64,{}", self.mime, self.base64())
+    }
 }
 
 impl ChatMessage {
@@ -55,7 +85,14 @@ impl ChatMessage {
             tool_calls: Vec::new(),
             tool_call_id: None,
             replay: None,
+            images: Vec::new(),
         }
+    }
+
+    /// Adds pictures to a user message.
+    pub fn with_images(mut self, images: Vec<ImagePart>) -> Self {
+        self.images = images;
+        self
     }
 
     pub fn tool_calls(content: impl Into<String>, calls: &[ToolCall]) -> Self {
@@ -75,6 +112,7 @@ impl ChatMessage {
                 .collect(),
             tool_call_id: None,
             replay: None,
+            images: Vec::new(),
         }
     }
 
@@ -91,6 +129,7 @@ impl ChatMessage {
             tool_calls: Vec::new(),
             tool_call_id: Some(call_id.into()),
             replay: None,
+            images: Vec::new(),
         }
     }
 }
@@ -217,6 +256,11 @@ impl OpenAiCompatible {
             name: Option<String>,
             supported_parameters: Option<Vec<String>>,
             pricing: Option<Pricing>,
+            architecture: Option<Architecture>,
+        }
+        #[derive(Deserialize)]
+        struct Architecture {
+            input_modalities: Option<Vec<String>>,
         }
         #[derive(Deserialize)]
         struct Pricing {
@@ -251,6 +295,10 @@ impl OpenAiCompatible {
                         output: per_million(p.completion.as_deref()?)?,
                     })
                 }),
+                sees_images: m
+                    .architecture
+                    .and_then(|a| a.input_modalities)
+                    .map(|inputs| inputs.iter().any(|i| i == "image")),
                 id: m.id,
             })
             .collect();
@@ -276,6 +324,123 @@ impl OpenAiCompatible {
             .send()
             .await
             .is_ok_and(|r| r.status().is_success())
+    }
+
+    /// Whether `model` can see pictures, as far as this server says; `None` when it
+    /// couldn't be reached. See [`super::vision`].
+    pub async fn sees_images(&self, model: &str) -> Option<bool> {
+        #[derive(Deserialize)]
+        struct OllamaShow {
+            capabilities: Option<Vec<String>>,
+            projector_info: Option<serde_json::Value>,
+        }
+        #[derive(Deserialize)]
+        struct LmStudioModel {
+            #[serde(rename = "type")]
+            kind: Option<String>,
+        }
+        #[derive(Deserialize)]
+        struct LlamaProps {
+            modalities: Option<Modalities>,
+        }
+        #[derive(Deserialize)]
+        struct Modalities {
+            vision: Option<bool>,
+        }
+        #[derive(Deserialize)]
+        struct Models {
+            data: Vec<Model>,
+        }
+        #[derive(Deserialize)]
+        struct Model {
+            id: String,
+            architecture: Option<Architecture>,
+            capabilities: Option<Capabilities>,
+        }
+        #[derive(Deserialize)]
+        struct Architecture {
+            input_modalities: Option<Vec<String>>,
+        }
+        #[derive(Deserialize)]
+        struct Capabilities {
+            vision: Option<bool>,
+        }
+
+        let timeout = Duration::from_secs(8);
+        let mut reached = false;
+        // Servers on the user's machines: Ollama, LM Studio and llama.cpp each say so on
+        // their own API, next to the OpenAI-compatible one. Never asked of cloud services.
+        if self.local
+            && let Some(root) = self.ollama_root()
+        {
+            let root = root.to_owned();
+            let show = self
+                .request(reqwest::Method::POST, format!("{root}/api/show"))
+                .json(&serde_json::json!({ "model": model }))
+                .timeout(timeout)
+                .send()
+                .await;
+            reached |= show.is_ok();
+            if let Ok(res) = show
+                && res.status().is_success()
+                && let Ok(show) = res.json::<OllamaShow>().await
+            {
+                return Some(match show.capabilities {
+                    Some(caps) => caps.iter().any(|c| c == "vision"),
+                    // Ollama before capabilities were listed.
+                    None => show.projector_info.is_some(),
+                });
+            }
+            let lm = self
+                .request(
+                    reqwest::Method::GET,
+                    format!("{root}/api/v0/models/{}", path_segment(model)),
+                )
+                .timeout(timeout)
+                .send()
+                .await;
+            if let Ok(res) = lm
+                && res.status().is_success()
+                && let Ok(m) = res.json::<LmStudioModel>().await
+                && let Some(kind) = m.kind
+            {
+                return Some(kind == "vlm");
+            }
+            let props = self
+                .request(reqwest::Method::GET, format!("{root}/props"))
+                .timeout(timeout)
+                .send()
+                .await;
+            if let Ok(res) = props
+                && res.status().is_success()
+                && let Ok(p) = res.json::<LlamaProps>().await
+                && let Some(vision) = p.modalities.and_then(|m| m.vision)
+            {
+                return Some(vision);
+            }
+        }
+        let listed = self
+            .request(reqwest::Method::GET, self.url("models"))
+            .timeout(timeout)
+            .send()
+            .await;
+        reached |= listed.is_ok();
+        if let Ok(res) = listed
+            && res.status().is_success()
+            && let Ok(models) = res.json::<Models>().await
+            && let Some(m) = models.data.into_iter().find(|m| m.id == model)
+        {
+            if let Some(inputs) = m.architecture.and_then(|a| a.input_modalities) {
+                return Some(inputs.iter().any(|i| i == "image"));
+            }
+            if let Some(vision) = m.capabilities.and_then(|c| c.vision) {
+                return Some(vision);
+            }
+        }
+        if self.base_url.host_str() == Some("api.openai.com") {
+            return Some(super::vision::openai_family_sees(model));
+        }
+        reached.then_some(false)
     }
 
     /// Starts an Ollama model download. The response streams NDJSON progress lines.
@@ -474,7 +639,7 @@ fn chat_request(
 ) -> serde_json::Value {
     let mut body = serde_json::json!({
         "model": model,
-        "messages": messages,
+        "messages": messages.iter().map(message_json).collect::<Vec<_>>(),
         "stream": true,
     });
     if !tools.is_empty() {
@@ -487,6 +652,24 @@ fn chat_request(
     body
 }
 
+/// One message of the request. A message with pictures has its content as parts:
+/// the pictures (as `data:` URLs), then the text.
+fn message_json(m: &ChatMessage) -> serde_json::Value {
+    let mut json = serde_json::to_value(m).expect("chat messages serialize");
+    if !m.images.is_empty() {
+        let mut parts: Vec<serde_json::Value> = m
+            .images
+            .iter()
+            .map(|i| serde_json::json!({"type": "image_url", "image_url": {"url": i.data_url()}}))
+            .collect();
+        if !m.content.trim().is_empty() {
+            parts.push(serde_json::json!({"type": "text", "text": m.content}));
+        }
+        json["content"] = serde_json::Value::Array(parts);
+    }
+    json
+}
+
 pub(super) async fn check(res: reqwest::Response) -> Result<reqwest::Response, ProviderError> {
     let status = res.status();
     if status.is_success() {
@@ -497,6 +680,18 @@ pub(super) async fn check(res: reqwest::Response) -> Result<reqwest::Response, P
     }
     let body = res.text().await.unwrap_or_default();
     Err(ProviderError::Status(error_message(status, &body)))
+}
+
+/// A model id as one segment of a URL path.
+fn path_segment(id: &str) -> String {
+    id.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 /// A per-token price as OpenRouter writes it ("0.00000014"), per million tokens.
@@ -861,6 +1056,96 @@ mod tests {
         assert!(normal.get("chat_template_kwargs").is_none());
     }
 
+    #[test]
+    fn pictures_go_as_content_parts_before_the_words() {
+        let messages = [
+            ChatMessage::text(Role::System, "You are Mimi."),
+            ChatMessage::text(Role::User, "What's the date on this?")
+                .with_images(vec![ImagePart::new("image/png", b"png!".to_vec())]),
+            ChatMessage::text(Role::User, "")
+                .with_images(vec![ImagePart::new("image/jpeg", vec![1, 2, 3])]),
+        ];
+        let body = chat_request("qwen2.5vl:3b", &messages, &[], false);
+        // Messages without pictures keep their plain text.
+        assert_eq!(body["messages"][0]["content"], "You are Mimi.");
+        assert_eq!(
+            body["messages"][1]["content"],
+            serde_json::json!([
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,cG5nIQ=="}},
+                {"type": "text", "text": "What's the date on this?"},
+            ])
+        );
+        // A photo on its own has no empty text part.
+        assert_eq!(
+            body["messages"][2]["content"],
+            serde_json::json!([
+                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AQID"}},
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn servers_on_this_computer_say_whether_a_model_sees() {
+        use axum::Json;
+        use axum::routing::{get, post};
+
+        // Ollama answers /api/show.
+        let ollama = axum::Router::new().route(
+            "/api/show",
+            post(|Json(body): Json<serde_json::Value>| async move {
+                let caps = if body["model"] == "gemma3:4b" {
+                    serde_json::json!(["completion", "vision"])
+                } else {
+                    serde_json::json!(["completion", "tools"])
+                };
+                Json(serde_json::json!({"capabilities": caps}))
+            }),
+        );
+        // LM Studio answers its own model API; llama.cpp its /props.
+        let lmstudio = axum::Router::new().route(
+            "/api/v0/models/{id}",
+            get(|| async { Json(serde_json::json!({"id": "qwen2-vl-7b", "type": "vlm"})) }),
+        );
+        let llamacpp = axum::Router::new().route(
+            "/props",
+            get(|| async { Json(serde_json::json!({"modalities": {"vision": false}})) }),
+        );
+        // A cloud service is only asked its model list.
+        let cloud = axum::Router::new().route(
+            "/v1/models",
+            get(|| async {
+                Json(serde_json::json!({"data": [
+                    {"id": "pixtral-large", "capabilities": {"vision": true}},
+                    {"id": "codestral", "capabilities": {"vision": false}},
+                    {"id": "plain"},
+                ]}))
+            }),
+        );
+        let mut urls = Vec::new();
+        for app in [ollama, lmstudio, llamacpp, cloud] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            urls.push(
+                Url::parse(&format!("http://{}/v1", listener.local_addr().unwrap())).unwrap(),
+            );
+            tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        }
+        let local = |url: &Url| {
+            OpenAiCompatible::new(reqwest::Client::new(), url.clone(), None).local(true)
+        };
+        assert_eq!(local(&urls[0]).sees_images("gemma3:4b").await, Some(true));
+        assert_eq!(local(&urls[0]).sees_images("qwen3:8b").await, Some(false));
+        assert_eq!(local(&urls[1]).sees_images("qwen2-vl-7b").await, Some(true));
+        assert_eq!(local(&urls[2]).sees_images("model.gguf").await, Some(false));
+        let cloud = OpenAiCompatible::new(reqwest::Client::new(), urls[3].clone(), None);
+        assert_eq!(cloud.sees_images("pixtral-large").await, Some(true));
+        assert_eq!(cloud.sees_images("codestral").await, Some(false));
+        // It doesn't say: that's a no.
+        assert_eq!(cloud.sees_images("plain").await, Some(false));
+        // Nothing there: can't tell yet.
+        let gone = Url::parse("http://127.0.0.1:9/v1").unwrap();
+        assert_eq!(local(&gone).sees_images("x").await, None);
+    }
+
     /// A fake server that records chat requests, answers "OK", and (when `strict`)
     /// rejects fields it doesn't know, like some cloud APIs do.
     async fn fake_server(
@@ -969,12 +1254,14 @@ mod tests {
                 Json(serde_json::json!({"data": [
                     {"id": "deepseek/deepseek-v4-flash", "name": "DeepSeek: DeepSeek V4 Flash",
                      "supported_parameters": ["max_tokens", "tools", "tool_choice"],
-                     "pricing": {"prompt": "0.00000014", "completion": "0.00000028"}},
+                     "pricing": {"prompt": "0.00000014", "completion": "0.00000028"},
+                     "architecture": {"input_modalities": ["text"]}},
                     {"id": "openrouter/auto", "name": "Auto Router",
                      "supported_parameters": ["tools"],
                      "pricing": {"prompt": "-1", "completion": "-1"}},
                     {"id": "some/image-model", "name": "", "supported_parameters": ["seed"],
-                     "pricing": {"prompt": "0", "completion": "0"}},
+                     "pricing": {"prompt": "0", "completion": "0"},
+                     "architecture": {"input_modalities": ["text", "image"]}},
                     {"id": "plain"},
                 ]}))
             }),
@@ -1013,9 +1300,14 @@ mod tests {
         );
         assert_eq!(image.supports_tools, Some(false));
         assert_eq!(image.name, None);
+        assert_eq!(image.sees_images, Some(true));
+        assert_eq!(deepseek.sees_images, Some(false));
         // Other servers only send ids: nothing is guessed.
         let plain = find("plain");
-        assert_eq!((plain.supports_tools, plain.price), (None, None));
+        assert_eq!(
+            (plain.supports_tools, plain.price, plain.sees_images),
+            (None, None, None)
+        );
     }
 
     #[tokio::test]

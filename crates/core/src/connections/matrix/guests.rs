@@ -31,6 +31,8 @@ pub struct Inbound {
     pub quoted: Option<String>,
     /// Whether it came end-to-end encrypted.
     pub sealed: bool,
+    /// The picture it carries, fetched only if the sender is someone the owner trusts.
+    pub photo: Option<super::Photo>,
 }
 
 /// The direct chat with `sender` this room is, if the assistant keeps it as one: a chat
@@ -130,17 +132,19 @@ async fn on_guest_text(
 ) {
     let channel = GuestChannel::new(state, connection, messenger, &msg.room);
     let text = msg.text.trim().to_owned();
-    if text.is_empty() {
+    if text.is_empty() && msg.photo.is_none() {
         return;
     }
-    if let Some(answer) =
-        replies::answer_text(state, channel.key, msg.quoted.as_deref(), &text).await
+    // A photo's caption is never an answer to a prompt or a command.
+    if msg.photo.is_none()
+        && let Some(answer) =
+            replies::answer_text(state, channel.key, msg.quoted.as_deref(), &text).await
     {
         let _ = channel.send(&Outgoing::text(answer)).await;
         return;
     }
     let line = line_of(connection, &msg);
-    if text == "/new" {
+    if msg.photo.is_none() && text == "/new" {
         let reply = match access::line_conversation(state, &guest, &line, true).await {
             Some(_) => "Started a new conversation.",
             None => "Sorry, I couldn't start a new conversation.",
@@ -155,12 +159,26 @@ async fn on_guest_text(
         return;
     };
     tracing::info!(connection = %connection, room = %msg.room, "a message from someone the owner trusts");
-    let state = state.clone();
-    // Replies can take a while; don't hold up the next messages.
-    tokio::spawn(async move {
-        channels::converse(&state, &channel, conversation, text).await;
-        channel.messenger.typing(&channel.room, false).await;
-    });
+    let mut photos = Vec::new();
+    if let Some(photo) = msg.photo {
+        match channel.messenger.download(photo).await {
+            Ok(upload) => photos.push(upload),
+            Err(e) => {
+                tracing::warn!(connection = %connection, room = %msg.room, "downloading a Matrix photo failed: {e}");
+                let _ = channel
+                    .send(&Outgoing::text(
+                        "I couldn't get that photo from the server. Try sending it again.",
+                    ))
+                    .await;
+                if text.is_empty() {
+                    return;
+                }
+            }
+        }
+    }
+    // Photos wait for the words that come with them, as the owner's do; replies can
+    // take a while, so this never holds up the next messages.
+    channels::photos::deliver(state, Arc::new(channel), conversation, text, photos);
 }
 
 /// A reaction from anyone but the owner: it only ever answers a prompt the assistant
@@ -283,6 +301,7 @@ impl Channel for GuestChannel {
                 .send_html(&self.room, &part.body, &part.html)
                 .await?;
         }
+        self.messenger.typing(&self.room, false).await;
         Ok(())
     }
 

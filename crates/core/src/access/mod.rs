@@ -57,7 +57,7 @@ impl Access {
             .contains(&id)
     }
 
-    fn mark(&self, id: Uuid) {
+    pub(crate) fn mark(&self, id: Uuid) {
         self.hidden
             .write()
             .unwrap_or_else(|e| e.into_inner())

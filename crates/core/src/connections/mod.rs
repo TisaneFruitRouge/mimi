@@ -40,6 +40,8 @@ pub struct Connections {
     pub signal: signal::Workers,
     /// Running Matrix clients.
     pub matrix: matrix::Clients,
+    /// Photos from messaging apps waiting for the rest of their message.
+    pub photos: crate::channels::photos::Held,
 }
 
 impl Default for Connections {
@@ -52,6 +54,7 @@ impl Default for Connections {
             prompts: Default::default(),
             signal: Default::default(),
             matrix: Default::default(),
+            photos: Default::default(),
         }
     }
 }

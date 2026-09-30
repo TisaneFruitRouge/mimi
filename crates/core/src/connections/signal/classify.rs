@@ -7,18 +7,22 @@
 
 use presage::libsignal_service::content::ContentBody;
 use presage::libsignal_service::prelude::{Content, Uuid};
-use presage::libsignal_service::proto::{DataMessage, SyncMessage, sync_message};
+use presage::libsignal_service::proto::{
+    AttachmentPointer, DataMessage, SyncMessage, sync_message,
+};
 use presage::libsignal_service::protocol::ServiceId;
 
 /// What an incoming message is, for Mimi.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Incoming {
     /// Something the user wrote in Note to Self. `quote` is the timestamp of the message
-    /// it replies to, if any.
+    /// it replies to, if any. `photos` are filled in by the worker, which downloads the
+    /// message's [`pictures`]; `text` may be empty when there are some.
     Note {
         text: String,
         quote: Option<u64>,
         timestamp: u64,
+        photos: Vec<crate::attachments::Upload>,
     },
     /// A reaction the user put on a message in Note to Self (`target` is its timestamp).
     Reaction { emoji: String, target: u64 },
@@ -47,29 +51,8 @@ pub fn classify(
     if u32::from(content.metadata.sender_device) == device {
         return Incoming::OwnEcho;
     }
-    let (message, timestamp): (&DataMessage, Option<u64>) = match &content.body {
-        ContentBody::SynchronizeMessage(SyncMessage {
-            content: Some(sync_message::Content::Sent(sent)),
-            ..
-        }) => {
-            // A message the user sent from another device: only the ones to themselves.
-            if !sent
-                .parse_destination_service_id()
-                .is_some_and(|to| is_account(&to, account))
-            {
-                return Incoming::Ignore;
-            }
-            match &sent.message {
-                Some(message) => (message, sent.timestamp.or(message.timestamp)),
-                // Edits and anything without a plain message.
-                None => return Incoming::Ignore,
-            }
-        }
-        // Some apps may write to themselves directly rather than as a transcript.
-        ContentBody::DataMessage(message) if is_account(&content.metadata.destination, account) => {
-            (message, message.timestamp)
-        }
-        _ => return Incoming::Ignore,
+    let Some((message, timestamp)) = note_message(content, account) else {
+        return Incoming::Ignore;
     };
     if message.group_v2.is_some() || message.story_context.is_some() {
         return Incoming::Ignore;
@@ -89,15 +72,67 @@ pub fn classify(
         };
     }
     let text = message.body.as_deref().unwrap_or("").trim();
-    if text.is_empty() {
-        // Photos, files, stickers and control messages: not for the assistant.
+    if text.is_empty() && pictures_in(message).is_empty() {
+        // Files, stickers, voice notes and control messages: not for the assistant.
         return Incoming::Ignore;
     }
     Incoming::Note {
         text: text.to_owned(),
         quote: message.quote.as_ref().and_then(|q| q.id),
         timestamp,
+        photos: Vec::new(),
     }
+}
+
+/// The pictures of a message [`classify`] found to be a note, to download: at most as
+/// many as a message may have, none larger than may be downloaded.
+pub fn pictures(content: &Content, account: Uuid) -> Vec<AttachmentPointer> {
+    match note_message(content, account) {
+        Some((message, _)) => pictures_in(message),
+        None => Vec::new(),
+    }
+}
+
+fn pictures_in(message: &DataMessage) -> Vec<AttachmentPointer> {
+    message
+        .attachments
+        .iter()
+        .filter(|a| {
+            a.content_type
+                .as_deref()
+                .is_some_and(|t| t.starts_with("image/"))
+                && a.size
+                    .is_some_and(|n| n as usize <= crate::attachments::MAX_UPLOAD_BYTES)
+        })
+        .take(crate::attachments::MAX_PER_MESSAGE)
+        .cloned()
+        .collect()
+}
+
+/// The message the user wrote to themselves, with its timestamp, if that's what it is.
+fn note_message(content: &Content, account: Uuid) -> Option<(&DataMessage, Option<u64>)> {
+    Some(match &content.body {
+        ContentBody::SynchronizeMessage(SyncMessage {
+            content: Some(sync_message::Content::Sent(sent)),
+            ..
+        }) => {
+            // A message the user sent from another device: only the ones to themselves.
+            if !sent
+                .parse_destination_service_id()
+                .is_some_and(|to| is_account(&to, account))
+            {
+                return None;
+            }
+            // Edits and anything without a plain message have none.
+            let message = sent.message.as_ref()?;
+            (message, sent.timestamp.or(message.timestamp))
+        }
+        // Some apps may write to themselves directly rather than as a transcript.
+        ContentBody::DataMessage(message) if is_account(&content.metadata.destination, account) => {
+            (message, message.timestamp)
+        }
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
@@ -175,7 +210,8 @@ mod tests {
             Incoming::Note {
                 text: "what's on today?".into(),
                 quote: Some(99),
-                timestamp: 42
+                timestamp: 42,
+                photos: Vec::new(),
             }
         );
         // From a desktop app linked to the same account, too.
@@ -260,11 +296,105 @@ mod tests {
             content(ME, PHONE, EditMessage::default()),
             // Other sync messages (read receipts, contacts…).
             content(ME, PHONE, SyncMessage::default()),
-            // A photo saved to Note to Self, with no text.
+            // A file or voice note saved to Note to Self, with no text.
             content(ME, PHONE, sent_to(ME, DataMessage::default())),
+            content(
+                ME,
+                PHONE,
+                sent_to(
+                    ME,
+                    DataMessage {
+                        attachments: vec![attachment("application/pdf", 1000)],
+                        ..DataMessage::default()
+                    },
+                ),
+            ),
+            content(
+                ME,
+                PHONE,
+                sent_to(
+                    ME,
+                    DataMessage {
+                        attachments: vec![attachment("audio/aac", 1000)],
+                        ..DataMessage::default()
+                    },
+                ),
+            ),
+            // Someone else's photo.
+            content(
+                FRIEND,
+                PHONE,
+                DataMessage {
+                    attachments: vec![attachment("image/jpeg", 1000)],
+                    ..DataMessage::default()
+                },
+            ),
         ];
         for message in &ignored {
             assert_eq!(sort(message), Incoming::Ignore, "{:?}", message.body);
         }
+    }
+
+    fn attachment(content_type: &str, size: u32) -> AttachmentPointer {
+        AttachmentPointer {
+            content_type: Some(content_type.to_owned()),
+            size: Some(size),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn photos_in_note_to_self_are_for_the_assistant() {
+        let photos = DataMessage {
+            attachments: vec![
+                attachment("image/jpeg", 2_000_000),
+                attachment("application/pdf", 1000),
+                attachment("image/png", 300_000),
+                // Too large to download.
+                attachment("image/jpeg", 50_000_000),
+            ],
+            timestamp: Some(44),
+            ..Default::default()
+        };
+        let note = content(ME, PHONE, sent_to(ME, photos.clone()));
+        assert_eq!(
+            sort(&note),
+            Incoming::Note {
+                text: String::new(),
+                quote: None,
+                timestamp: 44,
+                photos: Vec::new(),
+            }
+        );
+        let found = pictures(&note, ME);
+        assert_eq!(
+            found
+                .iter()
+                .map(|a| a.content_type.as_deref().unwrap())
+                .collect::<Vec<_>>(),
+            ["image/jpeg", "image/png"]
+        );
+        // With a caption, the words come along.
+        let captioned = DataMessage {
+            body: Some("Add these to the calendar".into()),
+            ..photos
+        };
+        assert!(matches!(
+            sort(&content(ME, PHONE, sent_to(ME, captioned))),
+            Incoming::Note { text, .. } if text == "Add these to the calendar"
+        ));
+        // Nothing to download from anyone else's message.
+        let theirs = content(
+            ME,
+            PHONE,
+            sent_to(
+                FRIEND,
+                DataMessage {
+                    attachments: vec![attachment("image/jpeg", 1000)],
+                    ..Default::default()
+                },
+            ),
+        );
+        assert!(pictures(&theirs, ME).is_empty());
     }
 }

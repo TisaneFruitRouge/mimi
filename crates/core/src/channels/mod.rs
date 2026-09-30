@@ -17,9 +17,14 @@ use mimi_protocol::{Action, ActionStatus, Delivery, Event, Message, MessageStatu
 use uuid::Uuid;
 
 use crate::AppState;
+use crate::attachments::Upload;
 
+pub mod photos;
 pub mod replies;
 pub mod tools;
+
+/// Said on the app when the model couldn't see the photos the user sent.
+pub const UNSEEN_NOTE: &str = "The model I'm using can't see photos. You can choose one that can in the app's Models settings.";
 
 /// A private line to the user in a messaging app.
 #[async_trait]
@@ -152,16 +157,30 @@ pub async fn converse(
     channel: &dyn Channel,
     conversation: Uuid,
     text: String,
+    attachments: Vec<Upload>,
 ) {
     let mut events = state.events.subscribe();
     channel.typing().await;
-    let sent = match crate::chat::send(state.clone(), conversation, text, None, Vec::new()).await {
+    let sent = crate::chat::send_with_attachments(
+        state.clone(),
+        conversation,
+        text,
+        None,
+        Vec::new(),
+        None,
+        attachments,
+    )
+    .await;
+    let sent = match sent {
         Ok(sent) => sent,
         Err(e) => {
             let _ = channel.send(&Outgoing::text(e.message())).await;
             return;
         }
     };
+    if sent.user_message.attachments_unseen {
+        let _ = channel.send(&Outgoing::text(UNSEEN_NOTE)).await;
+    }
     let assistant = sent.assistant_message.id;
     // In a trusted person's conversation whose card says the owner approves, the card
     // goes to the owner instead (only the card: `access::ask_owner`).

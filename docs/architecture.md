@@ -318,8 +318,12 @@ and "Default", which empties it.
   apps may send) plus reactions in Note to Self. Messages from this device or with a
   timestamp Mimi used (the last 256) are its own echoes. Everything else (other people,
   groups, what the user sends others, receipts, typing, calls, stories, edits, messages
-  without text) is dropped on the Signal thread, unread and unlogged. Messages go to a
-  "Signal" conversation through `channels::converse`; `/new` starts another.
+  with neither text nor a picture) is dropped on the Signal thread, unread and
+  unlogged. A note's pictures (image attachments within 20 MB, at most 10) are
+  downloaded and decrypted there too (`classify::pictures`, presage's
+  `get_attachment`), only once it's known to be a note; other files never are.
+  Messages go to a "Signal" conversation through `channels::photos::deliver` (see
+  Photos); `/new` starts another.
 - **Mimi's messages** are sent to the account itself, which libsignal-service turns into
   a "sent" transcript for the user's other devices: they show in Note to Self as the
   user's own. So each starts with the assistant's name in bold on its own line. Markdown
@@ -661,7 +665,9 @@ user (send, typing, ask for approval, remind), `channels::converse` runs a chat 
 from an app and relays its approvals and reply on the same channel, and
 `channels::owners` lists every paired app for what Mimi sends on its own (reminders,
 routine results, a routine's approvals). Apps without buttons answer prompts with a
-short reply or a reaction, matched to the prompt by `channels::replies`.
+short reply or a reaction, matched to the prompt by `channels::replies`. Apps hand
+the user's messages over through `channels::photos::deliver`, which gathers photos with
+the words around them into one turn (see Photos).
 
 ### Matrix
 
@@ -721,6 +727,13 @@ Commands that can ask for the password do, so it stays out of the shell's histor
   (`format.rs`): the model's raw HTML is shown as text, links keep only http(s) and
   mailto, pictures become their description, and long replies split at line breaks
   (12,000 characters) without cutting a code block in two.
+- **Photos**: an `m.image` from the owner is a message whose words are its caption
+  (the body, when a `filename` differs from it, per the spec) and whose picture is
+  fetched with matrix-sdk's media API, which decrypts encrypted media, only once the
+  sender is known to be the owner and within 20 MB (`info.size`, then the bytes). The
+  same encryption rule applies. Others' pictures are never fetched; a caption in a chat
+  it opened for the user is passed on like any reply. Grouping with the words that
+  follow is `channels::photos` (see Photos).
 - **Prompts**: approvals ("Waiting for you: …") and reminders ("⏰ …") carry the hints
   from `channels::replies`, and are remembered by event id: a reply to one (its
   `m.in_reply_to`) or a reaction on it (👍 / 👎, ✅ / 💤) answers it; a bare "yes" or
@@ -789,6 +802,94 @@ from its own account (`matrix/send.rs`, `rooms.rs`, `messenger.rs`).
   without a word.
 - **Settings › Permissions** offers people with a Matrix address and the groups from
   `GET /v1/matrix/groups` as exceptions, and the switch under the kind.
+
+## Photos
+
+The user can send photos with a message, from the app, a browser or a messaging app
+("📷 📷 add these dates to our calendar"). Only pictures for now; an attachment has a
+`kind` so voice notes and videos can follow.
+
+- **Protocol.** `SendMessage.attachments: Vec<NewAttachment>` (base64 `data`, optional
+  `name` and `mime`, which is only a hint). At most 10 per message and 20 MB each; the
+  send route alone accepts request bodies up to 64 MB (the app shrinks photos over 4 MB
+  or 3,000 px to 2,400 px JPEG before sending, when the browser can draw them). With
+  photos, `content` may be empty. `Message.attachments: Vec<Attachment>` (id, kind,
+  mime, name, size, width, height) and `Message.attachments_unseen` (the model couldn't
+  see them).
+- **Normalising** (`attachments.rs`, the `image` crate with JPEG, PNG, GIF and WebP
+  decoders; MIT/Apache). Every picture, whichever way it came, is decoded with limits
+  (20,000 px a side, 400 MB of memory), so a file that isn't a picture, or claims to be
+  one, is refused with a plain sentence; HEIC gets its own ("share it as a JPEG").
+  It's turned upright from its EXIF orientation, shrunk to 1,568 px on its long side
+  (what cloud models work at; enough to read a ticket), and saved again: PNG for PNGs
+  and transparent pictures (screenshots stay sharp) unless that's over 3 MB, else JPEG
+  at quality 85. Saving it again keeps no metadata at all: no location, camera or time.
+  Names are made safe and take the new extension. Decoding runs on a blocking thread.
+- **Storage.** `message_attachments` (migration 0027) in the SQLCipher database: the
+  normalised bytes as a BLOB, with the message id (`ON DELETE CASCADE`, so deleting a
+  conversation deletes its photos) and position. Never loose files. `store::messages`
+  fills `attachments` from it; `attachments_unseen` is a column on `messages`.
+- **Serving.** `GET /v1/attachments/{id}` (auth like every `/v1` route) returns the
+  re-encoded bytes with their own type (only `image/jpeg` or `image/png` ever),
+  `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`, and a private,
+  immutable cache header. A browser loads it directly (the session cookie covers it).
+  The desktop webview can't reach the daemon, so `transport.ts › attachmentUrl` asks the
+  `chat_attachment` command for the bytes (a `tauri::ipc::Response`) and shows them as a
+  `data:` URL; the page's CSP (Tauri's and the daemon's) allows `data:` pictures, not
+  `blob:`.
+- **Who can see** (`providers/vision.rs`). Anthropic: every Claude model. The built-in
+  runtime: no, since its catalog models run without their picture encoder (llama-server's
+  `--mmproj` file, not downloaded; Gemma 3's ships next to the GGUF on Hugging Face,
+  so adding it is a download of a second file). OpenAI-compatible sources are asked:
+  on the user's machines, Ollama's `POST /api/show` (`capabilities` has `vision`, or a
+  `projector_info` on older versions), LM Studio's `GET /api/v0/models/{id}` (`type:
+  vlm`) and llama.cpp's `GET /props` (`modalities.vision`); for any source, `/models`
+  (OpenRouter's `architecture.input_modalities`, Mistral's `capabilities.vision`); and
+  on `api.openai.com`, the families known to see (gpt-4o, gpt-4.1, gpt-5, o-series,
+  without audio/realtime/TTS models). A source that says nothing counts as no. Answers
+  are cached ten minutes per source and model (an unreachable one isn't cached).
+  `GET /v1/models/vision[?provider_id&model]` answers for the default model, so the
+  composer can say so before sending; `ModelInfo.sees_images` carries what model lists
+  say.
+- **Prompts.** `ChatMessage.images` (`ImagePart`: mime + bytes). OpenAI-compatible
+  requests turn a message with pictures into content parts: `image_url` parts with
+  `data:` URLs, then the text (none when it's empty). Anthropic gets `image` blocks
+  (base64) before the text block. Pictures go with the latest two user messages that
+  have some (the new one included), at most 10 in all; each takes 4,000 characters from
+  the history budget. Older photos become a note in their message's text ("The user sent
+  2 photos here, no longer shown to you."). For a model that can't see, no picture is
+  sent: the message gets a note (the user sent N photos; if it matters, say you can't see
+  them and that a model that can is chosen in Models), older ones "which you couldn't
+  see", and the message is marked `attachments_unseen`. Internal calls (memory learning,
+  mail) never carry pictures, and learning skips messages that are only photos.
+- **Messaging apps.** A picture is fetched only once its sender is known to be the owner,
+  and only up to 20 MB: Telegram's largest `photo` size (or a `document` whose type is a
+  picture) through `getFile` and the file endpoint of the configurable Bot API base
+  (errors are mapped without their text, which would hold the token); Signal's image
+  attachments of a Note to Self, on the Signal thread; Matrix `m.image` through
+  matrix-sdk's media API. The caption is the message's words. A photo that can't be
+  fetched is said so ("Try sending it again"). `channels::photos::deliver` then gathers
+  turns per conversation, because people send photos first and words after, and apps
+  deliver several photos (a Telegram album, one Matrix event each) one by one:
+  - a message without photos takes whatever photos are held (and their captions) along;
+  - photos with words go once nothing more came for 3 seconds;
+  - photos without words wait 45 seconds for words, then go on their own;
+  - a batch that reaches 10 goes at once.
+
+  Commands (`/new`) and answers to prompts ("yes", a reaction) are handled before, so
+  they never pick up photos. When the model couldn't see them, the app also gets
+  `channels::UNSEEN_NOTE`.
+- **UI** (`features/chat/photos.tsx`). The composer takes photos from `+` › Add photos,
+  paste and drops anywhere on the chat (with a quiet overlay), shows removable
+  thumbnails, and, when the default model can't see, "This model can't see photos.
+  Choose one that can in Models." A sent message shows its photos above the bubble (one
+  in its own shape, several as a grid), opening in a lightbox; a message the model
+  couldn't see says so under it. No model names outside Models.
+- **Later: voice and video.** The `kind` enum, the table (`kind`, `mime`, BLOB) and
+  `channels::photos` are shaped for them. They'll need their own normalising (and a
+  duration), a capability per source ("hears audio"), a transcription fallback for models
+  that can't hear (local Whisper, so audio stays on the machine), the apps' voice
+  notes (Telegram `voice`, Signal `audio/*`, Matrix `m.audio`), and players in the UI.
 
 ## People and @ mentions
 

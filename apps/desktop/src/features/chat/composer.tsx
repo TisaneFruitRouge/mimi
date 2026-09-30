@@ -1,9 +1,11 @@
 import { forwardRef, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowUp, AtSign, Blocks, Hash, MessageSquarePlus, Plus, Sparkles } from "lucide-react";
+import { ArrowUp, AtSign, Blocks, Hash, ImagePlus, MessageSquarePlus, Plus, Sparkles } from "lucide-react";
 import { cn } from "cn";
+import { toast } from "sonner";
 
 import type { Mention } from "@/bindings/Mention";
+import type { NewAttachment } from "@/bindings/NewAttachment";
 import { LocalityIcon } from "@/components/locality-badge";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -14,12 +16,23 @@ import { useMentions } from "@/features/chat/mentions/use-mentions";
 import type { Section } from "@/features/shell/top-bar";
 import { localityExplanation } from "@/lib/format";
 import { mod } from "@/lib/platform";
-import { useActiveModel } from "@/lib/queries";
+import {
+  type DraftPhoto,
+  DraftPhotos,
+  MAX_PHOTOS,
+  ModelsLink,
+  draftPhoto,
+  encodePhoto,
+  imageFiles,
+} from "@/features/chat/photos";
+import { useActiveModel, useSeesImages } from "@/lib/queries";
 
 export interface ComposerHandle {
   setText: (text: string) => void;
   /** Text with its @ mentions already made into pills, e.g. from "Ask Mimi about this". */
   setDraft: (text: string, mentions: Mention[]) => void;
+  /** Adds photos to the message being written (dropped on the chat, say). */
+  addPhotos: (files: File[]) => void;
 }
 
 /**
@@ -31,7 +44,7 @@ export const Composer = forwardRef<
   ComposerHandle,
   {
     replying: boolean;
-    onSend: (text: string, mentions: Mention[]) => Promise<boolean>;
+    onSend: (text: string, mentions: Mention[], photos: NewAttachment[]) => Promise<boolean>;
     onStop: () => void;
     onNewConversation: () => void;
     onSection: (s: Section) => void;
@@ -43,6 +56,21 @@ export const Composer = forwardRef<
   const highlights = useRef<HTMLDivElement>(null);
   const active = useActiveModel();
   const mention = useMentions({ text, setText, area });
+  const [photos, setPhotos] = useState<DraftPhoto[]>([]);
+  const [sending, setSending] = useState(false);
+  const picker = useRef<HTMLInputElement>(null);
+  const seesImages = useSeesImages();
+
+  const addPhotos = (files: File[]) => {
+    const images = imageFiles(files);
+    if (!images.length) return;
+    const room = Math.max(MAX_PHOTOS - photos.length, 0);
+    if (images.length > room) toast.error(`At most ${MAX_PHOTOS} photos can go with one message.`);
+    const added = images.slice(0, room).map(draftPhoto);
+    setPhotos((current) => [...current, ...added].slice(0, MAX_PHOTOS));
+    area.current?.focus();
+  };
+  const removePhoto = (key: string) => setPhotos((current) => current.filter((p) => p.key !== key));
 
   useImperativeHandle(ref, () => {
     const fill = (t: string, mentions: Mention[]) => {
@@ -54,7 +82,7 @@ export const Composer = forwardRef<
         area.current?.setSelectionRange(t.length, t.length);
       });
     };
-    return { setText: (t) => fill(t, []), setDraft: fill };
+    return { setText: (t) => fill(t, []), setDraft: fill, addPhotos };
   });
 
   // Grow with the content, up to a limit.
@@ -67,12 +95,26 @@ export const Composer = forwardRef<
 
   const submit = async () => {
     const value = text.trim();
-    if (!value || replying || !active) return;
+    if ((!value && !photos.length) || replying || sending || !active) return;
     const mentions = mention.mentions;
+    const attached = photos;
+    let encoded: NewAttachment[];
+    try {
+      setSending(true);
+      encoded = await Promise.all(attached.map(encodePhoto));
+    } catch (e) {
+      setSending(false);
+      toast.error((e as Error).message);
+      return;
+    }
     setText("");
+    setPhotos([]);
     mention.reset();
-    if (!(await onSend(value, mentions))) {
+    const sent = await onSend(value, mentions, encoded);
+    setSending(false);
+    if (!sent) {
       setText(value);
+      setPhotos(attached);
       mention.restore(mentions);
     }
   };
@@ -82,7 +124,7 @@ export const Composer = forwardRef<
     fn();
   };
 
-  const canSend = !!text.trim() && !!active;
+  const canSend = (!!text.trim() || photos.length > 0) && !!active && !sending;
 
   return (
     <div className="mx-auto w-full max-w-[720px] px-6 pb-5">
@@ -97,6 +139,13 @@ export const Composer = forwardRef<
             onHighlight={mention.setHighlight}
             onPick={mention.pick}
           />
+        )}
+        {photos.length > 0 && <DraftPhotos photos={photos} onRemove={removePhoto} />}
+        {photos.length > 0 && seesImages === false && (
+          <p className="px-5 pt-2.5 type-footnote text-muted-foreground">
+            This model can't see photos. Choose one that can in{" "}
+            <ModelsLink onModels={() => onSection("models")} />.
+          </p>
         )}
         <div className="relative">
           <MentionHighlights ref={highlights} text={text} mentions={mention.mentions} className={fieldText} />
@@ -119,12 +168,21 @@ export const Composer = forwardRef<
                 submit();
               }
             }}
+            onPaste={(e) => {
+              const pasted = imageFiles(e.clipboardData.files);
+              if (!pasted.length) return;
+              // A picture alone is added as a photo; text that comes with it still pastes.
+              if (!e.clipboardData.types.includes("text/plain")) e.preventDefault();
+              addPhotos(pasted);
+            }}
             onSelect={() => mention.refresh()}
             onBlur={() => mention.close()}
             onScroll={(e) => {
               if (highlights.current) highlights.current.scrollTop = e.currentTarget.scrollTop;
             }}
-            placeholder={active ? "Ask anything" : "Choose a model to start"}
+            placeholder={
+              !active ? "Choose a model to start" : photos.length ? "Add a message, or just send" : "Ask anything"
+            }
             aria-label="Message"
             rows={1}
             autoFocus
@@ -158,6 +216,9 @@ export const Composer = forwardRef<
               <TooltipContent>More · or type /</TooltipContent>
             </Tooltip>
             <PopoverContent align="start" className="w-[240px] p-1.5">
+              <MenuItem icon={<ImagePlus />} onClick={action(() => picker.current?.click())}>
+                Add photos…
+              </MenuItem>
               <MenuItem icon={<MessageSquarePlus />} hint={`${mod}N`} onClick={action(onNewConversation)}>
                 New chat
               </MenuItem>
@@ -169,6 +230,18 @@ export const Composer = forwardRef<
               </MenuItem>
             </PopoverContent>
           </Popover>
+
+          <input
+            ref={picker}
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            onChange={(e) => {
+              addPhotos(Array.from(e.target.files ?? []));
+              e.target.value = "";
+            }}
+          />
 
           <div className="flex-1" />
           <PrivacyChip onManage={() => onSection("models")} />

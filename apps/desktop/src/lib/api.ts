@@ -36,6 +36,7 @@ import type { ProviderUpdate } from "@/bindings/ProviderUpdate";
 import type { Recommendations } from "@/bindings/Recommendations";
 import type { SendMessage } from "@/bindings/SendMessage";
 import type { SendMessageResult } from "@/bindings/SendMessageResult";
+import type { VisionSupport } from "@/bindings/VisionSupport";
 import type { Delivery } from "@/bindings/Delivery";
 import type { NewScheduleItem } from "@/bindings/NewScheduleItem";
 import type { ScheduleItem } from "@/bindings/ScheduleItem";
@@ -291,6 +292,12 @@ export const api = {
   send: (id: string, msg: SendMessage) =>
     call<SendMessageResult>("POST", `/conversations/${id}/messages`, msg),
   cancel: (id: string) => call<null>("POST", `/conversations/${id}/cancel`),
+  /** Whether a model can see photos sent to it. */
+  vision: (providerId: string, model: string) =>
+    call<VisionSupport>(
+      "GET",
+      `/models/vision?provider_id=${encodeURIComponent(providerId)}&model=${encodeURIComponent(model)}`,
+    ),
   approveAction: (id: string, args?: Record<string, unknown>) =>
     call<null>("POST", `/actions/${id}/approve`, { arguments: args ?? null, always: false }),
   /** Approves, and stops asking for the person or calendar the card offered. */
@@ -350,6 +357,8 @@ export const keys = {
   presets: ["presets"] as const,
   models: (providerId: string) => ["models", providerId] as const,
   allModels: ["models"] as const,
+  /** Under the source's models, so a change of sources asks again. */
+  vision: (providerId: string, model: string) => ["models", providerId, "vision", model] as const,
   recommendations: ["recommendations"] as const,
   pulls: ["pulls"] as const,
   runtime: ["runtime"] as const,

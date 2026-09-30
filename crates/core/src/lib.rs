@@ -7,6 +7,7 @@ use mimi_protocol::{KeyStorage, Paths};
 
 pub mod access;
 pub mod api;
+pub mod attachments;
 pub mod channels;
 pub mod chat;
 pub mod connections;

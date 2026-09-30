@@ -275,7 +275,9 @@ fn excerpt(messages: &[&mimi_protocol::Message]) -> Option<String> {
         match m.role {
             MessageRole::User => {
                 skip_reply = asks_not_to_remember(&m.content);
-                if !skip_reply {
+                // Photos never reach learning: only what the user wrote (a photo on its
+                // own is nothing to learn from).
+                if !skip_reply && !m.content.trim().is_empty() {
                     parts.push(format!("USER: {}", clip(&m.content, 800)));
                 }
             }

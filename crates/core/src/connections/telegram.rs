@@ -52,6 +52,8 @@ pub enum TgError {
 pub struct Bot {
     http: reqwest::Client,
     base: String,
+    /// Where files are downloaded from. Contains the token too: never log it.
+    files: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,6 +94,68 @@ struct ButtonMessage {
 struct TgMessage {
     chat: Chat,
     text: Option<String>,
+    /// A photo: the same picture in several sizes, smallest first.
+    photo: Option<Vec<PhotoSize>>,
+    /// A file, which may be a picture sent uncompressed.
+    document: Option<Document>,
+    /// The words sent with a photo or file.
+    caption: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PhotoSize {
+    file_id: String,
+    width: u32,
+    height: u32,
+    file_size: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Document {
+    file_id: String,
+    file_name: Option<String>,
+    mime_type: Option<String>,
+    file_size: Option<u64>,
+}
+
+/// A picture in a message, to download once it's known to be from the owner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Picture {
+    file_id: String,
+    name: Option<String>,
+    mime: Option<String>,
+}
+
+impl TgMessage {
+    /// The picture it carries: the largest size of a photo (within what may be
+    /// downloaded), or a file that says it's a picture.
+    fn picture(&self) -> Option<Picture> {
+        let limit = crate::attachments::MAX_UPLOAD_BYTES as u64;
+        if let Some(sizes) = &self.photo {
+            return sizes
+                .iter()
+                .filter(|s| s.file_size.is_none_or(|n| n <= limit))
+                .max_by_key(|s| u64::from(s.width) * u64::from(s.height))
+                .map(|s| Picture {
+                    file_id: s.file_id.clone(),
+                    name: None,
+                    mime: Some("image/jpeg".to_owned()),
+                });
+        }
+        self.document
+            .as_ref()
+            .filter(|d| {
+                d.mime_type
+                    .as_deref()
+                    .is_some_and(|m| m.starts_with("image/"))
+                    && d.file_size.is_none_or(|n| n <= limit)
+            })
+            .map(|d| Picture {
+                file_id: d.file_id.clone(),
+                name: d.file_name.clone(),
+                mime: d.mime_type.clone(),
+            })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -110,10 +174,55 @@ pub fn default_api() -> String {
 
 impl Bot {
     pub fn new(http: reqwest::Client, api: &str, token: &str) -> Self {
+        let api = api.trim_end_matches('/');
         Self {
             http,
-            base: format!("{}/bot{}", api.trim_end_matches('/'), token.trim()),
+            base: format!("{api}/bot{}", token.trim()),
+            files: format!("{api}/file/bot{}", token.trim()),
         }
+    }
+
+    /// Downloads a file the owner sent (at most [`crate::attachments::MAX_UPLOAD_BYTES`]).
+    async fn download(&self, file_id: &str) -> Result<Vec<u8>, TgError> {
+        #[derive(Deserialize)]
+        struct File {
+            file_path: Option<String>,
+            file_size: Option<u64>,
+        }
+        let file: File = self
+            .call(
+                "getFile",
+                json!({ "file_id": file_id }),
+                Duration::from_secs(20),
+            )
+            .await?;
+        let too_large = || TgError::Api("the file is too large".to_owned());
+        if file
+            .file_size
+            .is_some_and(|n| n > crate::attachments::MAX_UPLOAD_BYTES as u64)
+        {
+            return Err(too_large());
+        }
+        let path = file
+            .file_path
+            .ok_or_else(|| TgError::Api("no file".to_owned()))?;
+        // As with every call: errors without their text, which would hold the token.
+        let res = self
+            .http
+            .get(format!("{}/{}", self.files, path.trim_start_matches('/')))
+            .timeout(Duration::from_secs(90))
+            .send()
+            .await
+            .map_err(|_| TgError::Unreachable)?;
+        if !res.status().is_success() {
+            return Err(TgError::Api(format!(
+                "download failed ({})",
+                res.status().as_u16()
+            )));
+        }
+        crate::attachments::read_capped(res)
+            .await
+            .ok_or_else(too_large)
     }
 
     async fn call<T: DeserializeOwned>(
@@ -396,11 +505,18 @@ pub async fn run(state: Arc<AppState>, id: Uuid, cancel: CancellationToken) {
             let Some(message) = update.message else {
                 continue;
             };
-            let Some(text) = message.text else { continue };
             if message.chat.kind != "private" {
                 continue;
             }
-            handle(&state, id, &bot, &mut config, message.chat, text).await;
+            let picture = message.picture();
+            let Some(text) = message
+                .text
+                .or(message.caption)
+                .or(picture.as_ref().map(|_| String::new()))
+            else {
+                continue;
+            };
+            handle(&state, id, &bot, &mut config, message.chat, text, picture).await;
         }
         let mut row = row;
         row.config = serde_json::to_value(&config).expect("config serializes");
@@ -415,6 +531,7 @@ async fn handle(
     config: &mut TelegramConfig,
     chat: Chat,
     text: String,
+    picture: Option<Picture>,
 ) {
     let text = text.trim().to_owned();
     match config.owner_chat_id {
@@ -445,12 +562,12 @@ async fn handle(
             }
         }
         Some(owner) if owner == chat.id => {
-            if text == "/new" {
+            if picture.is_none() && text == "/new" {
                 config.conversation_id = None;
                 let _ = bot.send(owner, "Started a new conversation.").await;
                 return;
             }
-            if text.starts_with("/start") {
+            if picture.is_none() && text.starts_with("/start") {
                 let _ = bot.send(owner, "I'm here. What can I do for you?").await;
                 return;
             }
@@ -463,17 +580,35 @@ async fn handle(
                     .await;
                 return;
             };
-            // Replies can take a while; don't hold up polling.
-            let (state, channel) = (
-                state.clone(),
-                TelegramChannel {
-                    bot: bot.clone(),
-                    chat: owner,
-                },
-            );
-            tokio::spawn(async move {
-                channels::converse(&state, &channel, conversation, text).await;
+            // Only now that it's known to be the owner's is the photo downloaded.
+            let mut photos = Vec::new();
+            if let Some(picture) = picture {
+                match bot.download(&picture.file_id).await {
+                    Ok(data) => photos.push(crate::attachments::Upload::new(
+                        data,
+                        picture.name,
+                        picture.mime,
+                    )),
+                    Err(e) => {
+                        tracing::warn!("downloading a photo from Telegram failed: {e}");
+                        let _ = bot
+                            .send(
+                                owner,
+                                "I couldn't get that photo from Telegram. Try sending it again.",
+                            )
+                            .await;
+                        if text.is_empty() {
+                            return;
+                        }
+                    }
+                }
+            }
+            // Replies can take a while; this returns at once.
+            let channel = Arc::new(TelegramChannel {
+                bot: bot.clone(),
+                chat: owner,
             });
+            channels::photos::deliver(state, channel, conversation, text, photos);
         }
         // Anyone else: ignore silently. The bot is private.
         Some(_) => {}

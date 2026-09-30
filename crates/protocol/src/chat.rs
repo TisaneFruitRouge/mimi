@@ -61,6 +61,65 @@ pub struct Message {
     /// People and events the user tagged with @ in this message.
     #[serde(default)]
     pub mentions: Vec<crate::Mention>,
+    /// Photos the user sent with this message (only user messages have them).
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
+    /// The model this message went to couldn't see its photos, so it was only told that
+    /// the user sent some. Clients say so under the message.
+    #[serde(default)]
+    pub attachments_unseen: bool,
+}
+
+/// What kind of file is attached to a message. Only pictures for now; voice notes and
+/// videos will be kinds of their own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum AttachmentKind {
+    Image,
+}
+
+/// A file the user sent with a message, as the daemon keeps it: pictures are decoded,
+/// shrunk, stripped of their metadata (location, camera…) and saved again as JPEG or
+/// PNG. Its content is served at `GET /v1/attachments/{id}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Attachment {
+    pub id: Uuid,
+    pub kind: AttachmentKind,
+    /// The content type as kept: `image/jpeg` or `image/png`.
+    pub mime: String,
+    /// The name it came with, or a plain one ("Photo 1.jpg").
+    pub name: String,
+    /// Bytes, as kept.
+    #[ts(type = "number")]
+    pub size: u64,
+    /// Pixels, for pictures.
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
+
+/// A file sent with a new message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct NewAttachment {
+    /// The file's content, base64-encoded (standard alphabet, padding optional).
+    pub data: String,
+    /// Its file name, if it has one.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// The content type the client believes it has. Only a hint: the daemon reads the
+    /// file itself and refuses what isn't a picture.
+    #[serde(default)]
+    pub mime: Option<String>,
+}
+
+/// Whether a model can see the photos sent to it (`GET /v1/models/vision`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct VisionSupport {
+    /// False also when it can't be told (the model source doesn't say).
+    pub sees_images: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -159,6 +218,9 @@ pub struct SendMessage {
     /// `content` as `@label` (or `#label` for email).
     #[serde(default)]
     pub mentions: Vec<crate::Mention>,
+    /// Photos sent with the message (at most 10). With photos, `content` may be empty.
+    #[serde(default)]
+    pub attachments: Vec<NewAttachment>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

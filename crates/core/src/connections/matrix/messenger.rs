@@ -70,6 +70,8 @@ pub trait Messenger: Send + Sync {
     async fn typing(&self, _room: &str, _on: bool) {}
     /// Whether a room the assistant is in is end-to-end encrypted.
     async fn encrypted(&self, room: &str) -> bool;
+    /// Downloads (and decrypts) a picture someone sent, within the size limit.
+    async fn download(&self, photo: super::Photo) -> Result<crate::attachments::Upload, String>;
 }
 
 /// A readable room of the running client, by id.
@@ -236,5 +238,9 @@ impl Messenger for Live {
                 .is_ok_and(|s| s.is_encrypted()),
             None => false,
         }
+    }
+
+    async fn download(&self, photo: super::Photo) -> Result<crate::attachments::Upload, String> {
+        super::download(&self.client, photo).await
     }
 }

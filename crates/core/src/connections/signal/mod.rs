@@ -316,16 +316,25 @@ pub(crate) async fn on_message(
         channels::assistant_name(state).await,
     );
     let answer = match incoming {
-        Incoming::Note { text, quote, .. } => {
-            if text == "/new" {
+        Incoming::Note {
+            text,
+            quote,
+            photos,
+            ..
+        } => {
+            if photos.is_empty() && text == "/new" {
                 update(state, id, |c| c.conversation_id = None).await;
                 Some("Started a new conversation.".to_owned())
             } else {
                 let quote = quote.map(|q| q.to_string());
-                match replies::answer_text(state, id, quote.as_deref(), &text).await {
+                let answer = match photos.is_empty() {
+                    true => replies::answer_text(state, id, quote.as_deref(), &text).await,
+                    false => None,
+                };
+                match answer {
                     Some(line) => Some(line),
                     None => {
-                        chat(state, id, channel, text).await;
+                        chat(state, id, channel, text, photos).await;
                         return;
                     }
                 }
@@ -344,7 +353,13 @@ pub(crate) async fn on_message(
 }
 
 /// Hands the user's message to the assistant, in the Signal conversation.
-async fn chat(state: &Arc<AppState>, id: Uuid, channel: SignalChannel, text: String) {
+async fn chat(
+    state: &Arc<AppState>,
+    id: Uuid,
+    channel: SignalChannel,
+    text: String,
+    photos: Vec<crate::attachments::Upload>,
+) {
     let current = load(state, id).await.and_then(|(_, c)| c.conversation_id);
     let conversation = channels::ensure_conversation(state, current, "Signal").await;
     if conversation != current {
@@ -356,11 +371,8 @@ async fn chat(state: &Arc<AppState>, id: Uuid, channel: SignalChannel, text: Str
             .await;
         return;
     };
-    // Replies can take a while; don't hold up receiving.
-    let state = state.clone();
-    tokio::spawn(async move {
-        channels::converse(&state, &channel, conversation, text).await;
-    });
+    // Replies can take a while; this returns at once.
+    channels::photos::deliver(state, Arc::new(channel), conversation, text, photos);
 }
 
 /// Every linked Signal account, for messages Mimi sends on its own.

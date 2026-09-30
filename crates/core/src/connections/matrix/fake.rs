@@ -218,6 +218,10 @@ impl Messenger for FakeMessenger {
     async fn encrypted(&self, room: &str) -> bool {
         self.world().encrypted.iter().any(|r| r == room)
     }
+
+    async fn download(&self, _photo: super::Photo) -> Result<crate::attachments::Upload, String> {
+        Err("the fake has no media".to_owned())
+    }
 }
 
 /// Saves a paired Matrix connection for `me`, owned by `owner` in the chat `owner_room`,

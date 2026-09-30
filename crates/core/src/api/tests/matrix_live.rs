@@ -23,7 +23,7 @@ use matrix_sdk::ruma::{OwnedEventId, UserId};
 use matrix_sdk::{Client, Room};
 use serde_json::{Value, json};
 
-use super::tool_use::{Reply, scripted_llm};
+use super::tool_use::{Reply, scripted_llm_seeing};
 use super::*;
 use crate::tools::{Tool, ToolContext, ToolSource};
 
@@ -255,11 +255,26 @@ async fn live_matrix() {
     // The model: asks to send a note, or a Matrix message, when told to, and says so once
     // it has run.
     let (to_friend, to_group) = (friend.clone(), group_alias.clone());
-    let llm = scripted_llm(move |req, _| {
+    let llm = scripted_llm_seeing(move |req, _| {
         let messages = req["messages"].as_array().unwrap();
         let last = messages.last().unwrap();
         let asked = last["content"].as_str().unwrap_or("");
-        if last["role"] == "tool" {
+        let pictures = last["content"].as_array().map_or(0, |parts| {
+            parts.iter().filter(|p| p["type"] == "image_url").count()
+        });
+        if pictures > 0 {
+            let words = last["content"]
+                .as_array()
+                .and_then(|parts| parts.iter().find(|p| p["type"] == "text"))
+                .and_then(|p| p["text"].as_str())
+                .unwrap_or("")
+                .to_owned();
+            Reply::Text(if words == "When does this train leave?" {
+                "I can see 1 photo: it leaves at 9:12."
+            } else {
+                "I see a photo, without words."
+            })
+        } else if last["role"] == "tool" {
             Reply::Text("Done, I sent it.")
         } else if asked.contains("friend") {
             Reply::Call(
@@ -375,6 +390,48 @@ async fn live_matrix() {
     // A chat message gets the assistant's reply, formatted.
     say(&room, "Hi!").await;
     owner.wait_for(&bot, "Hello from **your assistant**!").await;
+
+    // A photo (end-to-end encrypted, like everything in this chat), then a question
+    // about it: the assistant downloads and decrypts it, and they make one turn.
+    let ticket = crate::attachments::tests::screenshot_png(320, 200);
+    room.send_attachment(
+        "ticket.png",
+        &mime::IMAGE_PNG,
+        ticket,
+        matrix_sdk::attachment::AttachmentConfig::new(),
+    )
+    .await
+    .unwrap();
+    say(&room, "When does this train leave?").await;
+    owner.wait_for(&bot, "it leaves at 9:12").await;
+    let (_, conversations) = h
+        .call(reqwest::Method::GET, "/conversations", Value::Null)
+        .await;
+    let matrix = conversations
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["title"] == "Matrix")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (_, detail) = h
+        .call(
+            reqwest::Method::GET,
+            &format!("/conversations/{matrix}"),
+            Value::Null,
+        )
+        .await;
+    let asked = detail["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["content"] == "When does this train leave?")
+        .unwrap()
+        .clone();
+    assert_eq!(asked["attachments"][0]["mime"], "image/png", "{asked}");
+    assert_eq!(asked["attachments"][0]["width"], 320);
 
     // An action waits for approval; a 👍 on the prompt approves it.
     say(&room, "Please send Sam a note").await;

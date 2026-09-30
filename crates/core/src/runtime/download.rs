@@ -48,6 +48,8 @@ pub fn installed(paths: &Paths) -> Vec<ModelInfo> {
             size_bytes: Some(s.bytes),
             supports_tools: None,
             price: None,
+            // The built-in runtime runs models without their picture encoder.
+            sees_images: Some(false),
         })
         .collect();
     models.sort_by(|a, b| a.id.cmp(&b.id));

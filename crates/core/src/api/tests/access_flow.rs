@@ -220,6 +220,7 @@ impl World {
                 text: text.into(),
                 quoted,
                 sealed,
+                photo: None,
             },
         )
         .await;
