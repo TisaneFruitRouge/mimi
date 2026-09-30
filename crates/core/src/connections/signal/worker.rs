@@ -22,7 +22,7 @@ use presage::store::StateStore;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-use super::classify::{Incoming, classify};
+use super::classify::{Incoming, classify, pictures};
 use super::store::{SignalStore, SignalStoreError};
 use crate::db::Db;
 
@@ -353,7 +353,12 @@ impl Client {
                         Some(Received::Content(content)) => {
                             let sent = &self.sent;
                             match classify(&content, account, device, |ts| sent.contains(&ts)) {
-                                incoming @ (Incoming::Note { .. } | Incoming::Reaction { .. }) => {
+                                Incoming::Note { text, quote, timestamp, .. } => {
+                                    // Only a note's pictures are ever downloaded.
+                                    let photos = download(&manager, &pictures(&content, account)).await;
+                                    self.report(Report::Message(Incoming::Note { text, quote, timestamp, photos }));
+                                }
+                                incoming @ Incoming::Reaction { .. } => {
                                     self.report(Report::Message(incoming));
                                 }
                                 Incoming::OwnEcho | Incoming::Ignore => {}
@@ -446,6 +451,30 @@ impl Client {
         }
         Ok(stamps)
     }
+}
+
+/// Downloads (and decrypts) the pictures of a note. One that can't be fetched is left
+/// out: the note still goes through, and the assistant sees what did arrive.
+async fn download(
+    manager: &SignalManager,
+    pointers: &[presage::libsignal_service::proto::AttachmentPointer],
+) -> Vec<crate::attachments::Upload> {
+    let mut out = Vec::new();
+    for pointer in pointers {
+        match tokio::time::timeout(Duration::from_secs(90), manager.get_attachment(pointer)).await {
+            Ok(Ok(data)) if data.len() <= crate::attachments::MAX_UPLOAD_BYTES => {
+                out.push(crate::attachments::Upload::new(
+                    data,
+                    pointer.file_name.clone(),
+                    pointer.content_type.clone(),
+                ));
+            }
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => tracing::warn!("downloading a Signal photo failed: {}", brief(&e)),
+            Err(_) => tracing::warn!("downloading a Signal photo timed out"),
+        }
+    }
+    out
 }
 
 /// Whether Signal refused the device's credentials: it was unlinked.

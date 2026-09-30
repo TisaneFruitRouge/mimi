@@ -33,6 +33,8 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/0023_people_merges.sql"),
     include_str!("migrations/0024_signal.sql"),
     include_str!("migrations/0025_matrix_rooms.sql"),
+    // 0026 is taken by work on another branch; it goes before this one when merged.
+    include_str!("migrations/0027_message_attachments.sql"),
 ];
 
 #[derive(Debug, thiserror::Error)]

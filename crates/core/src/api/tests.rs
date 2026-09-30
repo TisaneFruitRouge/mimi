@@ -792,11 +792,25 @@ mod tool_use {
     pub(super) async fn scripted_llm(
         script: impl Fn(&Value, usize) -> Reply + Send + Sync + 'static,
     ) -> ScriptedLlm {
+        scripted(script, false).await
+    }
+
+    /// [`scripted_llm`] for a model that can see pictures, as Ollama says so.
+    pub(super) async fn scripted_llm_seeing(
+        script: impl Fn(&Value, usize) -> Reply + Send + Sync + 'static,
+    ) -> ScriptedLlm {
+        scripted(script, true).await
+    }
+
+    async fn scripted(
+        script: impl Fn(&Value, usize) -> Reply + Send + Sync + 'static,
+        sees: bool,
+    ) -> ScriptedLlm {
         use axum::routing::{get, post};
         let requests: Arc<Mutex<Vec<Value>>> = Default::default();
         let script = Arc::new(script);
         let recorded = requests.clone();
-        let app = Router::new()
+        let mut app = Router::new()
             .route(
                 "/v1/models",
                 get(|| async { Json(json!({"data": [{"id": "mock-model"}]})) }),
@@ -847,6 +861,12 @@ mod tool_use {
                     }
                 }),
             );
+        if sees {
+            app = app.route(
+                "/api/show",
+                post(|| async { Json(json!({"capabilities": ["completion", "vision", "tools"]})) }),
+            );
+        }
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -1228,6 +1248,8 @@ mod tool_use {
             created_at: 1,
             actions: vec![pending],
             mentions: Vec::new(),
+            attachments: Vec::new(),
+            attachments_unseen: false,
         };
         crate::chat::store::upsert_message(&db, message)
             .await
@@ -2080,6 +2102,10 @@ mod fake_telegram {
         pub updates: Arc<Mutex<Vec<Value>>>,
         pub sent: Arc<Mutex<Vec<Value>>>,
         next_id: Arc<Mutex<i64>>,
+        /// Files the bot can download, by file id.
+        pub files: Arc<Mutex<std::collections::HashMap<String, Vec<u8>>>>,
+        /// Every file id the bot asked for.
+        pub fetched: Arc<Mutex<Vec<String>>>,
     }
 
     impl FakeTelegram {
@@ -2087,6 +2113,7 @@ mod fake_telegram {
             let fake = FakeTelegram::default();
             let app = Router::new()
                 .route("/{bot}/{method}", post(handle))
+                .route("/file/{bot}/{*path}", axum::routing::get(file))
                 .with_state(fake.clone());
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let url = format!("http://{}", listener.local_addr().unwrap());
@@ -2102,6 +2129,32 @@ mod fake_telegram {
                 "update_id": *id,
                 "message": { "chat": { "id": chat_id, "type": "private", "first_name": name }, "text": text }
             }));
+        }
+
+        /// Queues a photo from `chat_id` (a small and a large size), with a caption.
+        pub fn photo(&self, chat_id: i64, data: Vec<u8>, caption: Option<&str>) -> String {
+            let mut id = self.next_id.lock().unwrap();
+            *id += 1;
+            let file = format!("photo{}", *id);
+            self.files
+                .lock()
+                .unwrap()
+                .insert(file.clone(), data.clone());
+            let mut message = json!({
+                "chat": { "id": chat_id, "type": "private", "first_name": "Someone" },
+                "photo": [
+                    { "file_id": format!("{file}-small"), "width": 90, "height": 60, "file_size": 900 },
+                    { "file_id": file, "width": 1280, "height": 853, "file_size": data.len() },
+                ],
+            });
+            if let Some(caption) = caption {
+                message["caption"] = json!(caption);
+            }
+            self.updates
+                .lock()
+                .unwrap()
+                .push(json!({ "update_id": *id, "message": message }));
+            file
         }
 
         /// Queues a tap on an inline button.
@@ -2178,9 +2231,43 @@ mod fake_telegram {
                 fake.sent.lock().unwrap().push(body);
                 json!({ "message_id": 1 })
             }
+            "getFile" => {
+                let id = body["file_id"].as_str().unwrap_or_default().to_owned();
+                fake.fetched.lock().unwrap().push(id.clone());
+                let size = fake.files.lock().unwrap().get(&id).map(Vec::len);
+                match size {
+                    Some(size) => {
+                        json!({ "file_id": id, "file_size": size, "file_path": format!("photos/{id}.jpg") })
+                    }
+                    None => {
+                        return Json(
+                            json!({ "ok": false, "error_code": 400, "description": "Bad Request: invalid file_id" }),
+                        );
+                    }
+                }
+            }
             _ => json!(true),
         };
         Json(json!({ "ok": true, "result": result }))
+    }
+
+    async fn file(
+        State(fake): State<FakeTelegram>,
+        Path((bot, path)): Path<(String, String)>,
+    ) -> Result<Vec<u8>, axum::http::StatusCode> {
+        if bot != "bot123:secret" {
+            return Err(axum::http::StatusCode::UNAUTHORIZED);
+        }
+        let id = path
+            .trim_start_matches("photos/")
+            .trim_end_matches(".jpg")
+            .to_owned();
+        fake.files
+            .lock()
+            .unwrap()
+            .get(&id)
+            .cloned()
+            .ok_or(axum::http::StatusCode::NOT_FOUND)
     }
 }
 
@@ -2298,10 +2385,10 @@ mod schedule_flow {
     use super::tool_use::{Reply, scripted_llm, setup};
     use crate::schedule;
 
-    const OWNER: i64 = 42;
+    pub(super) const OWNER: i64 = 42;
 
     /// Connects the fake bot and pairs it with its owner.
-    async fn pair(h: &Harness) -> FakeTelegram {
+    pub(super) async fn pair(h: &Harness) -> FakeTelegram {
         let (tg, url) = FakeTelegram::start().await;
         *h.state.connections.telegram_api.lock().unwrap() = url;
         let (_, conn) = h
@@ -2323,7 +2410,7 @@ mod schedule_flow {
         tg
     }
 
-    async fn wait_for(check: impl Fn() -> bool) {
+    pub(super) async fn wait_for(check: impl Fn() -> bool) {
         for _ in 0..400 {
             if check() {
                 return;
@@ -4231,6 +4318,8 @@ mod people_removal {
                     id: sc.clone(),
                     label: "S. Carter".into(),
                 }],
+                attachments: Vec::new(),
+                attachments_unseen: false,
             },
         )
         .await
@@ -5079,6 +5168,7 @@ mod signal_flow {
             text: text.into(),
             quote: None,
             timestamp: 1,
+            photos: Vec::new(),
         };
 
         signal::on_message(&state, id, &worker, note("Please send Sam a note")).await;
@@ -5411,5 +5501,444 @@ mod matrix_flow {
         let action = pending(&mut h, &id).await;
         assert_eq!(action.arguments["to"], json!(["@x:matrix.org"]));
         assert_eq!(fake.sent().len(), 4);
+    }
+}
+
+// --- Photos ------------------------------------------------------------------------
+
+/// Photos sent with messages: from the app and from messaging apps, to models that can
+/// and can't see them.
+mod photo_flow {
+    use std::time::Duration;
+
+    use base64::Engine;
+    use serde_json::{Value, json};
+
+    use super::Harness;
+    use super::tool_use::{Reply, scripted_llm, scripted_llm_seeing};
+    use crate::attachments::tests::{screenshot_png, sideways_jpeg_with_exif};
+
+    fn b64(data: &[u8]) -> String {
+        base64::engine::general_purpose::STANDARD.encode(data)
+    }
+
+    async fn conversation(h: &Harness) -> String {
+        let (_, conv) = h
+            .call(reqwest::Method::POST, "/conversations", json!({}))
+            .await;
+        conv["id"].as_str().unwrap().to_owned()
+    }
+
+    async fn send(h: &Harness, conv: &str, body: Value) -> (u16, Value) {
+        h.call(
+            reqwest::Method::POST,
+            &format!("/conversations/{conv}/messages"),
+            body,
+        )
+        .await
+    }
+
+    /// The parts of a request's message: (kind, text or data URL).
+    pub(super) fn parts(message: &Value) -> Vec<(String, String)> {
+        match &message["content"] {
+            Value::String(text) => vec![("text".into(), text.clone())],
+            Value::Array(parts) => parts
+                .iter()
+                .map(|p| match p["type"].as_str().unwrap() {
+                    "image_url" => (
+                        "image".into(),
+                        p["image_url"]["url"].as_str().unwrap().to_owned(),
+                    ),
+                    kind => (kind.to_owned(), p["text"].as_str().unwrap_or("").to_owned()),
+                })
+                .collect(),
+            other => panic!("unexpected content {other}"),
+        }
+    }
+
+    pub(super) fn user_messages(request: &Value) -> Vec<Value> {
+        request["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| m["role"] == "user")
+            .cloned()
+            .collect()
+    }
+
+    fn images(message: &Value) -> usize {
+        parts(message).iter().filter(|(k, _)| k == "image").count()
+    }
+
+    #[tokio::test]
+    async fn photos_reach_a_model_that_sees_them_and_are_served_back() {
+        let llm = scripted_llm_seeing(|_, _| Reply::Text("Two tickets.")).await;
+        let mut h = Harness::new().await;
+        h.use_mock(llm.port()).await;
+        let conv = conversation(&h).await;
+
+        let (status, vision) = h
+            .call(reqwest::Method::GET, "/models/vision", Value::Null)
+            .await;
+        assert_eq!((status, vision), (200, json!({"sees_images": true})));
+
+        let (status, sent) = send(
+            &h,
+            &conv,
+            json!({"content": "Add these dates", "attachments": [
+                {"data": b64(&sideways_jpeg_with_exif(3000, 2000)), "name": "IMG_1.JPG", "mime": "image/jpeg"},
+                {"data": b64(&screenshot_png(400, 300))},
+            ]}),
+        )
+        .await;
+        assert_eq!(status, 200, "{sent}");
+        let user: mimi_protocol::Message = super::parse(sent["user_message"].clone());
+        assert_eq!(user.attachments.len(), 2);
+        assert!(!user.attachments_unseen);
+        assert_eq!(user.attachments[0].mime, "image/jpeg");
+        assert_eq!(user.attachments[0].name, "IMG_1.jpg");
+        assert_eq!(user.attachments[0].height, Some(1568));
+        assert_eq!(user.attachments[1].mime, "image/png");
+        let reply_id = sent["assistant_message"]["id"].as_str().unwrap().to_owned();
+        h.wait_for_reply(&reply_id).await;
+
+        // The model gets the pictures, then the words.
+        let request = &llm.requests()[0];
+        let last = user_messages(request).pop().unwrap();
+        let got = parts(&last);
+        assert_eq!(got.len(), 3, "{got:?}");
+        assert!(got[0].1.starts_with("data:image/jpeg;base64,"));
+        assert!(got[1].1.starts_with("data:image/png;base64,"));
+        assert_eq!(got[2], ("text".into(), "Add these dates".into()));
+
+        // Served back as it was kept: its own type, never sniffed, sandboxed.
+        let url = format!("{}/attachments/{}", h.base, user.attachments[0].id);
+        let res = h
+            .http
+            .get(&url)
+            .bearer_auth(super::TOKEN)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 200);
+        assert_eq!(res.headers()["content-type"], "image/jpeg");
+        assert_eq!(res.headers()["x-content-type-options"], "nosniff");
+        assert!(
+            res.headers()["content-security-policy"]
+                .to_str()
+                .unwrap()
+                .contains("sandbox")
+        );
+        let kept = res.bytes().await.unwrap();
+        assert!(!kept.windows(4).any(|w| w == b"Exif"));
+        assert_eq!(image::load_from_memory(&kept).unwrap().height(), 1568);
+        assert_eq!(h.http.get(&url).send().await.unwrap().status(), 401);
+
+        // The conversation shows them with the message.
+        let (_, detail) = h
+            .call(
+                reqwest::Method::GET,
+                &format!("/conversations/{conv}"),
+                Value::Null,
+            )
+            .await;
+        let detail: mimi_protocol::ConversationDetail = super::parse(detail);
+        assert_eq!(detail.messages[0].attachments, user.attachments);
+
+        // Follow-ups still show the latest two messages with photos; older ones become
+        // a note.
+        let say = |text: &'static str, photos: Vec<Vec<u8>>| json!({"content": text, "attachments": photos.iter().map(|p| json!({"data": b64(p)})).collect::<Vec<_>>()});
+        for (i, body) in [
+            say("And the return?", vec![]),
+            say("", vec![screenshot_png(50, 50)]),
+            say("This one too", vec![screenshot_png(60, 60)]),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let (status, sent) = send(&h, &conv, body).await;
+            assert_eq!(status, 200, "{i}: {sent}");
+            let id = sent["assistant_message"]["id"].as_str().unwrap().to_owned();
+            h.wait_for_reply(&id).await;
+        }
+        let requests = llm.requests();
+        let counts = |r: &Value| user_messages(r).iter().map(images).collect::<Vec<_>>();
+        assert_eq!(counts(&requests[1]), [2, 0]);
+        assert_eq!(counts(&requests[2]), [2, 0, 1]);
+        assert_eq!(counts(&requests[3]), [0, 0, 1, 1]);
+        let first = user_messages(&requests[3]).remove(0);
+        assert_eq!(
+            parts(&first)[0].1,
+            "Add these dates\n\n(The user sent 2 photos here, no longer shown to you.)"
+        );
+
+        // Deleting the conversation deletes its photos.
+        let (status, _) = h
+            .call(
+                reqwest::Method::DELETE,
+                &format!("/conversations/{conv}"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(status, 200);
+        let res = h
+            .http
+            .get(&url)
+            .bearer_auth(super::TOKEN)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 404);
+        let left: i64 = h
+            .state
+            .db
+            .call(|c| c.query_row("SELECT count(*) FROM message_attachments", [], |r| r.get(0)))
+            .await
+            .unwrap();
+        assert_eq!(left, 0);
+    }
+
+    #[tokio::test]
+    async fn a_model_that_cant_see_is_told_and_so_is_the_user() {
+        let llm = scripted_llm(|_, _| Reply::Text("I can't see it, sorry.")).await;
+        let mut h = Harness::new().await;
+        h.use_mock(llm.port()).await;
+        let conv = conversation(&h).await;
+        let (_, vision) = h
+            .call(reqwest::Method::GET, "/models/vision", Value::Null)
+            .await;
+        assert_eq!(vision, json!({"sees_images": false}));
+
+        let (status, sent) = send(
+            &h,
+            &conv,
+            json!({"content": "", "attachments": [{"data": b64(&screenshot_png(40, 40))}]}),
+        )
+        .await;
+        assert_eq!(status, 200, "{sent}");
+        assert_eq!(sent["user_message"]["attachments_unseen"], true);
+        let id = sent["assistant_message"]["id"].as_str().unwrap().to_owned();
+        h.wait_for_reply(&id).await;
+        let request = &llm.requests()[0];
+        assert!(!request.to_string().contains("image_url"));
+        let last = user_messages(request).pop().unwrap();
+        assert!(
+            last["content"]
+                .as_str()
+                .unwrap()
+                .contains("sent a photo, but the current model can't see pictures"),
+            "{last}"
+        );
+        let (_, list) = h
+            .call(reqwest::Method::GET, "/conversations", Value::Null)
+            .await;
+        assert_eq!(list[0]["title"], "Photo");
+    }
+
+    #[tokio::test]
+    async fn what_isnt_a_photo_is_refused() {
+        let llm = scripted_llm(|_, _| Reply::Text("Hi")).await;
+        let h = Harness::new().await;
+        h.use_mock(llm.port()).await;
+        let conv = conversation(&h).await;
+
+        let (status, err) = send(
+            &h,
+            &conv,
+            json!({"content": "Look", "attachments": [{"data": b64(b"just some text"), "name": "notes.txt"}]}),
+        )
+        .await;
+        assert_eq!(status, 400);
+        assert!(
+            err["message"]
+                .as_str()
+                .unwrap()
+                .contains("“notes.txt” isn't a picture"),
+            "{err}"
+        );
+
+        let eleven: Vec<Value> = (0..11)
+            .map(|_| json!({"data": b64(&screenshot_png(8, 8))}))
+            .collect();
+        let (status, err) = send(&h, &conv, json!({"content": "", "attachments": eleven})).await;
+        assert_eq!(status, 400);
+        assert!(
+            err["message"].as_str().unwrap().contains("At most 10"),
+            "{err}"
+        );
+
+        let (status, _) = send(
+            &h,
+            &conv,
+            json!({"content": "x", "attachments": [{"data": "%%%"}]}),
+        )
+        .await;
+        assert_eq!(status, 400);
+        let (status, _) = send(&h, &conv, json!({"content": "  "})).await;
+        assert_eq!(status, 400);
+
+        // Nothing was kept.
+        let (_, detail) = h
+            .call(
+                reqwest::Method::GET,
+                &format!("/conversations/{conv}"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(detail["messages"], json!([]));
+        assert!(llm.requests().is_empty());
+    }
+
+    /// Telegram: photos from the owner are downloaded and wait for the words that
+    /// follow; a stranger's are never downloaded.
+    #[tokio::test]
+    async fn telegram_photos_go_with_the_words_after_them() {
+        use super::schedule_flow::{OWNER, pair, wait_for};
+
+        let llm = scripted_llm_seeing(|_, _| Reply::Text("Added both.")).await;
+        let h = Harness::new().await;
+        h.use_mock(llm.port()).await;
+        h.state
+            .connections
+            .photos
+            .set_windows(Duration::from_millis(100), Duration::from_secs(20));
+        let tg = pair(&h).await;
+
+        let strangers = tg.photo(99, screenshot_png(30, 30), Some("What's this?"));
+        let first = tg.photo(OWNER, sideways_jpeg_with_exif(800, 600), None);
+        let second = tg.photo(OWNER, screenshot_png(300, 200), None);
+        // Nothing goes to the model until the words arrive.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(llm.requests().is_empty());
+        tg.message(OWNER, "Vincent", "Add these dates to our calendar");
+        wait_for(|| tg.sent_to(OWNER).iter().any(|m| m == "Added both.")).await;
+
+        let requests = llm.requests();
+        assert_eq!(requests.len(), 1);
+        let got = parts(&user_messages(&requests[0]).pop().unwrap());
+        assert_eq!(
+            got.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
+            ["image", "image", "text"]
+        );
+        assert_eq!(got[2].1, "Add these dates to our calendar");
+        // The largest size of each, and nothing of the stranger's.
+        assert_eq!(*tg.fetched.lock().unwrap(), vec![first, second]);
+        assert!(!tg.fetched.lock().unwrap().contains(&strangers));
+
+        // A photo with a caption goes on its own, once its batch has settled.
+        tg.photo(OWNER, screenshot_png(64, 64), Some("And this one?"));
+        wait_for(|| llm.requests().len() == 2).await;
+        let got = parts(&user_messages(&llm.requests()[1]).pop().unwrap());
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[1].1, "And this one?");
+    }
+
+    /// A Signal connection driven with a stand-in worker, as in `signal_flow`.
+    async fn signal(
+        h: &Harness,
+    ) -> (
+        uuid::Uuid,
+        crate::connections::signal::worker::Worker,
+        tokio::sync::mpsc::UnboundedReceiver<crate::connections::signal::worker::Pieces>,
+    ) {
+        use crate::connections::signal;
+        use crate::connections::store::{self as rows, ConnectionRow};
+        let id = uuid::Uuid::now_v7();
+        rows::upsert(
+            &h.state.db,
+            ConnectionRow {
+                id,
+                integration: signal::SIGNAL.into(),
+                name: "Signal".into(),
+                config: json!({"account": {"aci": uuid::Uuid::now_v7(), "name": "Vincent"}}),
+                created_at: 0,
+            },
+        )
+        .await
+        .unwrap();
+        let (worker, sent) = signal::worker::Worker::detached();
+        h.state.connections.signal.set(id, worker.clone());
+        (id, worker, sent)
+    }
+
+    fn note(text: &str, photos: Vec<Vec<u8>>) -> crate::connections::signal::classify::Incoming {
+        crate::connections::signal::classify::Incoming::Note {
+            text: text.into(),
+            quote: None,
+            timestamp: 1,
+            photos: photos
+                .into_iter()
+                .map(|p| crate::attachments::Upload::new(p, None, Some("image/png".into())))
+                .collect(),
+        }
+    }
+
+    async fn next_text(
+        sent: &mut tokio::sync::mpsc::UnboundedReceiver<crate::connections::signal::worker::Pieces>,
+    ) -> String {
+        let pieces = tokio::time::timeout(Duration::from_secs(10), sent.recv())
+            .await
+            .expect("something was sent to Signal")
+            .unwrap();
+        pieces.iter().map(|(t, _)| t.as_str()).collect()
+    }
+
+    /// Signal: a photo saved to Note to Self, then a question about it: one turn.
+    #[tokio::test]
+    async fn signal_photos_in_note_to_self_reach_the_model() {
+        use crate::connections::signal;
+
+        let llm = scripted_llm_seeing(|_, _| Reply::Text("It leaves at 9:12.")).await;
+        let h = Harness::new().await;
+        h.use_mock(llm.port()).await;
+        h.state
+            .connections
+            .photos
+            .set_windows(Duration::from_millis(100), Duration::from_secs(20));
+        let (id, worker, mut sent) = signal(&h).await;
+
+        signal::on_message(
+            &h.state,
+            id,
+            &worker,
+            note("", vec![screenshot_png(90, 40)]),
+        )
+        .await;
+        signal::on_message(&h.state, id, &worker, note("When does it leave?", vec![])).await;
+        assert_eq!(next_text(&mut sent).await, "Mimi\nIt leaves at 9:12.");
+        let got = parts(&user_messages(&llm.requests()[0]).pop().unwrap());
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert!(got[0].1.starts_with("data:image/png;base64,"));
+        assert_eq!(got[1].1, "When does it leave?");
+    }
+
+    /// With a model that can't see, the user hears so in the app they wrote from.
+    #[tokio::test]
+    async fn signal_says_when_the_model_cant_see_photos() {
+        use crate::connections::signal;
+
+        let llm = scripted_llm(|_, _| Reply::Text("I can't see pictures.")).await;
+        let h = Harness::new().await;
+        h.use_mock(llm.port()).await;
+        h.state
+            .connections
+            .photos
+            .set_windows(Duration::from_millis(50), Duration::from_millis(200));
+        let (id, worker, mut sent) = signal(&h).await;
+
+        // A photo on its own goes after a while without words.
+        signal::on_message(
+            &h.state,
+            id,
+            &worker,
+            note("", vec![screenshot_png(20, 20)]),
+        )
+        .await;
+        assert_eq!(
+            next_text(&mut sent).await,
+            format!("Mimi\n{}", crate::channels::UNSEEN_NOTE)
+        );
+        assert_eq!(next_text(&mut sent).await, "Mimi\nI can't see pictures.");
+        assert!(!llm.requests()[0].to_string().contains("image_url"));
     }
 }

@@ -138,6 +138,22 @@ async fn set_background(
     Ok(status)
 }
 
+/// A photo sent in a chat, as raw bytes: the webview shows it from an object URL, since
+/// it can't reach the daemon itself. `id` must look like a UUID, so the path stays on
+/// that one route.
+#[tauri::command]
+async fn chat_attachment(id: String) -> Result<tauri::ipc::Response, CommandError> {
+    if id.len() != 36 || !id.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+        return Err(CommandError::Other {
+            message: "That photo doesn't exist.".to_owned(),
+        });
+    }
+    let data = Client::local()?
+        .get_bytes(&format!("/attachments/{id}"))
+        .await?;
+    Ok(tauri::ipc::Response::new(data))
+}
+
 /// What happened to an attachment the user clicked.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -290,7 +306,8 @@ pub fn run() {
             background_status,
             set_background,
             window_chrome,
-            open_attachment
+            open_attachment,
+            chat_attachment
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

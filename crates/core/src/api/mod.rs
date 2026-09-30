@@ -136,7 +136,15 @@ pub fn router(state: Arc<AppState>) -> Router {
                 .patch(conversations::update)
                 .delete(conversations::delete),
         )
-        .route("/conversations/{id}/messages", post(conversations::send))
+        .route(
+            "/conversations/{id}/messages",
+            // Photos come base64-encoded in the message.
+            post(conversations::send).layer(axum::extract::DefaultBodyLimit::max(
+                crate::attachments::MAX_REQUEST_BYTES,
+            )),
+        )
+        .route("/attachments/{id}", get(conversations::attachment))
+        .route("/models/vision", get(conversations::vision))
         .route("/conversations/{id}/cancel", post(conversations::cancel))
         .route("/actions/{id}/approve", post(actions::approve))
         .route("/actions/{id}/reject", post(actions::reject))

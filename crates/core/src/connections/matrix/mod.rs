@@ -18,8 +18,11 @@ use matrix_sdk::encryption::EncryptionSettings;
 use matrix_sdk::ruma::api::client::uiaa;
 use matrix_sdk::ruma::api::error::ErrorKind;
 use matrix_sdk::ruma::events::relation::Thread;
+use matrix_sdk::ruma::events::room::MediaSource;
 use matrix_sdk::ruma::events::room::member::MembershipState;
-use matrix_sdk::ruma::events::room::message::{MessageType, Relation, RoomMessageEventContent};
+use matrix_sdk::ruma::events::room::message::{
+    ImageMessageEventContent, MessageType, Relation, RoomMessageEventContent,
+};
 use matrix_sdk::ruma::events::{
     AnySyncMessageLikeEvent, AnySyncStateEvent, AnySyncTimelineEvent, SyncMessageLikeEvent,
     SyncStateEvent,
@@ -547,6 +550,7 @@ enum Incoming {
     Joined {
         room: OwnedRoomId,
     },
+    /// A message: words, or a picture with its caption (if any) as the words.
     Text {
         room: OwnedRoomId,
         sender: OwnedUserId,
@@ -555,6 +559,8 @@ enum Incoming {
         quoted: Option<OwnedEventId>,
         /// Whether it came end-to-end encrypted.
         sealed: bool,
+        /// The picture it carries, not downloaded yet.
+        photo: Option<Photo>,
     },
     Reaction {
         room: OwnedRoomId,
@@ -575,6 +581,56 @@ enum Incoming {
     Gone {
         room: OwnedRoomId,
     },
+}
+
+/// A picture in an `m.image` message: where to fetch it (the media API decrypts it), and
+/// what the sender says it is.
+#[derive(Debug, Clone)]
+pub(crate) struct Photo {
+    source: MediaSource,
+    name: Option<String>,
+    mime: Option<String>,
+    size: Option<u64>,
+}
+
+/// An `m.image` message: its caption (empty without one), and its picture.
+pub(crate) fn photo_of(image: ImageMessageEventContent) -> (String, Photo) {
+    let caption = image.caption().map(str::to_owned).unwrap_or_default();
+    let name = Some(image.filename().to_owned()).filter(|n| !n.trim().is_empty());
+    let info = image.info.as_deref();
+    let photo = Photo {
+        mime: info.and_then(|i| i.mimetype.clone()),
+        size: info.and_then(|i| i.size).map(u64::from),
+        name,
+        source: image.source,
+    };
+    (caption, photo)
+}
+
+/// Downloads (and decrypts) a picture the owner sent, within the size limit.
+async fn download(client: &Client, photo: Photo) -> Result<crate::attachments::Upload, String> {
+    use matrix_sdk::media::{MediaFormat, MediaRequestParameters};
+    let limit = crate::attachments::MAX_UPLOAD_BYTES;
+    if photo.size.is_some_and(|n| n > limit as u64) {
+        return Err("too large".to_owned());
+    }
+    let request = MediaRequestParameters {
+        source: photo.source,
+        format: MediaFormat::File,
+    };
+    let data = tokio::time::timeout(
+        Duration::from_secs(90),
+        client.media().get_media_content(&request, false),
+    )
+    .await
+    .map_err(|_| "timed out".to_owned())?
+    .map_err(|e| plain_error(&e))?;
+    if data.len() > limit {
+        return Err("too large".to_owned());
+    }
+    Ok(crate::attachments::Upload::new(
+        data, photo.name, photo.mime,
+    ))
 }
 
 /// How a connection's sync ended.
@@ -802,9 +858,13 @@ fn incoming(
                         })) => Some(reply.event_id),
                         _ => None,
                     };
-                    let text = match content.msgtype {
-                        MessageType::Text(t) => t.body,
-                        MessageType::Emote(t) => t.body,
+                    let (text, photo) = match content.msgtype {
+                        MessageType::Text(t) => (t.body, None),
+                        MessageType::Emote(t) => (t.body, None),
+                        MessageType::Image(image) => {
+                            let (caption, photo) = photo_of(image);
+                            (caption, Some(photo))
+                        }
                         _ => continue,
                     };
                     let text = if quoted.is_some() {
@@ -818,6 +878,7 @@ fn incoming(
                         text,
                         quoted,
                         sealed,
+                        photo,
                     });
                 }
                 AnySyncTimelineEvent::MessageLike(AnySyncMessageLikeEvent::Reaction(
@@ -964,6 +1025,7 @@ async fn handle(
             text,
             quoted,
             sealed,
+            photo,
         } => {
             let Some(room) = client.get_room(&room_id) else {
                 return;
@@ -994,16 +1056,20 @@ async fn handle(
                     {
                         config.room_id = Some(room_id.to_string());
                         config.encrypted = ensure_encrypted(&room).await != Privacy::Plain;
-                        on_owner_text(state, live, config, &room, text, quoted).await;
+                        on_owner_text(state, live, config, &room, text, quoted, photo).await;
                     }
                 }
-                Sender::Owner => on_owner_text(state, live, config, &room, text, quoted).await,
+                Sender::Owner => {
+                    on_owner_text(state, live, config, &room, text, quoted, photo).await
+                }
                 // Nobody else gives instructions. A reply in a chat the assistant opened
                 // to message someone is passed on to the owner as it is, never to the
                 // model.
                 Sender::Stranger => {
-                    if let Some(kept) =
-                        rooms::kept_room(state, live.connection, room_id.as_str()).await
+                    // Pictures aren't passed on; a caption is, as words.
+                    if !text.trim().is_empty()
+                        && let Some(kept) =
+                            rooms::kept_room(state, live.connection, room_id.as_str()).await
                         && kept.why == Why::Direct
                         && kept.user_id.as_deref() == Some(sender.as_str())
                         && (sealed
@@ -1227,7 +1293,7 @@ async fn pair(
 }
 
 /// A message from the owner in their chat: an answer to a prompt, a command, or a
-/// request for the assistant.
+/// request for the assistant, maybe with a picture.
 async fn on_owner_text(
     state: &Arc<AppState>,
     live: &Arc<Live>,
@@ -1235,23 +1301,25 @@ async fn on_owner_text(
     room: &Room,
     text: String,
     quoted: Option<OwnedEventId>,
+    photo: Option<Photo>,
 ) {
     let text = text.trim().to_owned();
-    if text.is_empty() {
+    if text.is_empty() && photo.is_none() {
         return;
     }
-    if let Some(line) = replies::answer_text(
-        state,
-        live.connection,
-        quoted.as_ref().map(|q| q.as_str()),
-        &text,
-    )
-    .await
+    if photo.is_none()
+        && let Some(line) = replies::answer_text(
+            state,
+            live.connection,
+            quoted.as_ref().map(|q| q.as_str()),
+            &text,
+        )
+        .await
     {
         let _ = send_plain(room, &line).await;
         return;
     }
-    if text == "/new" {
+    if photo.is_none() && text == "/new" {
         config.conversation_id = None;
         let _ = send_plain(room, "Started a new conversation.").await;
         return;
@@ -1262,18 +1330,30 @@ async fn on_owner_text(
         let _ = send_plain(room, "Sorry, I couldn't open our conversation.").await;
         return;
     };
-    let (state, channel) = (
-        state.clone(),
-        MatrixChannel {
-            live: live.clone(),
-            room: room.clone(),
-        },
-    );
-    // Replies can take a while; don't hold up the next messages.
-    tokio::spawn(async move {
-        channels::converse(&state, &channel, conversation, text).await;
-        let _ = channel.room.typing_notice(false).await;
+    // Only now that it's known to be the owner's is the picture downloaded.
+    let mut photos = Vec::new();
+    if let Some(photo) = photo {
+        match download(&live.client, photo).await {
+            Ok(upload) => photos.push(upload),
+            Err(e) => {
+                tracing::warn!(connection = %live.connection, "downloading a Matrix photo failed: {e}");
+                let _ = send_plain(
+                    room,
+                    "I couldn't get that photo from the server. Try sending it again.",
+                )
+                .await;
+                if text.is_empty() {
+                    return;
+                }
+            }
+        }
+    }
+    let channel = Arc::new(MatrixChannel {
+        live: live.clone(),
+        room: room.clone(),
     });
+    // Replies can take a while; this returns at once.
+    channels::photos::deliver(state, channel, conversation, text, photos);
 }
 
 async fn send_plain(room: &Room, text: &str) -> Result<OwnedEventId, String> {
@@ -1439,6 +1519,8 @@ impl Channel for MatrixChannel {
                 .await
                 .map_err(|e| plain_error(&e))?;
         }
+        // Once it has said something, it isn't writing any more.
+        let _ = self.room.typing_notice(false).await;
         Ok(())
     }
 

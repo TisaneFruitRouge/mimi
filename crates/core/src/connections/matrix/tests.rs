@@ -167,3 +167,30 @@ fn secrets_stay_out_of_what_clients_see() {
         assert!(!text.contains("secret") && !text.contains("pass"), "{text}");
     }
 }
+
+#[test]
+fn pictures_bring_their_caption_as_words() {
+    use matrix_sdk::ruma::events::room::ImageInfo;
+    use matrix_sdk::ruma::{OwnedMxcUri, UInt};
+
+    let url: OwnedMxcUri = "mxc://example.org/abc".into();
+    // Only a file name: no caption.
+    let plain = ImageMessageEventContent::plain("IMG_2041.jpg".into(), url.clone());
+    let (caption, photo) = photo_of(plain);
+    assert_eq!(caption, "");
+    assert_eq!(photo.name.as_deref(), Some("IMG_2041.jpg"));
+    assert_eq!(photo.mime, None);
+
+    // A body that differs from the file name is the caption.
+    let mut info = ImageInfo::new();
+    info.mimetype = Some("image/png".into());
+    info.size = Some(UInt::from(2048u32));
+    let mut captioned = ImageMessageEventContent::plain("Add this to our calendar".into(), url)
+        .info(Box::new(info));
+    captioned.filename = Some("ticket.png".into());
+    let (caption, photo) = photo_of(captioned);
+    assert_eq!(caption, "Add this to our calendar");
+    assert_eq!(photo.name.as_deref(), Some("ticket.png"));
+    assert_eq!(photo.mime.as_deref(), Some("image/png"));
+    assert_eq!(photo.size, Some(2048));
+}

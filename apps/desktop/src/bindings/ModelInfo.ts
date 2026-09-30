@@ -18,4 +18,9 @@ supports_tools: boolean | null,
 /**
  * What the provider charges, when it publishes prices (OpenRouter does).
  */
-price: ModelPrice | null, };
+price: ModelPrice | null, 
+/**
+ * Whether the model can see photos, when the provider says (OpenRouter and
+ * Anthropic do).
+ */
+sees_images: boolean | null, };

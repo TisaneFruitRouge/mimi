@@ -93,10 +93,36 @@ pub async fn send_with_context(
     mentions: Vec<Mention>,
     hidden_context: Option<String>,
 ) -> Result<SendMessageResult, AppError> {
+    send_with_attachments(
+        state,
+        conversation_id,
+        content,
+        model,
+        mentions,
+        hidden_context,
+        Vec::new(),
+    )
+    .await
+}
+
+/// Like [`send_with_context`], with the photos the user sent along. They're checked and
+/// normalised here (see [`crate::attachments`]); with photos the text may be empty.
+pub async fn send_with_attachments(
+    state: Arc<AppState>,
+    conversation_id: Uuid,
+    content: String,
+    model: Option<ModelRef>,
+    mentions: Vec<Mention>,
+    hidden_context: Option<String>,
+    attachments: Vec<crate::attachments::Upload>,
+) -> Result<SendMessageResult, AppError> {
     let content = content.trim().to_owned();
-    if content.is_empty() {
+    if content.is_empty() && attachments.is_empty() {
         return Err(AppError::bad_request("The message is empty."));
     }
+    let attachments = crate::attachments::prepare(attachments)
+        .await
+        .map_err(AppError::bad_request)?;
     // Only mentions that are still in the text count; a deleted "@Sam" means no Sam.
     let mut mentions: Vec<Mention> = mentions
         .into_iter()
@@ -198,6 +224,7 @@ pub async fn send_with_context(
     let contexts = store::mention_contexts(&state.db, conversation_id)
         .await
         .unwrap_or_default();
+    let photos = prompt_photos(&state, &provider, &model.model, &history, &attachments).await;
     let prompt = build_prompt(
         &settings.assistant_name,
         &persona,
@@ -205,6 +232,7 @@ pub async fn send_with_context(
         &contexts,
         &with_context(&content, mention_context.as_deref()),
         &memory,
+        &photos,
     );
     tracing::debug!(
         %conversation_id,
@@ -227,6 +255,8 @@ pub async fn send_with_context(
         created_at: now,
         actions: Vec::new(),
         mentions,
+        attachments: attachments.iter().map(|a| a.meta.clone()).collect(),
+        attachments_unseen: !attachments.is_empty() && !photos.sees,
     };
     let assistant_message = Message {
         id: Uuid::now_v7(),
@@ -236,15 +266,22 @@ pub async fn send_with_context(
         model: Some(model.clone()),
         locality: Some(provider.provider.locality),
         mentions: Vec::new(),
+        attachments: Vec::new(),
+        attachments_unseen: false,
         ..user_message.clone()
     };
     if conversation.title == DEFAULT_TITLE && history.is_empty() {
-        conversation.title = title_from(&content);
+        conversation.title = match (content.is_empty(), attachments.len()) {
+            (true, 1) => "Photo".to_owned(),
+            (true, _) => "Photos".to_owned(),
+            _ => title_from(&content),
+        };
     }
     conversation.updated_at = now;
 
     let saved = async {
         store::upsert_message(&state.db, user_message.clone()).await?;
+        crate::attachments::save(&state.db, user_message.id, attachments).await?;
         if let Some(context) = mention_context {
             store::set_mention_context(&state.db, user_message.id, context).await?;
         }
@@ -700,13 +737,27 @@ fn strip_tool_messages(prompt: &mut Vec<ChatMessage>) {
 }
 
 /// A past message as the model saw it: tool calls and results by round, then the text.
-fn replay(m: &Message, contexts: &HashMap<Uuid, String>) -> Vec<ChatMessage> {
+/// A user message's photos go along while they're among the latest (`photos`); older
+/// ones, or all of them for a model that can't see, become a short note.
+fn replay(
+    m: &Message,
+    contexts: &HashMap<Uuid, String>,
+    photos: &PromptPhotos,
+) -> Vec<ChatMessage> {
     if m.role == MessageRole::User {
         let context = contexts.get(&m.id).map(String::as_str);
-        return vec![ChatMessage::text(
-            Role::User,
-            with_context(&m.content, context),
-        )];
+        let mut text = with_context(&m.content, context);
+        let images = photos.earlier.get(&m.id).cloned().unwrap_or_default();
+        if !m.attachments.is_empty() && images.is_empty() {
+            let label = crate::attachments::count_label(m.attachments.len());
+            let note = if photos.sees {
+                format!("(The user sent {label} here, no longer shown to you.)")
+            } else {
+                format!("(The user sent {label} here, which you couldn't see.)")
+            };
+            text = join_note(&text, &note);
+        }
+        return vec![ChatMessage::text(Role::User, text).with_images(images)];
     }
     let mut rounds: std::collections::BTreeMap<u32, Vec<&Action>> = Default::default();
     for a in &m.actions {
@@ -736,6 +787,97 @@ fn replay(m: &Message, contexts: &HashMap<Uuid, String>) -> Vec<ChatMessage> {
     out
 }
 
+/// Most pictures in one prompt.
+const MAX_PROMPT_IMAGES: usize = crate::attachments::MAX_PER_MESSAGE;
+/// Photos go to the model with this many of the latest user messages that have some;
+/// older ones become a note. Pictures take a lot of room, and local models have little.
+const PHOTO_TURNS: usize = 2;
+/// Room a picture takes from the history budget, in characters (about a thousand tokens).
+const IMAGE_CHARS: usize = 4_000;
+
+/// The photos in one prompt.
+#[derive(Default)]
+struct PromptPhotos {
+    /// The model can see pictures.
+    sees: bool,
+    /// Pictures of earlier user messages that still go to the model, by message.
+    earlier: HashMap<Uuid, Vec<providers::ImagePart>>,
+    /// The new message's pictures, when the model can see them.
+    new: Vec<providers::ImagePart>,
+    /// How many photos the new message has.
+    new_count: usize,
+}
+
+/// Which photos go to the model with this message: only for a model that can see them,
+/// with the latest [`PHOTO_TURNS`] user messages that have some, at most
+/// [`MAX_PROMPT_IMAGES`] in all.
+async fn prompt_photos(
+    state: &AppState,
+    provider: &providers::store::ProviderRecord,
+    model: &str,
+    history: &[Message],
+    new: &[crate::attachments::Prepared],
+) -> PromptPhotos {
+    let earlier: Vec<&Message> = history
+        .iter()
+        .rev()
+        .filter(|m| m.role == MessageRole::User && !m.attachments.is_empty())
+        .collect();
+    if new.is_empty() && earlier.is_empty() {
+        return PromptPhotos::default();
+    }
+    let sees = providers::vision::sees_images(state, provider, model).await;
+    let mut photos = PromptPhotos {
+        sees,
+        new_count: new.len(),
+        ..Default::default()
+    };
+    if !sees {
+        return photos;
+    }
+    photos.new = new
+        .iter()
+        .map(|a| providers::ImagePart::new(a.meta.mime.clone(), a.data.clone()))
+        .collect();
+    let mut room = MAX_PROMPT_IMAGES.saturating_sub(photos.new.len());
+    let turns = PHOTO_TURNS - usize::from(!new.is_empty());
+    let mut chosen = Vec::new();
+    for m in earlier.into_iter().take(turns) {
+        if m.attachments.len() > room {
+            break;
+        }
+        room -= m.attachments.len();
+        chosen.push(m.id);
+    }
+    if !chosen.is_empty() {
+        match crate::attachments::contents(&state.db, chosen).await {
+            Ok(found) => {
+                photos.earlier = found
+                    .into_iter()
+                    .map(|(id, items)| {
+                        let images = items
+                            .into_iter()
+                            .map(|(meta, data)| providers::ImagePart::new(meta.mime, data))
+                            .collect();
+                        (id, images)
+                    })
+                    .collect();
+            }
+            Err(e) => tracing::warn!("reading earlier photos failed: {e}"),
+        }
+    }
+    photos
+}
+
+/// Text with a note after it (or only the note).
+fn join_note(text: &str, note: &str) -> String {
+    if text.trim().is_empty() {
+        note.to_owned()
+    } else {
+        format!("{text}\n\n{note}")
+    }
+}
+
 /// Memory for one prompt: what's recalled, and whether new things may be remembered.
 #[derive(Default)]
 struct PromptMemory {
@@ -759,6 +901,7 @@ fn build_prompt(
     contexts: &HashMap<Uuid, String>,
     new_message: &str,
     memory: &PromptMemory,
+    photos: &PromptPhotos,
 ) -> Vec<ChatMessage> {
     let now = jiff::Zoned::now();
     // The default voice, unless the user described their own.
@@ -798,17 +941,38 @@ fn build_prompt(
         system.push_str(block);
     }
 
+    // The new message; its photos, or a note that the model can't see them.
+    let new_message = if photos.new_count > 0 && !photos.sees {
+        join_note(
+            new_message,
+            &format!(
+                "(The user sent {}, but the current model can't see pictures. If it matters, \
+                 tell them briefly that you can't see it, and that they can choose a model \
+                 that can in Models.)",
+                crate::attachments::count_label(photos.new_count)
+            ),
+        )
+    } else {
+        new_message.to_owned()
+    };
+
     // Newest history first until the budget runs out, then back in order.
     let mut budget = HISTORY_BUDGET_CHARS
         .saturating_sub(new_message.len())
-        .saturating_sub(persona.prompt_size());
+        .saturating_sub(persona.prompt_size())
+        .saturating_sub(photos.new.len() * IMAGE_CHARS);
     let mut kept: Vec<Vec<ChatMessage>> = Vec::new();
     for m in history.iter().rev() {
-        if m.status == MessageStatus::Streaming || (m.content.is_empty() && m.actions.is_empty()) {
+        if m.status == MessageStatus::Streaming
+            || (m.content.is_empty() && m.actions.is_empty() && m.attachments.is_empty())
+        {
             continue;
         }
-        let block = replay(m, contexts);
-        let size: usize = block.iter().map(|c| c.content.len()).sum();
+        let block = replay(m, contexts, photos);
+        let size: usize = block
+            .iter()
+            .map(|c| c.content.len() + c.images.len() * IMAGE_CHARS)
+            .sum();
         if size > budget {
             break;
         }
@@ -819,7 +983,7 @@ fn build_prompt(
 
     let mut prompt = vec![ChatMessage::text(Role::System, system)];
     prompt.extend(kept.into_iter().flatten());
-    prompt.push(ChatMessage::text(Role::User, new_message));
+    prompt.push(ChatMessage::text(Role::User, new_message).with_images(photos.new.clone()));
     prompt
 }
 
@@ -881,6 +1045,7 @@ mod tests {
             &HashMap::new(),
             new_message,
             &PromptMemory::default(),
+            &PromptPhotos::default(),
         );
         let system = prompt[0]
             .content
@@ -959,6 +1124,8 @@ mod tests {
             created_at: 0,
             actions: Vec::new(),
             mentions: Vec::new(),
+            attachments: Vec::new(),
+            attachments_unseen: false,
         };
         let history: Vec<Message> = (0..40).map(old).collect();
         let (_, plain) = system_text(&Persona::default(), &history, "Hi");

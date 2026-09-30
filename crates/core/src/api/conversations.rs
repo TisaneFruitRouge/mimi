@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use mimi_protocol::{
-    Conversation, ConversationDetail, ConversationUpdate, Event, NewConversation, SendMessage,
-    SendMessageResult,
+    Conversation, ConversationDetail, ConversationUpdate, Event, ModelRef, NewConversation,
+    SendMessage, SendMessageResult, VisionSupport,
 };
 use uuid::Uuid;
 
@@ -80,9 +80,82 @@ pub async fn send(
     Path(id): Path<Uuid>,
     Json(req): Json<SendMessage>,
 ) -> ApiResult<SendMessageResult> {
+    if req.attachments.len() > crate::attachments::MAX_PER_MESSAGE {
+        return Err(AppError::bad_request(format!(
+            "At most {} photos can go with one message.",
+            crate::attachments::MAX_PER_MESSAGE
+        )));
+    }
+    let attachments = req
+        .attachments
+        .into_iter()
+        .map(crate::attachments::Upload::from_api)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(AppError::bad_request)?;
     Ok(Json(
-        chat::send(state, id, req.content, req.model, req.mentions).await?,
+        chat::send_with_attachments(
+            state,
+            id,
+            req.content,
+            req.model,
+            req.mentions,
+            None,
+            attachments,
+        )
+        .await?,
     ))
+}
+
+/// A photo sent with a message, for showing it. Only what the daemon made itself
+/// (re-encoded JPEG or PNG) is ever served, with its own type, never sniffed, and
+/// sandboxed if opened on its own.
+pub async fn attachment(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<uuid::Uuid>,
+) -> Result<axum::response::Response, AppError> {
+    let (meta, data) = crate::attachments::get(&state.db, id)
+        .await?
+        .ok_or_else(|| AppError::not_found("Photo"))?;
+    let mime = match meta.mime.as_str() {
+        "image/jpeg" | "image/png" => meta.mime.as_str(),
+        _ => "application/octet-stream",
+    };
+    axum::response::Response::builder()
+        .header("content-type", mime)
+        .header("content-length", data.len())
+        .header("x-content-type-options", "nosniff")
+        .header("content-security-policy", "sandbox; default-src 'none'")
+        .header("cache-control", "private, max-age=31536000, immutable")
+        .header("cross-origin-resource-policy", "same-origin")
+        .body(axum::body::Body::from(data))
+        .map_err(AppError::internal)
+}
+
+/// Which model `GET /v1/models/vision` asks about: the default one unless given.
+#[derive(Debug, serde::Deserialize)]
+pub struct VisionQuery {
+    provider_id: Option<uuid::Uuid>,
+    model: Option<String>,
+}
+
+/// Whether a model (the default one, unless given) can see photos, so the composer can
+/// say so before they're sent.
+pub async fn vision(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<VisionQuery>,
+) -> ApiResult<VisionSupport> {
+    let model = match (q.provider_id, q.model) {
+        (Some(provider_id), Some(model)) => Some(ModelRef { provider_id, model }),
+        _ => crate::settings::load(&state.db).await?.default_model,
+    };
+    let Some(model) = model else {
+        return Ok(Json(VisionSupport { sees_images: false }));
+    };
+    let sees_images = match crate::providers::store::get(&state.db, model.provider_id).await? {
+        Some(record) => crate::providers::vision::sees_images(&state, &record, &model.model).await,
+        None => false,
+    };
+    Ok(Json(VisionSupport { sees_images }))
 }
 
 /// Stops the reply being written in this conversation, keeping what was written so far.
