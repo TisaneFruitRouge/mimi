@@ -111,20 +111,24 @@ Details:
 Settings › Permissions lets the user skip the card for some kinds of action. The kinds
 are descriptors in one place, `tools::permissions::KINDS`: a stable id (the settings
 key), title, the two plain-language details, an optional safety-net note, an icon and a
-colour, a default `Autonomy`, and what an exception can be about (people, calendars or
-nothing). `GET /v1/permissions` serves them with the user's choices
+colour, a default `Autonomy`, what an exception can be about (people, calendars, people
+and Matrix groups, or nothing), and optional switches. `GET /v1/permissions` serves them
+with the user's choices
 (`PermissionKind`), and the Permissions page renders only that, so a new kind is a
 `Governs` variant, a descriptor, and `Tool::governed_by` on its tools.
 
 | Kind | Default | Exceptions | Tools |
 | --- | --- | --- | --- |
 | `send_mail` | ask | people | `mail_send`, `calendar_send_invitations` |
+| `send_messages` | ask | people and Matrix groups | `matrix_send` |
 | `add_events` | ask | calendars | `calendar_add_event` |
 | `change_events` | ask | calendars | `calendar_change_event`, `calendar_delete_event` |
 | `schedule` | automatic | none | reminders and routines |
 
-- **Choices** are `Settings.permissions`: per kind id, `{ autonomy, rules }`, where a
-  rule is `{ target: person(id) | calendar(id), autonomy }`. Settings saved by the first
+- **Choices** are `Settings.permissions`: per kind id, `{ autonomy, rules, switches }`,
+  where a rule is `{ target: person(id) | calendar(id) | matrix_room(id), autonomy }` and
+  `switches` lists the kind's switches turned on (only `send_messages` has one,
+  `everyone_on_server`). Settings saved by the first
   version (`"send_mail": "automatic"`) still load, meaning the same. `PUT
   /v1/permissions/{kind}` is the only way to change them (it refuses unknown kinds,
   targets the kind can't have, and new exceptions about people or calendars that don't
@@ -138,10 +142,12 @@ nothing). `GET /v1/permissions` serves them with the user's choices
   (`mail::known`), whatever the rules say. For `send_mail` that's every recipient (and
   an email must have one); for `add_events` and `change_events` it's every guest when a
   call adds guests (the event then reaches them: Google shows it in their calendar
-  without any email), and nothing more for an event with nobody on it.
+  without any email), and nothing more for an event with nobody on it. For
+  `send_messages` it's every Matrix person and group (`matrix::rooms::all_known`; see
+  Messaging apps › Matrix › Messages to other people), and a message must reach someone.
 - **"Don't ask again for Sam"**: when a card could have been skipped by an exception
-  (every target is one person or calendar with no exception of its own, and for email
-  every recipient is known), the daemon offers it: `Action.always_allow` holds the
+  (every target is one person, group or calendar with no exception of its own, and for
+  email and messages everyone reached is known), the daemon offers it: `Action.always_allow` holds the
   text, `Approvals` keeps the exact exception, and `POST /actions/{id}/approve` with
   `always: true` approves and adds it. Never with edited arguments. Telegram cards
   don't offer it.
@@ -690,9 +696,9 @@ Commands that can ask for the password do, so it stays out of the shell's histor
   to connect again, kept after restarts (`signed_out`).
 - **Pairing**: until paired the assistant joins every invitation but answers nothing
   except the exact six-digit code, sent in a room of two. Its sender becomes the owner
-  (user id, display name, room). Then it leaves every other room, declines invitations
-  (the owner's too while their chat exists), and turns end-to-end encryption on in the
-  owner's chat if it's off
+  (user id, display name, room). Then it leaves every other room, declines everyone
+  else's invitations (it joins the owner's groups; see Messages to other people), and
+  turns end-to-end encryption on in the owner's chat if it's off
   (it usually can: Element makes both members admins of a direct chat). The welcome
   says honestly whether the chat is encrypted. If the owner leaves, the connection asks
   them to start a new chat; their next message in a new direct chat moves it there.
@@ -718,9 +724,55 @@ Commands that can ask for the password do, so it stays out of the shell's histor
   isn't verified" when cross-signing couldn't be set up).
 - **Logging**: matrix-sdk is chatty and reports expected "not found" answers as errors,
   so the daemon's default log filter keeps it to warnings (`main.rs`).
-- **Tests**: pure logic in `matrix/tests.rs` and `format.rs`; `api/tests/matrix_live.rs`
-  runs everything against a real homeserver, with a second matrix-sdk client as the
-  owner (see CLAUDE.md for the command).
+- **Tests**: pure logic in `matrix/tests.rs` and `format.rs`; sending to others in
+  `matrix/send_tests.rs` and `api/tests.rs › matrix_flow` against `matrix/fake.rs`;
+  `api/tests/matrix_live.rs` runs everything against a real homeserver, with matrix-sdk
+  clients as the owner and a friend (see CLAUDE.md for the command).
+
+#### Messages to other people
+
+The assistant can write for the user to other people and groups, from its own account
+and only on its own server (`matrix/send.rs`, `rooms.rs`, `messenger.rs`).
+
+- **`matrix_send`** (`to`, `text` in Markdown; `from` when several accounts are paired)
+  is governed by `send_messages`: a card by default. `Tool::resolve` turns each
+  recipient into what it reaches and writes it over the arguments: `to` (user ids and
+  room ids), `recipients` ("Sam Carter (@sam:example.org)", "Group “Family”
+  (#family:example.org)") and `joins` (public groups it will join). It accepts Matrix
+  addresses, `#aliases`, room ids, `matrix.to` links, people from People by id (an
+  @ mention) or by a name that comes down to exactly one Matrix address, and the name of
+  a group it's in; a name that fits a group and a person, or several people, is refused
+  so the model asks. Anything on another server (the user id's server, an alias's, a
+  room id's, or for room ids without one, its creator's) is refused before any card or
+  request. `run` resolves again and delivers: to the owner in their chat; to a person in
+  the direct chat it opened with them (still there, they haven't left), else a new
+  end-to-end encrypted one (`create_dm`, `is_direct`); to a group it's in; to a public
+  group listed on its server, which it joins first. The output lists who it reached, the
+  chats it opened and the groups it joined. `matrix_rooms` (a read) lists its groups and
+  the server's public ones, names marked as other people's writing.
+- **Known** (for sending on its own): the owner and their chat; a Matrix address in
+  People from an address book or added by hand (never a card Mimi made from mail);
+  groups the owner invited it into; people and groups it has messaged for the user
+  (`matrix_known`, migration 0025: kept even after it leaves a room). The switch
+  "Everyone on example.org counts as someone you know" (off by default, because anyone
+  can make an account on a public server) adds everyone whose address is on that server,
+  and groups it's in whose members (joined or invited) all are; never a public group
+  it isn't in yet. A message to several reaches them on its own only if every one is
+  known and allowed.
+- **Rooms it keeps** (`matrix_rooms`, migration 0025): groups the owner invited it into
+  (`group`; everyone else's invitations are declined, and a direct-chat invitation from
+  the owner is taken only when their chat is gone), public groups it joined to post
+  (`joined`) and chats it opened (`direct`, with who they're with). They're recorded
+  before joining, and rooms it made itself are never left, so a sync racing the send
+  can't make it leave. A chat whose other person left is left and forgotten; the next
+  message opens a new one.
+- **Nobody else gives instructions.** Only the owner's chat is a conversation. A reply
+  in a chat the assistant opened is passed to the owner's chat as it is, quoted and
+  escaped ("💬 Sam Carter (@sam:example.org) replied: > …", at most 2,000 characters;
+  only encrypted ones once the chat is), without the model. Groups get nothing: what
+  people say there, the owner included, is ignored.
+- **Settings › Permissions** offers people with a Matrix address and the groups from
+  `GET /v1/matrix/groups` as exceptions, and the switch under the kind.
 
 ## People and @ mentions
 

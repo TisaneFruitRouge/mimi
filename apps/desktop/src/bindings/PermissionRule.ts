@@ -3,6 +3,6 @@ import type { Autonomy } from "./Autonomy";
 import type { PermissionTarget } from "./PermissionTarget";
 
 /**
- * An exception: this person or calendar gets `autonomy` instead of the default.
+ * An exception: this person, group or calendar gets `autonomy` instead of the default.
  */
 export type PermissionRule = { target: PermissionTarget, autonomy: Autonomy, };

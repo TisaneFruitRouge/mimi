@@ -2,8 +2,9 @@
 //! private line to it. Mimi signs in as that account (never the user's own), keeps its
 //! end-to-end encryption keys in a store of its own, and syncs from the server, so
 //! nothing has to reach this machine from outside. A one-time code sent from the user's
-//! own account pairs it with its owner; everyone else is ignored, and rooms that aren't
-//! the owner's direct chat are left.
+//! own account pairs it with its owner. Only the owner gives it instructions, in their
+//! direct chat; it also stays in groups the owner invites it into and in chats it opens
+//! to message people for the user (`send.rs`, `rooms.rs`), and leaves everything else.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -37,7 +38,15 @@ use crate::channels::replies::{self, Target};
 use crate::channels::{self, Channel, Outgoing};
 use crate::{AppState, now_ms};
 
+#[cfg(test)]
+pub mod fake;
 pub mod format;
+pub mod messenger;
+pub mod rooms;
+pub mod send;
+
+use self::messenger::Messenger;
+use self::rooms::Why;
 
 pub const MATRIX: &str = "matrix";
 
@@ -90,9 +99,35 @@ pub struct Clients {
     live: Mutex<HashMap<Uuid, Arc<Live>>>,
     /// Clients signed in while connecting, waiting for their connection's task.
     handoff: Mutex<HashMap<Uuid, Client>>,
+    /// Stand-ins for running clients, so tests can send without a homeserver.
+    #[cfg(test)]
+    fakes: Mutex<HashMap<Uuid, Arc<dyn Messenger>>>,
 }
 
 impl Clients {
+    /// The account a connection sends from, while it's running.
+    pub fn messenger(&self, id: Uuid) -> Option<Arc<dyn Messenger>> {
+        #[cfg(test)]
+        if let Some(fake) = self
+            .fakes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&id)
+        {
+            return Some(fake.clone());
+        }
+        self.get(id).map(|live| live as Arc<dyn Messenger>)
+    }
+
+    /// Makes a connection send through `fake` instead of a homeserver.
+    #[cfg(test)]
+    pub fn fake(&self, id: Uuid, fake: Arc<dyn Messenger>) {
+        self.fakes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id, fake);
+    }
+
     fn get(&self, id: Uuid) -> Option<Arc<Live>> {
         self.live
             .lock()
@@ -478,12 +513,27 @@ pub fn trusted(config: &MatrixConfig, sealed: bool) -> bool {
     sealed || !config.encrypted
 }
 
-/// Whether to accept an invitation: anyone's until paired (the code still has to come),
-/// then only the owner's, to a new chat after they left theirs.
-pub fn accepts_invite(config: &MatrixConfig, inviter: Option<&str>) -> bool {
+/// What to do with an invitation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Invitation {
+    Decline,
+    /// Join: someone may be about to pair, or the owner opens a new chat after leaving
+    /// theirs.
+    Join,
+    /// The owner invites the assistant into a group: join and stay.
+    KeepGroup,
+}
+
+/// Anyone's invitation is accepted until paired (the code still has to come); then only
+/// the owner's: to a group, or to a new direct chat after they left theirs. Everyone
+/// else's is declined.
+pub fn answer_invite(config: &MatrixConfig, inviter: Option<&str>, direct: bool) -> Invitation {
     match &config.owner {
-        None => true,
-        Some(owner) => inviter == Some(owner.as_str()) && config.room_id.is_none(),
+        None => Invitation::Join,
+        Some(owner) if inviter != Some(owner.as_str()) => Invitation::Decline,
+        Some(_) if !direct => Invitation::KeepGroup,
+        Some(_) if config.room_id.is_none() => Invitation::Join,
+        Some(_) => Invitation::Decline,
     }
 }
 
@@ -520,6 +570,10 @@ enum Incoming {
     Left {
         room: OwnedRoomId,
         user: OwnedUserId,
+    },
+    /// The assistant is no longer in a room (it left, or was removed).
+    Gone {
+        room: OwnedRoomId,
     },
 }
 
@@ -716,6 +770,9 @@ fn incoming(
     for room in response.rooms.invited.into_keys() {
         out.push(Incoming::Invite { room });
     }
+    for room in response.rooms.left.into_keys() {
+        out.push(Incoming::Gone { room });
+    }
     for (room, update) in response.rooms.joined {
         out.push(Incoming::Joined { room: room.clone() });
         for event in update.timeline.events {
@@ -845,25 +902,61 @@ async fn handle(
                 .ok()
                 .and_then(|i| i.inviter)
                 .map(|m| m.user_id().to_string());
-            if accepts_invite(config, inviter.as_deref()) {
-                if let Err(e) = room.join().await {
-                    tracing::warn!("joining a Matrix room failed: {}", plain_error(&e));
+            let direct = room.is_direct().await.unwrap_or(false);
+            match answer_invite(config, inviter.as_deref(), direct) {
+                Invitation::Join => {
+                    if let Err(e) = room.join().await {
+                        tracing::warn!("joining a Matrix room failed: {}", plain_error(&e));
+                    }
                 }
-            } else {
+                Invitation::KeepGroup => {
+                    let id = room.room_id().to_string();
+                    let name = room.name();
+                    // Recorded first, so the sync doesn't leave the group it's joining.
+                    let _ = rooms::keep(
+                        state,
+                        live.connection,
+                        &id,
+                        Why::Group,
+                        None,
+                        name.as_deref(),
+                    )
+                    .await;
+                    let _ =
+                        rooms::remember(state, live.connection, &id, rooms::Known::Invited).await;
+                    if let Err(e) = room.join().await {
+                        tracing::warn!("joining a Matrix group failed: {}", plain_error(&e));
+                        let _ = rooms::forget(state, live.connection, &id).await;
+                    }
+                }
                 // Declining is leaving.
-                let _ = room.leave().await;
+                Invitation::Decline => {
+                    let _ = room.leave().await;
+                }
             }
         }
         Incoming::Joined { room } => {
-            // Once paired, the assistant stays only in its owner's chat.
+            // Once paired, the assistant stays only in its owner's chat and the rooms it
+            // keeps: groups the owner invited it into, and chats it opened or groups it
+            // joined to send messages (the rooms it made itself are its own, even before
+            // they're recorded).
             if config.owner.is_some()
                 && config.room_id.is_some()
                 && config.room_id.as_deref() != Some(room.as_str())
                 && let Some(room) = client.get_room(&room)
                 && room.state() == RoomState::Joined
+                && rooms::kept_room(state, live.connection, room.room_id().as_str())
+                    .await
+                    .is_none()
+                && !room
+                    .creators()
+                    .is_some_and(|c| c.iter().any(|u| Some(u.as_ref()) == client.user_id()))
             {
                 let _ = room.leave().await;
             }
+        }
+        Incoming::Gone { room } => {
+            let _ = rooms::forget(state, live.connection, room.as_str()).await;
         }
         Incoming::Text {
             room: room_id,
@@ -891,15 +984,37 @@ async fn handle(
                     }
                 }
                 Sender::OwnerElsewhere => {
-                    // The owner left their chat and opened a new one: move there.
-                    if config.room_id.is_none() && is_direct(&room).await {
+                    // The owner left their chat and opened a new one: move there. (What
+                    // they write in groups isn't for the assistant.)
+                    if config.room_id.is_none()
+                        && is_direct(&room).await
+                        && rooms::kept_room(state, live.connection, room_id.as_str())
+                            .await
+                            .is_none()
+                    {
                         config.room_id = Some(room_id.to_string());
                         config.encrypted = ensure_encrypted(&room).await != Privacy::Plain;
                         on_owner_text(state, live, config, &room, text, quoted).await;
                     }
                 }
                 Sender::Owner => on_owner_text(state, live, config, &room, text, quoted).await,
-                Sender::Stranger => {}
+                // Nobody else gives instructions. A reply in a chat the assistant opened
+                // to message someone is passed on to the owner as it is, never to the
+                // model.
+                Sender::Stranger => {
+                    if let Some(kept) =
+                        rooms::kept_room(state, live.connection, room_id.as_str()).await
+                        && kept.why == Why::Direct
+                        && kept.user_id.as_deref() == Some(sender.as_str())
+                        && (sealed
+                            || !room
+                                .latest_encryption_state()
+                                .await
+                                .is_ok_and(|s| s.is_encrypted()))
+                    {
+                        forward_reply(live, config, &room, &sender, &text).await;
+                    }
+                }
             }
         }
         Incoming::Reaction {
@@ -939,9 +1054,80 @@ async fn handle(
                 if let Some(room) = client.get_room(&room) {
                     let _ = room.leave().await;
                 }
+            } else if let Some(kept) = rooms::kept_room(state, live.connection, room.as_str()).await
+                && kept.why == Why::Direct
+                && kept.user_id.as_deref() == Some(user.as_str())
+            {
+                // They left the chat the assistant opened with them: the next message
+                // opens a new one.
+                let _ = rooms::forget(state, live.connection, room.as_str()).await;
+                if let Some(room) = client.get_room(&room) {
+                    let _ = room.leave().await;
+                }
             }
         }
     }
+}
+
+/// Most characters of someone's reply passed on to the owner.
+const FORWARD_LIMIT: usize = 2_000;
+
+/// Passes a reply from someone the assistant messaged on to the owner's chat, quoted as
+/// it is: the model never sees it, so it can't give instructions.
+async fn forward_reply(
+    live: &Arc<Live>,
+    config: &MatrixConfig,
+    room: &Room,
+    sender: &UserId,
+    text: &str,
+) {
+    let Some(owner_room) = config
+        .room_id
+        .as_deref()
+        .and_then(|r| OwnedRoomId::try_from(r).ok())
+        .and_then(|r| live.client.get_room(&r))
+    else {
+        return;
+    };
+    let name = room
+        .get_member_no_sync(sender)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|m| m.display_name().and_then(send::clean_name));
+    let (body, html) = forward_text(name.as_deref(), sender.as_str(), text);
+    if let Err(e) = owner_room
+        .send(RoomMessageEventContent::text_html(body, html))
+        .await
+    {
+        tracing::warn!(connection = %live.connection, "passing on a Matrix reply failed: {}", plain_error(&e));
+    }
+}
+
+/// "Sam Carter (@sam:example.org) replied:" and their message, quoted, as plain text and
+/// as Matrix HTML with everything they wrote escaped.
+pub fn forward_text(name: Option<&str>, user: &str, text: &str) -> (String, String) {
+    let text = text.trim();
+    let text = if text.chars().count() > FORWARD_LIMIT {
+        format!("{}…", text.chars().take(FORWARD_LIMIT).collect::<String>())
+    } else {
+        text.to_owned()
+    };
+    let who = match name {
+        Some(n) => format!("{n} ({user})"),
+        None => user.to_owned(),
+    };
+    let quoted: Vec<String> = text.lines().map(|l| format!("> {l}")).collect();
+    let body = format!("💬 {who} replied:\n{}", quoted.join("\n"));
+    let html = format!(
+        "💬 <b>{}</b> replied:<blockquote>{}</blockquote>",
+        format::escape_html(&who),
+        text.lines()
+            .map(format::escape_html)
+            .collect::<Vec<_>>()
+            .join("<br>")
+    );
+    (body, html)
 }
 
 /// Whether a room is a chat between two people (the assistant and one other).
@@ -1115,6 +1301,61 @@ pub async fn owners(state: &AppState) -> Vec<Arc<dyn Channel>> {
             Some(channel)
         })
         .collect()
+}
+
+/// A paired Matrix account that's running: what the messaging tools send from.
+pub struct Paired {
+    pub id: Uuid,
+    pub config: MatrixConfig,
+    pub messenger: Arc<dyn Messenger>,
+}
+
+/// Every paired, running Matrix account.
+pub async fn paired(state: &AppState) -> Vec<Paired> {
+    let Ok(rows) = store::list(&state.db).await else {
+        return Vec::new();
+    };
+    rows.into_iter()
+        .filter(|r| r.integration == MATRIX)
+        .filter_map(|r| {
+            let config = serde_json::from_value::<MatrixConfig>(r.config).ok()?;
+            if config.owner.is_none() || config.signed_out {
+                return None;
+            }
+            let messenger = state.connections.matrix.messenger(r.id)?;
+            Some(Paired {
+                id: r.id,
+                config,
+                messenger,
+            })
+        })
+        .collect()
+}
+
+/// The paired connection whose assistant account is `user_id`, running or not.
+pub async fn paired_config(state: &AppState, user_id: &str) -> Option<(Uuid, MatrixConfig)> {
+    store::list(&state.db)
+        .await
+        .ok()?
+        .into_iter()
+        .filter(|r| r.integration == MATRIX)
+        .filter_map(|r| Some((r.id, serde_json::from_value::<MatrixConfig>(r.config).ok()?)))
+        .find(|(_, c)| c.owner.is_some() && c.user_id.eq_ignore_ascii_case(user_id))
+}
+
+/// The servers the paired Matrix accounts live on, e.g. for "Everyone on example.org".
+pub async fn servers(state: &AppState) -> Vec<String> {
+    let mut out: Vec<String> = store::list(&state.db)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|r| r.integration == MATRIX)
+        .filter_map(|r| serde_json::from_value::<MatrixConfig>(r.config).ok())
+        .filter_map(|c| rooms::server_of_user(&c.user_id))
+        .collect();
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// Signs the assistant's device out (best effort) and removes its local store.

@@ -98,8 +98,9 @@ function apply(qc: QueryClient, event: Event) {
       qc.setQueryData(keys.connections, event.connections);
       qc.invalidateQueries({ queryKey: keys.integrations });
       qc.invalidateQueries({ queryKey: keys.calendar });
-      // Exceptions name calendars.
+      // Exceptions name calendars and Matrix groups.
       qc.invalidateQueries({ queryKey: keys.permissions });
+      qc.invalidateQueries({ queryKey: keys.matrixGroups });
       qc.invalidateQueries({ queryKey: keys.mail });
       break;
     case "mail_changed":

@@ -7,10 +7,10 @@ import type { PermissionTarget } from "./PermissionTarget";
  */
 export type PermissionRuleView = { target: PermissionTarget, autonomy: Autonomy, 
 /**
- * The person's or calendar's name.
+ * The person's, group's or calendar's name.
  */
 label: string, 
 /**
- * The person or calendar no longer exists; the exception does nothing.
+ * The person, group or calendar is gone; the exception does nothing.
  */
 missing: boolean, };

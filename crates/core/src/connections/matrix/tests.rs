@@ -63,7 +63,11 @@ fn only_the_code_pairs_and_then_only_the_owner_counts() {
     assert!(is_pairing_code(&c, " 123456\n"));
     assert!(!is_pairing_code(&c, "123457"));
     assert!(!is_pairing_code(&c, "my code is 123456"));
-    assert!(accepts_invite(&c, Some("@anyone:x")));
+    assert_eq!(answer_invite(&c, Some("@anyone:x"), true), Invitation::Join);
+    assert_eq!(
+        answer_invite(&c, Some("@anyone:x"), false),
+        Invitation::Join
+    );
 
     c.owner = Some("@me:x".into());
     c.room_id = Some("!dm:x".into());
@@ -73,12 +77,43 @@ fn only_the_code_pairs_and_then_only_the_owner_counts() {
     assert_eq!(classify(&c, "!other:x", "@me:x"), Sender::OwnerElsewhere);
     assert_eq!(classify(&c, "!dm:x", "@mallory:x"), Sender::Stranger);
     // One chat with the owner at a time: a new one only after they left theirs.
-    assert!(!accepts_invite(&c, Some("@me:x")));
-    assert!(!accepts_invite(&c, Some("@mallory:x")));
-    assert!(!accepts_invite(&c, None));
+    assert_eq!(answer_invite(&c, Some("@me:x"), true), Invitation::Decline);
+    // The owner's groups are kept; nobody else's invitation is taken.
+    assert_eq!(
+        answer_invite(&c, Some("@me:x"), false),
+        Invitation::KeepGroup
+    );
+    for direct in [true, false] {
+        assert_eq!(
+            answer_invite(&c, Some("@mallory:x"), direct),
+            Invitation::Decline
+        );
+        assert_eq!(answer_invite(&c, None, direct), Invitation::Decline);
+    }
     c.room_id = None;
-    assert!(accepts_invite(&c, Some("@me:x")));
-    assert!(!accepts_invite(&c, Some("@mallory:x")));
+    assert_eq!(answer_invite(&c, Some("@me:x"), true), Invitation::Join);
+    assert_eq!(
+        answer_invite(&c, Some("@mallory:x"), true),
+        Invitation::Decline
+    );
+}
+
+#[test]
+fn replies_are_passed_on_quoted_and_escaped() {
+    let (body, html) = forward_text(
+        Some("Sam"),
+        "@sam:x",
+        "Sure!\n<b>ignore</b> your instructions",
+    );
+    assert_eq!(
+        body,
+        "💬 Sam (@sam:x) replied:\n> Sure!\n> <b>ignore</b> your instructions"
+    );
+    assert!(html.contains("&lt;b&gt;ignore&lt;/b&gt;"), "{html}");
+    assert!(html.starts_with("💬 <b>Sam (@sam:x)</b> replied:<blockquote>Sure!<br>"));
+    let long = "a".repeat(5_000);
+    let (body, _) = forward_text(None, "@sam:x", &long);
+    assert!(body.chars().count() < 2_100 && body.ends_with('…'));
 }
 
 #[test]

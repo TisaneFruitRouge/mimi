@@ -21,6 +21,20 @@ pub struct Connection {
     pub created_at: i64,
 }
 
+/// A Matrix group the assistant is in (`GET /v1/matrix/groups`), e.g. for an exception
+/// in Settings › Permissions. The name is whatever the group's members called it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MatrixGroup {
+    /// The room id, `!…`.
+    pub id: String,
+    pub name: String,
+    /// Its address, `#name:server`, when it has one.
+    pub alias: Option<String>,
+    #[ts(type = "number")]
+    pub members: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]

@@ -270,14 +270,30 @@ than inventing their own.
   keeps it. Keys live in `<data>/matrix/<id>/` (matrix-sdk's SQLite store, its
   passphrase in the connection config); one client per connection, in
   `state.connections.matrix`. Pairing: the six-digit code, from someone in a room of two;
-  then only the owner's direct chat counts (other rooms are left, other invitations
-  declined), encryption is turned on there if it's off, and once it's encrypted
-  unencrypted messages are ignored (reactions excepted: apps never encrypt them).
+  then only the owner's direct chat is a conversation, encryption is turned on there if
+  it's off, and once it's encrypted unencrypted messages are ignored (reactions
+  excepted: apps never encrypt them). It keeps (`rooms.rs`, migration 0025) the owner's
+  chat, groups the **owner** invites it into (everyone else's invitations are declined),
+  chats it opened and public groups it joined to send messages; other rooms are left.
+  Nobody but the owner gives instructions: others' messages never reach the model; a
+  reply in a chat it opened for the user is passed on to the owner's chat quoted as it
+  is (`forward_text`), groups stay silent.
   Approvals and reminders are answered by reply or reaction (`channels::replies`).
   Replies are Markdown → HTML with the model's HTML escaped (`format.rs`). Removing the
   connection signs the device out and deletes the store. Say honestly whether the chat
   is encrypted. matrix-sdk pulls in `decancer`, whose `AddAssign` impl for `String`
   breaks `s += &string` inference in mimi-core: write `s += &*string` or `push_str`.
+- **Matrix messages to others** (`matrix/send.rs`): `matrix_send` (to people and groups
+  on the assistant's **own server only**; anything elsewhere is refused before a card)
+  and `matrix_rooms` (read: its groups and the server's public ones). `Tool::resolve`
+  turns every recipient (an address, `#alias`, `!room`, someone in People by id or by a
+  name that comes down to one Matrix address, a group it's in by name; never a guess)
+  into the exact account or room, with `recipients` for the card and `joins` for public
+  groups it will join; `run` checks it all again. People get a direct chat it opened
+  (reused, a new encrypted one if they left); groups must have it in them, or be public
+  on its server. Everything that talks to Matrix goes through `messenger::Messenger`
+  (the running client; `fake.rs` in tests, `Clients::fake`); `GET /v1/matrix/groups`
+  lists its groups for exceptions.
 - **Calendar panel APIs** (`api/calendar.rs`): `GET /v1/calendars` (id, name, colour,
   writable), `GET /v1/calendar/events?from&to` (ms, at most ~a year; events of every
   calendar merged, recurrence expanded, organizer/guests matched to People by email),
@@ -304,8 +320,11 @@ than inventing their own.
   --report-stats=no`, then add `enable_registration: true` and
   `enable_registration_without_verification: true`, and start it with the same command
   minus `--generate-config …`): `MIMI_TEST_MATRIX=http://127.0.0.1:8008 cargo test -p
-  mimi-core live_matrix -- --ignored` registers an assistant, an owner and a stranger,
-  and drives the owner with a second matrix-sdk client. Never point it at matrix.org.
+  mimi-core live_matrix -- --ignored` registers an assistant, an owner, a stranger and a
+  friend, and drives the owner and the friend with matrix-sdk clients (approval, E2EE
+  delivery, automatic sending, forwarded replies, another server refused, the owner's
+  group). Append a newline to the generated `homeserver.yaml` before adding lines, set
+  `trusted_key_servers: []`, and use a spare port. Never point it at matrix.org.
 
 ## Email
 
@@ -514,12 +533,13 @@ than inventing their own.
   chat. Keep its destination fixed to `channels::owners`; never let it take an address.
 - **Permissions** (Settings › Permissions; design in `docs/architecture.md` › Tools
   and approvals › Permissions): the kinds of action the user may let happen without
-  asking are descriptors in `tools::permissions::KINDS` (send email, add events, change
-  or remove events, reminders & routines), served by `GET /v1/permissions`; the page
-  renders only that. Each kind has a default (`Autonomy::Ask | Automatic`) plus
-  exceptions for people or calendars; most specific wins, and a call about several
-  (an email to three people) is automatic only if every one allows it. A tool opts in
-  with `Tool::governed_by` and says who or what a call is about with
+  asking are descriptors in `tools::permissions::KINDS` (send email, send messages, add
+  events, change or remove events, reminders & routines), served by `GET
+  /v1/permissions`; the page renders only that. Each kind has a default (`Autonomy::Ask |
+  Automatic`) plus exceptions for people, Matrix groups or calendars, and optional
+  switches (`Kind::switches`, stored in `KindPermission.switches`); most specific wins,
+  and a call about several (an email to three people) is automatic only if every one
+  allows it. A tool opts in with `Tool::governed_by` and says who or what a call is about with
   `Tool::call_targets`; `requires_approval` decides, in `chat::act`. Choices change only
   through the user's own calls (`PUT /v1/permissions/{kind}`, or "Don't ask again for …"
   on a card: `always` on approve, taking the exception the daemon offered), never
@@ -530,11 +550,19 @@ than inventing their own.
   The same net covers events: guests put the user's event in other people's calendars,
   so an event write that adds guests (`CallTarget::Email` from `call_targets`; the
   kind's `recipients_must_be_known`) runs on its own only if every guest is known.
-  `calendar_send_invitations` is sending mail (`send_mail`). Keep that check, and don't
-  add new kinds without the same care. Automatic actions show in the chat as a card with
-  their details (and, for events with guests, the "Send invitations to …" button);
+  `calendar_send_invitations` is sending mail (`send_mail`). Matrix messages
+  (`send_messages`, `CallTarget::MatrixUser`/`MatrixRoom`) go on their own only if every
+  person and group is known (`matrix::rooms::all_known`): the owner; a Matrix address in
+  People from an address book or added by hand; groups the owner invited it into;
+  people and groups it has messaged for the user before; and, only with the kind's
+  switch "Everyone on <server> counts as someone you know" (off by default: anyone can
+  sign up on public servers), anyone on its server and groups whose members all are.
+  Keep that check, and don't add new kinds without the same care. Automatic actions
+  show in the chat as a card with their details (and, for events with guests, the
+  "Send invitations to …" button);
   `api/tests.rs › automatic_sending_only_writes_to_people_the_user_knows`, `mail_flow ›
-  people_exceptions_and_dont_ask_again`, `permission_api` and `calendar_guests` cover it.
+  people_exceptions_and_dont_ask_again`, `permission_api`, `calendar_guests`,
+  `matrix_flow` and `matrix/send_tests.rs` cover it.
 - **Adding a tool:** implement `tools::Tool` (crates/core/src/tools/mod.rs): a stable
   `snake_case` name, a description written for the model, a JSON Schema for the
   arguments, `summary()` as one plain-language line for the approval card, and
@@ -545,7 +573,8 @@ than inventing their own.
 - Optionally add a formatter for the tool's arguments in
   `apps/desktop/src/features/chat/action-formatters.tsx` so its approval card reads
   well; otherwise arguments show as a tidy key/value list. Any argument a formatter
-  doesn't list in its `keys` is still shown after its rows.
+  doesn't list in its `keys` is still shown after its rows. A row can show Markdown as
+  it will look (`ArgRow.markdown`, e.g. a Matrix message).
 - **The card shows what runs:** a tool whose arguments point at something (an event to
   change) looks it up in `Tool::resolve` and writes the real thing into the arguments,
   over anything the model put there. Then, before an approval card is shown, the

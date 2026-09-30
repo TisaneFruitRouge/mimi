@@ -7,16 +7,16 @@
 //! are about people or calendars). Clients render the catalog `GET /v1/permissions`
 //! serves, so they need no change.
 //!
-//! Each kind has a default plus exceptions for particular people or calendars. The most
-//! specific wins; a call about several (an email to three people) runs on its own only
-//! if every one of them allows it. The choices change only through the user's own API
-//! calls, never through a tool.
+//! Each kind has a default plus exceptions for particular people, groups or calendars.
+//! The most specific wins; a call about several (an email to three people) runs on its
+//! own only if every one of them allows it. The choices change only through the user's
+//! own API calls, never through a tool.
 
 use std::collections::{HashMap, HashSet};
 
 use mimi_protocol::{
     Autonomy, Channel, KindPermission, PermissionKind, PermissionRule, PermissionRuleView,
-    PermissionTarget, PermissionTargetKind, Permissions,
+    PermissionSwitch, PermissionTarget, PermissionTargetKind, Permissions,
 };
 use serde_json::Value;
 use uuid::Uuid;
@@ -29,6 +29,7 @@ use crate::people::normalize::match_key;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Governs {
     SendMail,
+    SendMessages,
     AddEvents,
     ChangeEvents,
     Schedule,
@@ -45,6 +46,8 @@ pub struct Kind {
     pub automatic_detail: &'static str,
     /// A safety net that holds whatever the user chooses.
     pub note: Option<&'static str>,
+    /// Extra choices, off unless the user turns them on.
+    pub switches: &'static [Switch],
     /// A lucide icon name and the tile's colour.
     pub icon: &'static str,
     pub color: &'static str,
@@ -54,10 +57,23 @@ pub struct Kind {
     /// event's guests: its [`CallTarget::Email`]s) is someone the user knows (see
     /// [`crate::mail::known`]): a hostile email can't make the assistant write to, or
     /// invite, its sender's accomplice, whatever the settings say. A kind about people
-    /// (email) must reach someone; a calendar kind reaching nobody is just about the
-    /// calendar.
+    /// (email, messages) must reach someone; a calendar kind reaching nobody is just
+    /// about the calendar.
     pub recipients_must_be_known: bool,
 }
+
+/// An extra choice a kind offers, shown as a switch.
+#[derive(Debug)]
+pub struct Switch {
+    pub id: &'static str,
+    /// `{server}` becomes the Matrix server's name.
+    pub title: &'static str,
+    pub detail: &'static str,
+}
+
+/// "Everyone on the assistant's Matrix server counts as someone you know": for a private
+/// server where nobody can make an account by themselves.
+pub const EVERYONE_ON_SERVER: &str = "everyone_on_server";
 
 pub const KINDS: &[Kind] = &[
     Kind {
@@ -69,10 +85,31 @@ pub const KINDS: &[Kind] = &[
         note: Some(
             "An email to someone new, who isn't in your contacts and hasn't had an email from you, always waits for your OK.",
         ),
+        switches: &[],
         icon: "send",
         color: "#0a84ff",
         default: Autonomy::Ask,
         targets: PermissionTargetKind::Person,
+        recipients_must_be_known: true,
+    },
+    Kind {
+        governs: Governs::SendMessages,
+        id: "send_messages",
+        title: "Send messages",
+        ask_detail: "Shows you each Matrix message, and everyone it goes to, to approve before it's sent.",
+        automatic_detail: "Sends Matrix messages on its own to people and groups you know. Still asks before writing to anyone new.",
+        note: Some(
+            "A message to someone new, who isn't in your contacts and hasn't had a message from your assistant, always waits for your OK. What people write back never gives your assistant instructions.",
+        ),
+        switches: &[Switch {
+            id: EVERYONE_ON_SERVER,
+            title: "Everyone on {server} counts as someone you know",
+            detail: "Turn this on only if nobody can make an account there by themselves, like a family server with sign-up closed. On a public server such as matrix.org anyone can make an account, which is why it's off unless you choose it.",
+        }],
+        icon: "message-circle",
+        color: "#34c759",
+        default: Autonomy::Ask,
+        targets: PermissionTargetKind::PeopleAndGroups,
         recipients_must_be_known: true,
     },
     Kind {
@@ -84,6 +121,7 @@ pub const KINDS: &[Kind] = &[
         note: Some(
             "An event with a guest who isn't in your contacts and hasn't had an email from you always waits for your OK.",
         ),
+        switches: &[],
         icon: "calendar-plus",
         color: "#ff3b30",
         default: Autonomy::Ask,
@@ -99,6 +137,7 @@ pub const KINDS: &[Kind] = &[
         note: Some(
             "Inviting someone who isn't in your contacts and hasn't had an email from you always waits for your OK.",
         ),
+        switches: &[],
         icon: "calendar-cog",
         color: "#5856d6",
         default: Autonomy::Ask,
@@ -112,6 +151,7 @@ pub const KINDS: &[Kind] = &[
         ask_detail: "Shows you each reminder or routine, and each change, to approve first.",
         automatic_detail: "Sets, changes and cancels them on its own. Each one shows in the chat with Undo.",
         note: None,
+        switches: &[],
         icon: "bell-ring",
         color: "#ff9f0a",
         default: Autonomy::Automatic,
@@ -133,13 +173,19 @@ pub fn kind_by_id(id: &str) -> Option<&'static Kind> {
     KINDS.iter().find(|k| k.id == id)
 }
 
-/// What a call is about, for matching exceptions: an email recipient, or a calendar.
+/// What a call is about, for matching exceptions: an email recipient, a calendar, or
+/// someone or a group on Matrix.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CallTarget {
     /// An address as the model wrote it ("Sam <sam@x.org>" or bare).
     Email(String),
     /// A calendar id (`calendar::calendar_id`).
     Calendar(String),
+    /// Someone on Matrix (`@name:server`), written to from the assistant's account
+    /// `from`.
+    MatrixUser { from: String, user: String },
+    /// A Matrix group, by room id, written to from the assistant's account `from`.
+    MatrixRoom { from: String, room: String },
 }
 
 /// The user's choice for a kind, or its default.
@@ -151,6 +197,7 @@ pub fn choice(permissions: &Permissions, kind: &Kind) -> KindPermission {
         .unwrap_or(KindPermission {
             autonomy: kind.default,
             rules: Vec::new(),
+            switches: Vec::new(),
         })
 }
 
@@ -180,23 +227,54 @@ pub async fn requires_approval(
         return tool.needs_approval(args);
     };
     let targets = tool.call_targets(args);
-    if decide(state, kind, &choice(permissions, kind), &targets).await == Autonomy::Ask {
+    let choice = choice(permissions, kind);
+    if decide(state, kind, &choice, &targets).await == Autonomy::Ask {
         return true;
     }
-    !reaches_only_known(state, kind, &targets).await
+    !reaches_only_known(state, kind, &choice, &targets).await
 }
 
 /// The safety net under every choice: a call reaching people (see
-/// [`Kind::recipients_must_be_known`]) reaches only people the user knows.
-async fn reaches_only_known(state: &AppState, kind: &Kind, targets: &[CallTarget]) -> bool {
+/// [`Kind::recipients_must_be_known`]) reaches only people the user knows: email
+/// recipients and guests through [`crate::mail::known`], Matrix people and groups
+/// through [`crate::connections::matrix::rooms::all_known`].
+async fn reaches_only_known(
+    state: &AppState,
+    kind: &Kind,
+    choice: &KindPermission,
+    targets: &[CallTarget],
+) -> bool {
     if !kind.recipients_must_be_known {
         return true;
     }
     let emails = emails(targets);
-    if emails.is_empty() && kind.targets != PermissionTargetKind::Person {
-        return true;
+    let matrix = crate::connections::matrix::send::known_targets(targets);
+    if emails.is_empty() && matrix.is_empty() {
+        // A kind about people must reach someone; a calendar kind reaching nobody is
+        // just about the calendar.
+        return kind.targets == PermissionTargetKind::Calendar;
     }
-    crate::mail::known::all_known(state, &emails).await
+    if !emails.is_empty() && !crate::mail::known::all_known(state, &emails).await {
+        return false;
+    }
+    let everyone_on_server = choice.switches.iter().any(|s| s == EVERYONE_ON_SERVER)
+        && kind.switches.iter().any(|s| s.id == EVERYONE_ON_SERVER);
+    // Grouped by the account they're written from.
+    let mut accounts: Vec<&str> = matrix.iter().map(|(from, _)| from.as_str()).collect();
+    accounts.dedup();
+    for from in accounts {
+        let targets: Vec<_> = matrix
+            .iter()
+            .filter(|(f, _)| f == from)
+            .map(|(_, t)| t.clone())
+            .collect();
+        if !crate::connections::matrix::rooms::all_known(state, from, &targets, everyone_on_server)
+            .await
+        {
+            return false;
+        }
+    }
+    true
 }
 
 fn emails(targets: &[CallTarget]) -> Vec<String> {
@@ -204,7 +282,7 @@ fn emails(targets: &[CallTarget]) -> Vec<String> {
         .iter()
         .filter_map(|t| match t {
             CallTarget::Email(e) => Some(e.clone()),
-            CallTarget::Calendar(_) => None,
+            _ => None,
         })
         .collect()
 }
@@ -251,14 +329,19 @@ async fn matching_rules(
             .filter(|r| matches!(&r.target, PermissionTarget::Calendar(c) if c == id))
             .map(|r| r.autonomy)
             .collect(),
-        CallTarget::Email(raw) => {
+        CallTarget::MatrixRoom { room, .. } => rules
+            .iter()
+            .filter(|r| matches!(&r.target, PermissionTarget::MatrixRoom(id) if id == room))
+            .map(|r| r.autonomy)
+            .collect(),
+        CallTarget::Email(_) | CallTarget::MatrixUser { .. } => {
             if !rules
                 .iter()
                 .any(|r| matches!(r.target, PermissionTarget::Person(_)))
             {
                 return Vec::new();
             }
-            let people = people_with_email(state, raw).await;
+            let people = people_of(state, target).await;
             rules
                 .iter()
                 .filter(|r| matches!(r.target, PermissionTarget::Person(p) if people.contains(&p)))
@@ -268,11 +351,19 @@ async fn matching_rules(
     }
 }
 
-/// Everyone in People with this email address. Anything that isn't an address matches
-/// nobody.
-async fn people_with_email(state: &AppState, raw: &str) -> HashSet<Uuid> {
-    let Some(key) = crate::mail::known::address_of(raw).and_then(|e| match_key(Channel::Email, &e))
-    else {
+/// Everyone in People with this email address or Matrix address. Anything that isn't
+/// one matches nobody.
+async fn people_of(state: &AppState, target: &CallTarget) -> HashSet<Uuid> {
+    let found = match target {
+        CallTarget::Email(raw) => crate::mail::known::address_of(raw)
+            .and_then(|e| match_key(Channel::Email, &e))
+            .map(|key| ("email", key)),
+        CallTarget::MatrixUser { user, .. } => {
+            match_key(Channel::Matrix, user).map(|key| ("matrix", key))
+        }
+        _ => None,
+    };
+    let Some((channel, key)) = found else {
         return HashSet::new();
     };
     state
@@ -280,9 +371,9 @@ async fn people_with_email(state: &AppState, raw: &str) -> HashSet<Uuid> {
         .call(move |c| {
             let mut stmt = c.prepare(
                 "SELECT DISTINCT person_id FROM person_handles
-                 WHERE channel = 'email' AND match_key = ?1",
+                 WHERE channel = ?1 AND match_key = ?2",
             )?;
-            let ids = stmt.query_map([key], |r| r.get::<_, String>(0))?;
+            let ids = stmt.query_map((channel, key), |r| r.get::<_, String>(0))?;
             Ok(ids
                 .filter_map(|id| id.ok()?.parse().ok())
                 .collect::<HashSet<Uuid>>())
@@ -293,8 +384,9 @@ async fn people_with_email(state: &AppState, raw: &str) -> HashSet<Uuid> {
 
 /// The exceptions an approval card can offer to add ("Don't ask again for Sam"), with
 /// the choice's text. Only when it would make a difference next time: every target
-/// resolves to one person or calendar with no exception of its own, and for email,
-/// every recipient is someone the user knows (otherwise the safety net would still ask).
+/// resolves to one person, group or calendar with no exception of its own, and for
+/// email and messages, everyone it reaches is someone the user knows (otherwise the
+/// safety net would still ask).
 pub async fn always_offer(
     state: &AppState,
     tool: &dyn Tool,
@@ -313,12 +405,16 @@ pub async fn always_offer(
     let mut out: Vec<PermissionTarget> = Vec::new();
     for target in &targets {
         let rule_target = match (kind.targets, target) {
-            (PermissionTargetKind::Person, CallTarget::Email(raw)) => {
-                let people = people_with_email(state, raw).await;
+            (PermissionTargetKind::Person, CallTarget::Email(_))
+            | (PermissionTargetKind::PeopleAndGroups, CallTarget::MatrixUser { .. }) => {
+                let people = people_of(state, target).await;
                 if people.len() != 1 {
                     return None;
                 }
                 PermissionTarget::Person(people.into_iter().next()?)
+            }
+            (PermissionTargetKind::PeopleAndGroups, CallTarget::MatrixRoom { room, .. }) => {
+                PermissionTarget::MatrixRoom(room.clone())
             }
             (PermissionTargetKind::Calendar, CallTarget::Calendar(id)) => {
                 PermissionTarget::Calendar(id.clone())
@@ -336,7 +432,7 @@ pub async fn always_offer(
             out.push(rule_target);
         }
     }
-    if out.is_empty() || !reaches_only_known(state, kind, &targets).await {
+    if out.is_empty() || !reaches_only_known(state, kind, &choice, &targets).await {
         return None;
     }
     let labels = labels(state).await;
@@ -379,8 +475,9 @@ pub async fn allow_always(
 }
 
 /// Replaces one kind's choice, as the user set it in Settings › Permissions. Refuses
-/// unknown kinds and exceptions a kind can't have or about people or calendars that
-/// don't exist; one exception per target, the last one wins.
+/// unknown kinds, switches it doesn't have, and exceptions a kind can't have or about
+/// people, groups or calendars that don't exist; one exception per target, the last one
+/// wins.
 pub async fn set(
     state: &AppState,
     kind_id: &str,
@@ -395,14 +492,30 @@ pub async fn set(
     new.rules.reverse();
     new.rules.retain(|r| seen.insert(r.target.clone()));
     new.rules.reverse();
+    new.switches.sort();
+    new.switches.dedup();
+    if new
+        .switches
+        .iter()
+        .any(|id| !kind.switches.iter().any(|s| s.id == id))
+    {
+        return Err(AppError::bad_request(
+            "That kind of action has no such choice.",
+        ));
+    }
     for rule in &new.rules {
         let fits = matches!(
             (kind.targets, &rule.target),
-            (PermissionTargetKind::Person, PermissionTarget::Person(_))
-                | (
-                    PermissionTargetKind::Calendar,
-                    PermissionTarget::Calendar(_)
-                )
+            (
+                PermissionTargetKind::Person | PermissionTargetKind::PeopleAndGroups,
+                PermissionTarget::Person(_)
+            ) | (
+                PermissionTargetKind::Calendar,
+                PermissionTarget::Calendar(_)
+            ) | (
+                PermissionTargetKind::PeopleAndGroups,
+                PermissionTarget::MatrixRoom(_)
+            )
         );
         if !fits {
             return Err(AppError::bad_request(
@@ -415,6 +528,7 @@ pub async fn set(
             return Err(AppError::bad_request(match rule.target {
                 PermissionTarget::Person(_) => "That person isn't in People.",
                 PermissionTarget::Calendar(_) => "That calendar isn't connected.",
+                PermissionTarget::MatrixRoom(_) => "Your assistant isn't in that group.",
             }));
         }
     }
@@ -434,9 +548,12 @@ async fn save(
     Ok(())
 }
 
-/// The names of everyone and every calendar an exception could be about.
+/// The names of everyone, every group and every calendar an exception could be about.
 async fn labels(state: &AppState) -> HashMap<PermissionTarget, String> {
     let mut out = HashMap::new();
+    for (id, name) in crate::connections::matrix::rooms::group_labels(state).await {
+        out.insert(PermissionTarget::MatrixRoom(id), name);
+    }
     let accounts = crate::connections::calendar_accounts(state).await;
     for c in crate::connections::calendar::calendars(&accounts) {
         out.insert(PermissionTarget::Calendar(c.id), c.name);
@@ -462,6 +579,12 @@ async fn labels(state: &AppState) -> HashMap<PermissionTarget, String> {
 pub async fn catalog(state: &AppState) -> Result<Vec<PermissionKind>, crate::db::DbError> {
     let settings = crate::settings::load(&state.db).await?;
     let labels = labels(state).await;
+    let servers = crate::connections::matrix::servers(state).await;
+    let server = match servers.as_slice() {
+        [] => "your assistant's Matrix server".to_owned(),
+        [one] => one.clone(),
+        several => join(several),
+    };
     Ok(KINDS
         .iter()
         .map(|kind| {
@@ -490,12 +613,25 @@ pub async fn catalog(state: &AppState) -> Result<Vec<PermissionKind>, crate::db:
                                     PermissionTarget::Calendar(_) => {
                                         "A calendar no longer connected"
                                     }
+                                    PermissionTarget::MatrixRoom(_) => {
+                                        "A group your assistant is no longer in"
+                                    }
                                 }
                                 .to_owned()
                             }),
                             target: r.target,
                             autonomy: r.autonomy,
                         }
+                    })
+                    .collect(),
+                switches: kind
+                    .switches
+                    .iter()
+                    .map(|s| PermissionSwitch {
+                        id: s.id.to_owned(),
+                        title: s.title.replace("{server}", &server),
+                        detail: s.detail.to_owned(),
+                        on: choice.switches.iter().any(|on| on == s.id),
                     })
                     .collect(),
             }
@@ -561,6 +697,7 @@ mod tests {
                         KindPermission {
                             autonomy: *a,
                             rules: rules.clone(),
+                            switches: Vec::new(),
                         },
                     )
                 })
@@ -581,6 +718,7 @@ mod tests {
     fn every_kind_has_one_descriptor_and_a_unique_id() {
         for g in [
             Governs::SendMail,
+            Governs::SendMessages,
             Governs::AddEvents,
             Governs::ChangeEvents,
             Governs::Schedule,

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Path, State};
 use mimi_protocol::{
-    Connection, ConnectionSetup, GoogleSignIn, GoogleSignInInfo, GoogleSignInStatus,
+    Connection, ConnectionSetup, GoogleSignIn, GoogleSignInInfo, GoogleSignInStatus, MatrixGroup,
     StartGoogleSignIn,
 };
 use uuid::Uuid;
@@ -28,6 +28,25 @@ pub async fn delete(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>) ->
         return Err(AppError::not_found("Connection"));
     }
     Ok(Json(()))
+}
+
+/// The Matrix groups the assistant is in, for exceptions in Settings › Permissions.
+pub async fn matrix_groups(State(state): State<Arc<AppState>>) -> ApiResult<Vec<MatrixGroup>> {
+    let mut out: Vec<MatrixGroup> = Vec::new();
+    for paired in connections::matrix::paired(&state).await {
+        for g in connections::matrix::send::groups_of(&state, &paired).await {
+            if !out.iter().any(|o| o.id == g.id) {
+                out.push(MatrixGroup {
+                    name: connections::matrix::send::group_name(&g),
+                    id: g.id,
+                    alias: g.alias,
+                    members: g.members,
+                });
+            }
+        }
+    }
+    out.sort_by_key(|g| g.name.to_lowercase());
+    Ok(Json(out))
 }
 
 /// Whether "Sign in with Google" works in this build.

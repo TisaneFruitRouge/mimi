@@ -869,6 +869,7 @@ async fn settings_with_exceptions(db: &Db, rules: Vec<mimi_protocol::PermissionR
                 KindPermission {
                     autonomy: Autonomy::Ask,
                     rules,
+                    switches: Vec::new(),
                 },
             )]
             .into(),

@@ -3,4 +3,4 @@
 /**
  * What a kind's exceptions can be about.
  */
-export type PermissionTargetKind = "none" | "person" | "calendar";
+export type PermissionTargetKind = "none" | "person" | "calendar" | "people_and_groups";

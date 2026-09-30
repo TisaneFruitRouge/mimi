@@ -6,6 +6,7 @@ import type { ConnectionSetup } from "@/bindings/ConnectionSetup";
 import type { HardwareInfo } from "@/bindings/HardwareInfo";
 import type { DuplicateSuggestion } from "@/bindings/DuplicateSuggestion";
 import type { Integration } from "@/bindings/Integration";
+import type { MatrixGroup } from "@/bindings/MatrixGroup";
 import type { MemoryNote } from "@/bindings/MemoryNote";
 import type { MemoryOverview } from "@/bindings/MemoryOverview";
 import type { MemorySemantic } from "@/bindings/MemorySemantic";
@@ -131,6 +132,8 @@ export const api = {
   permissions: () => call<PermissionKind[]>("GET", "/permissions"),
   setPermission: (kind: string, choice: KindPermission) =>
     call<PermissionKind[]>("PUT", `/permissions/${encodeURIComponent(kind)}`, choice),
+  /** The Matrix groups the assistant is in, for exceptions. */
+  matrixGroups: () => call<MatrixGroup[]>("GET", "/matrix/groups"),
 
   providers: () => call<Provider[]>("GET", "/providers"),
   presets: () => call<ProviderPreset[]>("GET", "/providers/presets"),
@@ -344,6 +347,7 @@ export const keys = {
   catalog: ["catalog"] as const,
   integrations: ["integrations"] as const,
   connections: ["connections"] as const,
+  matrixGroups: ["connections", "matrix-groups"] as const,
   /** Everything about people: lists, details, duplicates, @ suggestions. */
   people: ["people"] as const,
   peopleList: (q: string) => ["people", "list", q] as const,

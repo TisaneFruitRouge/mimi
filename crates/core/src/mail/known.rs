@@ -37,10 +37,11 @@ pub async fn all_known(state: &AppState, recipients: &[String]) -> bool {
         .db
         .call(move |c| {
             for email in &emails {
-                if !(me.contains(email)
-                    || in_contacts(c, email, &mail_sources)?
-                    || written_to(c, email)?)
-                {
+                let in_book = match match_key(Channel::Email, email) {
+                    Some(key) => in_contacts(c, "email", &key, &mail_sources)?,
+                    None => false,
+                };
+                if !(me.contains(email) || in_book || written_to(c, email)?) {
                     return Ok(false);
                 }
             }
@@ -59,13 +60,18 @@ pub fn address_of(raw: &str) -> Option<String> {
         .map(|m| m.email.to_string().to_lowercase())
 }
 
-fn in_contacts(c: &Connection, email: &str, mail_sources: &[String]) -> rusqlite::Result<bool> {
-    let Some(key) = match_key(Channel::Email, email) else {
-        return Ok(false);
-    };
+/// Whether a handle with this match key is in People from an address book or added by
+/// hand (`channel`: `email`, `matrix`…), not from a card Mimi made itself from mail
+/// (`mail_sources`: the email accounts' connection ids).
+pub(crate) fn in_contacts(
+    c: &Connection,
+    channel: &str,
+    key: &str,
+    mail_sources: &[String],
+) -> rusqlite::Result<bool> {
     let mut stmt =
-        c.prepare("SELECT source FROM person_handles WHERE channel = 'email' AND match_key = ?1")?;
-    let sources = stmt.query_map([key], |r| r.get::<_, Option<String>>(0))?;
+        c.prepare("SELECT source FROM person_handles WHERE channel = ?1 AND match_key = ?2")?;
+    let sources = stmt.query_map((channel, key), |r| r.get::<_, Option<String>>(0))?;
     for source in sources {
         match source? {
             None => return Ok(true),

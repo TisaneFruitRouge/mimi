@@ -64,6 +64,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/connections/{id}",
             axum::routing::delete(connections::delete),
         )
+        .route("/matrix/groups", get(connections::matrix_groups))
         .route(
             "/google/sign-in",
             get(connections::google_info).post(connections::google_start),

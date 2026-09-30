@@ -3424,6 +3424,7 @@ mod permission_api {
             summary,
             [
                 expect("send_mail", "ask", "person"),
+                expect("send_messages", "ask", "people_and_groups"),
                 expect("add_events", "ask", "calendar"),
                 expect("change_events", "ask", "calendar"),
                 expect("schedule", "automatic", "none"),
@@ -3450,6 +3451,15 @@ mod permission_api {
             ),
             ("send_mail", json!({"kind": "person", "id": stranger})),
             ("schedule", json!({"kind": "person", "id": stranger})),
+            (
+                "send_mail",
+                json!({"kind": "matrix_room", "id": "!family:x"}),
+            ),
+            (
+                "send_messages",
+                json!({"kind": "matrix_room", "id": "!not-in-it:x"}),
+            ),
+            ("send_messages", json!({"kind": "calendar", "id": "x"})),
         ] {
             let (status, err) = put(
                 kind,
@@ -3458,6 +3468,40 @@ mod permission_api {
             .await;
             assert_eq!(status, 400, "{kind} {target} {err}");
         }
+
+        // Switches: only the ones a kind has. Everyone on the server counts as known
+        // only when the user says so.
+        assert_eq!(kinds[1]["switches"][0]["id"], "everyone_on_server");
+        assert_eq!(kinds[1]["switches"][0]["on"], false);
+        assert_eq!(
+            kinds[1]["switches"][0]["title"],
+            "Everyone on your assistant's Matrix server counts as someone you know"
+        );
+        assert!(
+            kinds[1]["switches"][0]["detail"]
+                .as_str()
+                .unwrap()
+                .contains("matrix.org")
+        );
+        for (kind, switch) in [
+            ("send_mail", "everyone_on_server"),
+            ("send_messages", "nope"),
+        ] {
+            let (status, _) = put(
+                kind,
+                json!({"autonomy": "ask", "rules": [], "switches": [switch]}),
+            )
+            .await;
+            assert_eq!(status, 400, "{kind} {switch}");
+        }
+        let (status, kinds) = put(
+            "send_messages",
+            json!({"autonomy": "automatic", "rules": [], "switches": ["everyone_on_server"]}),
+        )
+        .await;
+        assert_eq!(status, 200, "{kinds}");
+        assert_eq!(kinds[1]["autonomy"], "automatic");
+        assert_eq!(kinds[1]["switches"][0]["on"], true);
 
         let (_, sam) = h
             .call(
@@ -3492,7 +3536,7 @@ mod permission_api {
             .call(reqwest::Method::GET, "/permissions", Value::Null)
             .await;
         assert_eq!(kinds[0]["rules"].as_array().unwrap().len(), 1);
-        assert_eq!(kinds[3]["autonomy"], "automatic");
+        assert_eq!(kinds[4]["autonomy"], "automatic");
 
         // An exception about someone no longer in People stays visible, doing nothing,
         // and can still be kept when saving.
@@ -3545,7 +3589,7 @@ mod permission_api {
             .iter()
             .map(|k| k["autonomy"].as_str().unwrap())
             .collect();
-        assert_eq!(autonomy, ["automatic", "ask", "ask", "ask"]);
+        assert_eq!(autonomy, ["automatic", "ask", "ask", "ask", "ask"]);
     }
 }
 
@@ -3849,9 +3893,9 @@ mod google_flow {
         let (_, kinds) = h
             .call(reqwest::Method::GET, "/permissions", Value::Null)
             .await;
-        assert_eq!(kinds[2]["id"], "change_events");
-        assert_eq!(kinds[2]["rules"][0]["label"], "me@example.com");
-        assert_eq!(kinds[2]["autonomy"], "ask");
+        assert_eq!(kinds[3]["id"], "change_events");
+        assert_eq!(kinds[3]["rules"][0]["label"], "me@example.com");
+        assert_eq!(kinds[3]["autonomy"], "ask");
     }
 
     async fn pending_action(h: &mut Harness, message_id: &str) -> mimi_protocol::Action {
@@ -5138,5 +5182,240 @@ mod signal_flow {
             state.connections.prompts.target_of(id, "1005"),
             Some(channels::replies::Target::Reminder(delivery.id))
         );
+    }
+}
+
+// --- Matrix: messages to other people -----------------------------------------------
+
+/// `matrix_send` through a real chat turn, with a scripted model and a stand-in Matrix
+/// account: cards, "Don't ask again", the known rule and the server switch.
+mod matrix_flow {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use futures::StreamExt;
+    use mimi_protocol::{ActionStatus, Event};
+    use serde_json::{Value, json};
+
+    use super::Harness;
+    use super::tool_use::{Reply, scripted_llm};
+    use crate::connections::matrix::fake::{FakeMessenger, paired_connection};
+
+    const ME: &str = "@mimi:home.org";
+    const OWNER: &str = "@vincent:home.org";
+    const SAM: &str = "@sam:home.org";
+    const LEA: &str = "@lea:home.org";
+
+    async fn start(h: &Harness, content: &str) -> String {
+        let (_, conv) = h
+            .call(reqwest::Method::POST, "/conversations", json!({}))
+            .await;
+        let conv_id = conv["id"].as_str().unwrap().to_owned();
+        let (status, sent) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/conversations/{conv_id}/messages"),
+                json!({"content": content}),
+            )
+            .await;
+        assert_eq!(status, 200, "{sent}");
+        sent["assistant_message"]["id"].as_str().unwrap().to_owned()
+    }
+
+    async fn pending(h: &mut Harness, message_id: &str) -> mimi_protocol::Action {
+        loop {
+            let frame = tokio::time::timeout(Duration::from_secs(10), h.ws.next())
+                .await
+                .expect("timed out waiting for an approval card")
+                .unwrap()
+                .unwrap();
+            if let Ok(Event::MessageUpdated { message }) =
+                serde_json::from_str(frame.to_text().unwrap())
+                && message.id.to_string() == message_id
+                && let Some(a) = message
+                    .actions
+                    .iter()
+                    .find(|a| a.status == ActionStatus::PendingApproval)
+            {
+                return a.clone();
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn messages_ask_first_and_go_on_their_own_only_to_people_the_user_knows() {
+        // The model: one call per request, picked from what the user asked.
+        let llm = scripted_llm(|req, _| {
+            let last = req["messages"].as_array().unwrap().last().unwrap().clone();
+            if last["role"] == "tool" {
+                return Reply::Text("Done.");
+            }
+            let asked = last["content"].as_str().unwrap_or_default().to_owned();
+            if asked.contains("dinner") {
+                Reply::Call(
+                    "matrix_send",
+                    json!({"to": ["Sam"], "text": "Dinner at **8**?"}),
+                )
+            } else if asked.contains("both") {
+                Reply::Call(
+                    "matrix_send",
+                    json!({"to": "Sam, @lea:home.org", "text": "Hello both"}),
+                )
+            } else if asked.contains("elsewhere") {
+                Reply::Call(
+                    "matrix_send",
+                    json!({"to": ["@x:matrix.org"], "text": "Hi"}),
+                )
+            } else if asked.contains("mixed") {
+                Reply::Call("matrix_send", json!({"to": ["Mixed"], "text": "Hi all"}))
+            } else {
+                Reply::Text("Hello.")
+            }
+        })
+        .await;
+        let mut h = Harness::new().await;
+        h.use_mock(llm.port()).await;
+        h.state
+            .tool_sources
+            .add(Arc::new(crate::connections::matrix::send::MatrixTools));
+        let registry = h.state.tool_sources.registry(&h.state).await;
+        assert!(registry.get("matrix_send").is_none(), "nothing paired yet");
+
+        let fake = FakeMessenger::new(ME);
+        fake.add_user(SAM, Some("Sammy"));
+        fake.add_user(LEA, Some("Léa"));
+        fake.add_group("!family:home.org", "Family", None, &[OWNER, SAM]);
+        fake.add_group(
+            "!mixed:home.org",
+            "Mixed",
+            None,
+            &[OWNER, "@eve:elsewhere.net"],
+        );
+        paired_connection(&h.state, fake.clone(), OWNER, "!owner:home.org").await;
+        let registry = h.state.tool_sources.registry(&h.state).await;
+        assert!(registry.get("matrix_send").is_some());
+        assert!(registry.get("matrix_rooms").is_some());
+
+        // Groups for exceptions in Settings › Permissions: not the owner's own chat.
+        let (_, groups) = h
+            .call(reqwest::Method::GET, "/matrix/groups", Value::Null)
+            .await;
+        let names: Vec<&str> = groups
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|g| g["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["Family", "Mixed"]);
+
+        let (status, sam) = h
+            .call(
+                reqwest::Method::POST,
+                "/people",
+                json!({"name": "Sam", "handles": [{"channel": "matrix", "value": SAM}]}),
+            )
+            .await;
+        assert_eq!(status, 200, "{sam}");
+        let sam_id = sam["id"].as_str().unwrap().to_owned();
+
+        // Asking first, by default: the card names exactly who it reaches.
+        let id = start(&h, "Ask Sam about dinner").await;
+        let action = pending(&mut h, &id).await;
+        assert_eq!(action.arguments["to"], json!([SAM]));
+        assert_eq!(
+            action.arguments["recipients"],
+            json!(["Sam (@sam:home.org)"])
+        );
+        assert_eq!(action.arguments["from"], ME);
+        assert_eq!(
+            action.summary,
+            "Send a Matrix message to Sam (@sam:home.org)"
+        );
+        assert_eq!(
+            action.always_allow.as_deref(),
+            Some("Don't ask again for Sam")
+        );
+        assert!(fake.sent().is_empty(), "nothing before approval");
+        let (status, _) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/actions/{}/approve", action.id),
+                json!({"always": true}),
+            )
+            .await;
+        assert_eq!(status, 200);
+        let (reply, _) = h.wait_for_reply(&id).await;
+        assert_eq!(reply.actions[0].status, ActionStatus::Done);
+        assert_eq!(
+            reply.actions[0].result.as_deref(),
+            Some("sent a Matrix message to Sam")
+        );
+        assert_eq!(
+            fake.sent(),
+            [("!dm1:home.org".to_owned(), "Dinner at **8**?".to_owned())]
+        );
+        let (_, kinds) = h
+            .call(reqwest::Method::GET, "/permissions", Value::Null)
+            .await;
+        assert_eq!(kinds[1]["id"], "send_messages");
+        assert_eq!(kinds[1]["rules"][0]["target"]["id"], sam_id.as_str());
+        assert_eq!(kinds[1]["rules"][0]["label"], "Sam");
+
+        // Sam now goes on their own, in the same chat, shown as an automatic card.
+        let id = start(&h, "Ask Sam about dinner again").await;
+        let (reply, _) = h.wait_for_reply(&id).await;
+        assert!(!reply.actions[0].requires_approval);
+        assert_eq!(reply.actions[0].status, ActionStatus::Done);
+        assert_eq!(fake.sent().len(), 2);
+        assert_eq!(fake.sent()[1].0, "!dm1:home.org");
+
+        // With someone new, the whole message waits, with nothing to remember.
+        let id = start(&h, "Say hello to both").await;
+        let action = pending(&mut h, &id).await;
+        assert_eq!(action.arguments["to"], json!([SAM, LEA]));
+        assert_eq!(action.always_allow, None);
+        h.call(
+            reqwest::Method::POST,
+            &format!("/actions/{}/reject", action.id),
+            Value::Null,
+        )
+        .await;
+        let (reply, _) = h.wait_for_reply(&id).await;
+        assert_eq!(reply.actions[0].status, ActionStatus::Rejected);
+        assert_eq!(fake.sent().len(), 2);
+
+        // Another server: refused before any card.
+        let id = start(&h, "Write to someone elsewhere").await;
+        let (reply, _) = h.wait_for_reply(&id).await;
+        assert_eq!(reply.actions[0].status, ActionStatus::Failed);
+        assert!(
+            reply.actions[0]
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("another Matrix server"),
+            "{:?}",
+            reply.actions[0].error
+        );
+
+        // Automatic, with everyone on the server counting as known: Léa goes too. A
+        // group with someone from elsewhere still asks.
+        let (status, _) = h
+            .call(
+                reqwest::Method::PUT,
+                "/permissions/send_messages",
+                json!({"autonomy": "automatic", "rules": [], "switches": ["everyone_on_server"]}),
+            )
+            .await;
+        assert_eq!(status, 200);
+        let id = start(&h, "Say hello to both").await;
+        let (reply, _) = h.wait_for_reply(&id).await;
+        assert_eq!(reply.actions[0].status, ActionStatus::Done, "{reply:?}");
+        assert!(!reply.actions[0].requires_approval);
+        assert_eq!(fake.sent().len(), 4);
+        let id = start(&h, "Post in mixed").await;
+        let action = pending(&mut h, &id).await;
+        assert_eq!(action.arguments["recipients"], json!(["Group “Mixed”"]));
+        assert_eq!(fake.sent().len(), 4);
     }
 }

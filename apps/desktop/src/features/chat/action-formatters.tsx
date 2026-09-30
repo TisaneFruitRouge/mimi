@@ -108,6 +108,19 @@ export const formatters: Record<string, Formatter> = {
       return rows;
     },
   },
+  // Everyone it reaches by name with their exact address (`to` holds just the addresses),
+  // the public groups it joins to post, the assistant's account, and the whole message.
+  matrix_send: {
+    keys: ["to", "recipients", "from", "joins", "text"],
+    rows: (a) => {
+      const rows: ArgRow[] = [{ label: "To", value: present(a.recipients) ? lines(a.recipients) : lines(a.to) }];
+      if (present(a.joins))
+        rows.push({ label: "Joins", value: `${lines(a.joins)}\nA public group: your assistant joins it to post this.` });
+      if (present(a.from)) rows.push({ label: "From", value: `Your assistant, ${text(a.from)}` });
+      rows.push({ label: "Message", value: text(a.text), markdown: true });
+      return rows;
+    },
+  },
   // The whole message, exactly as it will be sent. `thread_id` only threads the reply.
   mail_send: {
     keys: ["to", "cc", "subject", "body", "thread_id"],

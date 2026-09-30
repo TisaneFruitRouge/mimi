@@ -3,4 +3,4 @@
 /**
  * What an exception is about.
  */
-export type PermissionTarget = { "kind": "person", "id": string } | { "kind": "calendar", "id": string };
+export type PermissionTarget = { "kind": "person", "id": string } | { "kind": "calendar", "id": string } | { "kind": "matrix_room", "id": string };
