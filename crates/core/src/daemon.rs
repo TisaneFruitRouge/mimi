@@ -102,6 +102,9 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
     state
         .tool_sources
         .add(Arc::new(crate::memory::tools::MemoryTools));
+    state
+        .tool_sources
+        .add(Arc::new(crate::channels::tools::MessagingTools));
     crate::connections::start_all(&state).await;
     tokio::spawn(crate::memory::learn::run(state.clone()));
     tokio::spawn(crate::memory::semantic::run(state.clone()));

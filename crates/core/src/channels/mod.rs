@@ -19,6 +19,7 @@ use uuid::Uuid;
 use crate::AppState;
 
 pub mod replies;
+pub mod tools;
 
 /// A private line to the user in a messaging app.
 #[async_trait]

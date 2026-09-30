@@ -508,7 +508,10 @@ than inventing their own.
 
 - **Approval rule:** anything that sends, changes or deletes something on the user's
   behalf needs approval (`Tool::needs_approval` returns true); reads don't. Never
-  weaken this for convenience; it is the main defence against prompt injection.
+  weaken this for convenience; it is the main defence against prompt injection. The
+  one sender without a card is `message_me` (`channels/tools.rs`): it writes only to
+  the user themselves, on a paired app's private line, like a reminder, and shows in the
+  chat. Keep its destination fixed to `channels::owners`; never let it take an address.
 - **Permissions** (Settings › Permissions; design in `docs/architecture.md` › Tools
   and approvals › Permissions): the kinds of action the user may let happen without
   asking are descriptors in `tools::permissions::KINDS` (send email, add events, change

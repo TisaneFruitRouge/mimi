@@ -1303,6 +1303,67 @@ mod tool_use {
         assert_eq!(writes.load(Ordering::SeqCst), 1);
     }
 
+    #[tokio::test]
+    async fn the_assistant_can_message_the_user_in_their_apps() {
+        use super::fake_telegram::FakeTelegram;
+
+        let llm = scripted_llm(|_, n| match n {
+            0 => Reply::Call("message_me", json!({"text": "**Shopping**: milk, eggs"})),
+            _ => Reply::Text("Sent it to your phone."),
+        })
+        .await;
+        let (mut h, _, writes) = setup(&llm).await;
+        h.state
+            .tool_sources
+            .add(Arc::new(crate::channels::tools::MessagingTools));
+
+        // With no app paired, there's no such tool to offer.
+        let registry = h.state.tool_sources.registry(&h.state).await;
+        assert!(registry.get("message_me").is_none());
+
+        let (tg, tg_url) = FakeTelegram::start().await;
+        *h.state.connections.telegram_api.lock().unwrap() = tg_url;
+        let (_, conn) = h
+            .call(
+                reqwest::Method::POST,
+                "/connections",
+                json!({"integration": "telegram", "bot_token": "123:secret"}),
+            )
+            .await;
+        let code = conn["action_url"]
+            .as_str()
+            .unwrap()
+            .rsplit("start=")
+            .next()
+            .unwrap()
+            .to_owned();
+        tg.message(42, "Vincent", &format!("/start {code}"));
+        for _ in 0..200 {
+            if crate::channels::owners(&h.state).await.len() == 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+
+        // It only ever reaches the user, like a reminder: no approval card.
+        let (_, id) = h.start("Send me my shopping list on my phone").await;
+        let (message, _) = h.wait_for_reply(&id).await;
+        let action = &message.actions[0];
+        assert_eq!(action.status, ActionStatus::Done, "{action:?}");
+        assert_eq!(
+            action.result.as_deref(),
+            Some("sent you a message on Telegram")
+        );
+        assert!(
+            tg.sent_to(42)
+                .iter()
+                .any(|m| m == "<b>Shopping</b>: milk, eggs"),
+            "{:?}",
+            tg.sent_to(42)
+        );
+        assert_eq!(writes.load(Ordering::SeqCst), 0);
+    }
+
     // --- Personality and instructions ----------------------------------------------
 
     #[tokio::test]
