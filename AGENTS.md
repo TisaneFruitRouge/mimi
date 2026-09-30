@@ -239,7 +239,8 @@ than inventing their own.
   computer (`SignalCode` in `connect-dialogs.tsx`), never opened; expired codes are
   replaced by themselves, and linking pauses after an hour. The conversation is **Note
   to Self**: `classify.rs` keeps only what the user writes there (a "sent" transcript to
-  their own account from another of their devices) and reactions in it; other chats,
+  their own account from another of their devices: text and photos) and reactions in
+  it; other files, other chats,
   groups, receipts, calls and stories are dropped unread and never logged. Mimi answers
   in Note to Self, every message headed with the assistant's name in bold (in Note to
   Self everything looks like the user's), Markdown as Signal text styles (`format.rs`).
@@ -521,6 +522,47 @@ than inventing their own.
   the highlight layer must share the textarea's box and type (`fieldText` in
   composer.tsx) or the pills drift from the text.
 - Channel icons and avatars: `src/components/people.tsx`.
+
+## Photos (attachments)
+
+- Details in `docs/architecture.md` › Photos. User messages carry `attachments`
+  (`Attachment { kind, mime, name, size, width, height }`; `kind` is only `image` for
+  now: voice and video will be kinds of their own). `SendMessage.attachments` takes
+  base64 (`NewAttachment`), at most 10, 20 MB each; the send route alone accepts 64 MB
+  bodies. With photos the text may be empty.
+- **Normalised on arrival** (`crates/core/src/attachments.rs`, crate `image`, MIT/Apache),
+  whatever brought them: decoded (anything else, HEIC included, is refused in plain
+  words), turned upright from EXIF, shrunk to 1,568 px on the long side, saved again as
+  PNG (screenshots, transparency) or JPEG, which drops all metadata (location, camera).
+  Kept in the encrypted database (`message_attachments`, migration 0027), never as
+  files; they go with their message and conversation. `GET /v1/attachments/{id}` serves
+  only that re-encoded JPEG/PNG (`nosniff`, CSP sandbox); the desktop app fetches it
+  through the `chat_attachment` command (bytes, shown as `data:` URLs: the CSPs allow
+  no `blob:`), and only `transport.ts` knows which (`attachmentUrl`).
+- **Only to models that see** (`providers/vision.rs`): Anthropic yes; the built-in
+  runtime no (its catalog ships no `--mmproj` projector); OpenAI-compatible sources are
+  asked (Ollama `/api/show` capabilities, LM Studio `/api/v0/models`, llama.cpp
+  `/props`, `/models` modalities, OpenAI's own families); unknown is no. Cached ten
+  minutes. `GET /v1/models/vision` tells the composer. A model that can't see gets a note
+  instead ("the user sent 2 photos…"), the message is marked `attachments_unseen`, the
+  UI says "This model can't see photos. Choose one that can in Models." and messaging
+  apps get `channels::UNSEEN_NOTE`. Never drop photos silently.
+- **Small prompts**: pictures go as `ChatMessage.images` (OpenAI `image_url` data URLs,
+  Anthropic `image` blocks, before the text) with the latest 2 user messages that have
+  some, at most 10 in all, each counted as 4,000 characters of history; older ones
+  become a text note. Internal calls (learning, mail) never get images; learning reads
+  only what the user wrote.
+- **Messaging apps**: each downloads a photo only once the sender is known to be the
+  owner, within 20 MB (Telegram: largest `photo` size or an image `document`, through
+  `getFile` on the configurable API base, token never logged; Signal: image attachments
+  of Note to Self, fetched on the Signal thread; Matrix: `m.image`, decrypted by
+  matrix-sdk's media API, caption per the spec). `channels::photos::deliver` hands turns
+  to `converse` and holds photos per conversation: words without photos take the held
+  ones along; photos with words go after 3 s (albums arrive one by one); photos
+  alone go after 45 s. Commands and answers to prompts never pick up photos.
+- UI: `features/chat/photos.tsx` (composer thumbnails, grid in the bubble, lightbox);
+  `+` › Add photos, paste, or drop anywhere on the chat (the Tauri windows set
+  `dragDropEnabled: false`, so the webview gets HTML drops like a browser does).
 
 ## Tools (what the assistant can do)
 
