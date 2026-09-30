@@ -251,6 +251,27 @@ fn show_main_window(app: &AppHandle) {
     }
 }
 
+/// The main window, from the config's first window (`"create": false` there, so it's
+/// built here). Requests for a new window open in the system browser instead: that's how
+/// a link in an email opens. Its frame is sandboxed without scripts, and WebKit then runs
+/// no event listener in it, not even the page's own click handler, so the frame's
+/// `<base target="_blank">` turns each click into a new-window request that lands here.
+fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
+    let Some(config) = app.config().app.windows.first().cloned() else {
+        return Ok(());
+    };
+    let handle = app.clone();
+    tauri::WebviewWindowBuilder::from_config(app, &config)?
+        .on_new_window(move |url, _| {
+            if matches!(url.scheme(), "http" | "https" | "mailto") {
+                let _ = handle.opener().open_url(url.as_str(), None::<&str>);
+            }
+            tauri::webview::NewWindowResponse::Deny
+        })
+        .build()?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
@@ -270,6 +291,7 @@ pub fn run() {
             if let Ok(dir) = attachments::cache_dir(app.handle()) {
                 let _ = std::fs::remove_dir_all(dir);
             }
+            create_main_window(app.handle())?;
             #[cfg(target_os = "linux")]
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_decorations(false);

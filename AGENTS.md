@@ -442,8 +442,11 @@ than inventing their own.
   remote pictures left out until the user clicks "Load images"; then the daemon fetches
   only that message's pictures (public addresses only, checked after DNS and on every
   redirect; pictures only, size-capped) and inlines them as `data:`. The panel shows it
-  in a `sandbox="allow-same-origin"` iframe (never add `allow-scripts`: with same origin
-  it would lift the sandbox) with its own CSP, and opens links with `openExternal`.
+  in a `sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"` iframe
+  (never add `allow-scripts`: with same origin it would lift the sandbox) with its own
+  CSP, and opens links with `openExternal`. WebKit runs no event listener in a frame
+  without scripts, so in the desktop app links open through `<base target="_blank">` and
+  the main window's `on_new_window` (`create_main_window`), which sends them to the browser.
   Formatted is Markdown made by the daemon with everything the sender wrote escaped.
   Crates: ammonia (its cssparser is MPL-2.0), markup5ever_rcdom (MIT/Apache).
 - **Tests** fake the servers: `mail/fake.rs` is a small IMAP (IDLE, MOVE, APPEND…) and

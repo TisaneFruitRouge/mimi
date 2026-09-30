@@ -534,10 +534,14 @@ that message's picture addresses: http(s) only, names resolved and every address
 this computer, the local network or reserved ranges refused (also after redirects), no
 proxy, cookies or referrer, pictures only (no SVG), 5 MB each, 20 MB and 30 s per
 message; they come back as `data:` addresses, so the app's CSP (`img-src 'self' data:`)
-stays as is. The panel shows the HTML in an iframe with `sandbox="allow-same-origin"`
-(never `allow-scripts`) and its own CSP (`default-src 'none'; img-src data:;
-style-src 'unsafe-inline'`); the page sizes the frame to its content and opens clicked
-links with `openExternal`. `GET /v1/mail/messages/{id}/content` returns `MailContent`
+stays as is. The panel shows the HTML in an iframe with `sandbox="allow-same-origin
+allow-popups allow-popups-to-escape-sandbox"` (never `allow-scripts`) and its own CSP
+(`default-src 'none'; img-src data:; style-src 'unsafe-inline'`); the page sizes the
+frame to its content and opens clicked links with `openExternal`. WebKit (the desktop
+app, Safari) runs no event listener at all in a frame without scripts, so there that
+click handler never fires: the frame's `<base target="_blank">` makes each link a
+new-window request instead, which the desktop app's main window (`on_new_window` in
+`create_main_window`) opens in the system browser and denies; a browser opens a tab. `GET /v1/mail/messages/{id}/content` returns `MailContent`
 (safe HTML, Markdown, how many pictures are hidden).
 
 **Sorting.** `triage::run` wakes after a pass that changed something (and every 5

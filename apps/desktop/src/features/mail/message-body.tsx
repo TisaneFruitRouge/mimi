@@ -315,7 +315,7 @@ blockquote{margin:0 0 0 .6em;padding-left:.8em;border-left:2px solid #e3e3e8;col
 `;
 
 function frameDocument(body: string) {
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${FRAME_CSP}"><meta name="referrer" content="no-referrer"><meta name="color-scheme" content="light"><style>${FRAME_STYLE}</style></head><body><div class="mimi-mail">${body}</div></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${FRAME_CSP}"><meta name="referrer" content="no-referrer"><meta name="color-scheme" content="light"><base target="_blank"><style>${FRAME_STYLE}</style></head><body><div class="mimi-mail">${body}</div></body></html>`;
 }
 
 /**
@@ -323,12 +323,19 @@ function frameDocument(body: string) {
  * forms, frames or remote content), in a sandboxed frame.
  *
  * The sandbox leaves out `allow-scripts`, so nothing in the email can ever run, whatever
- * got past the daemon. It allows only `allow-same-origin`, so that this page (not the
- * email) can measure the content to size the frame and catch link clicks to open them
- * in the browser instead of inside the app. Same origin is harmless without scripts:
- * the email has no way to use it. (Scripts plus same origin together would let an email
- * lift its own sandbox; never add `allow-scripts`.) No `allow-popups`,
- * `allow-top-navigation` or `allow-forms` either.
+ * got past the daemon. `allow-same-origin` lets this page (not the email) measure the
+ * content to size the frame and catch link clicks to open them in the browser instead of
+ * inside the app. Same origin is harmless without scripts: the email has no way to use
+ * it. (Scripts plus same origin together would let an email lift its own sandbox; never
+ * add `allow-scripts`.)
+ *
+ * WebKit (the desktop app, Safari) runs no event listener at all in a frame without
+ * scripts, ours included, so there the click handler never fires. For that, every link
+ * opens as a new window (`<base target="_blank">`, `allow-popups`): the desktop app turns
+ * new-window requests into the system browser (`create_main_window` in src-tauri), and a
+ * browser opens a normal tab (`allow-popups-to-escape-sandbox`, or the page would open
+ * without its scripts). The daemon gives every link `rel="noopener noreferrer"`. No
+ * `allow-top-navigation` or `allow-forms`.
  */
 function EmailFrame({ html, onContext }: { html: string; onContext?: (c: FrameContext) => void }) {
   const ref = useRef<HTMLIFrameElement>(null);
@@ -398,7 +405,7 @@ function EmailFrame({ html, onContext }: { html: string; onContext?: (c: FrameCo
       <iframe
         ref={ref}
         title="Email"
-        sandbox="allow-same-origin"
+        sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
         referrerPolicy="no-referrer"
         srcDoc={doc}
         onLoad={attach}
