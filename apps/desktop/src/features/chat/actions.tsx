@@ -179,7 +179,8 @@ function openUrlOf(a: Action): string | null {
   return typeof url === "string" && url.startsWith("https://") ? url : null;
 }
 
-function ApprovalCard({ action: a }: { action: Action }) {
+/** An action waiting for the user's OK. `heading` names who asks, when it isn't this chat. */
+export function ApprovalCard({ action: a, heading = "Needs your OK" }: { action: Action; heading?: string }) {
   const [busy, setBusy] = useState<null | "approve" | "always" | "reject">(null);
   const rows = describeArgs(a.tool, a.arguments);
 
@@ -212,7 +213,7 @@ function ApprovalCard({ action: a }: { action: Action }) {
           <Hand className="size-[18px]" />
         </span>
         <div className="flex min-w-0 flex-col gap-0.5 pt-px">
-          <span className="type-footnote font-medium text-lime-deep">Needs your OK</span>
+          <span className="type-footnote font-medium text-lime-deep">{heading}</span>
           <span className="type-headline">{a.summary}</span>
         </div>
       </div>

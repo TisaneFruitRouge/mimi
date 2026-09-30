@@ -4,6 +4,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { Conversation } from "@/bindings/Conversation";
 import type { ConversationDetail } from "@/bindings/ConversationDetail";
 import type { Event } from "@/bindings/Event";
+import type { GuestApproval } from "@/bindings/GuestApproval";
 import type { Message } from "@/bindings/Message";
 import type { ModelPull } from "@/bindings/ModelPull";
 import { keys } from "@/lib/api";
@@ -111,6 +112,18 @@ function apply(qc: QueryClient, event: Event) {
     case "people_changed":
       qc.invalidateQueries({ queryKey: keys.people });
       break;
+    case "person_access_changed":
+      qc.invalidateQueries({ queryKey: keys.personExtra(event.person_id, "access") });
+      break;
+    case "guest_approval": {
+      // Only the card: waiting ones are shown, settled ones go.
+      const { approval } = event;
+      qc.setQueryData<GuestApproval[]>(keys.guestApprovals, (list = []) => {
+        const others = list.filter((a) => a.action.id !== approval.action.id);
+        return approval.action.status === "pending_approval" ? [...others, approval] : others;
+      });
+      break;
+    }
     case "model_pull": {
       const { pull } = event;
       const same = (p: ModelPull) => p.provider_id === pull.provider_id && p.model === pull.model;

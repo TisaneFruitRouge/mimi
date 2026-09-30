@@ -16,7 +16,10 @@ import type { MergeRequest } from "@/bindings/MergeRequest";
 import type { MergeResult } from "@/bindings/MergeResult";
 import type { NewHandle } from "@/bindings/NewHandle";
 import type { NewPerson } from "@/bindings/NewPerson";
+import type { GuestApproval } from "@/bindings/GuestApproval";
 import type { Person } from "@/bindings/Person";
+import type { PersonAccess } from "@/bindings/PersonAccess";
+import type { PersonAccessUpdate } from "@/bindings/PersonAccessUpdate";
 import type { PersonSummary } from "@/bindings/PersonSummary";
 import type { PersonUpdate } from "@/bindings/PersonUpdate";
 import type { RemovedPerson } from "@/bindings/RemovedPerson";
@@ -197,6 +200,12 @@ export const api = {
     call<PersonConversation[]>("GET", `/people/${id}/conversations`),
   /** What memory holds about someone. Answered by newer daemons only: callers handle 404. */
   personMemory: (id: string) => call<MemoryNote[]>("GET", `/people/${id}/memory`),
+  /** Whether someone may ask the assistant things, the calendars shared with them, who approves. */
+  personAccess: (id: string) => call<PersonAccess>("GET", `/people/${id}/access`),
+  setPersonAccess: (id: string, change: PersonAccessUpdate) =>
+    call<PersonAccess>("PUT", `/people/${id}/access`, change),
+  /** What people the user trusts asked for that waits for the user's OK (only the cards). */
+  guestApprovals: () => call<GuestApproval[]>("GET", "/access/approvals"),
   /** Recent email conversations with someone (none without a connected mailbox). */
   personMail: (id: string) =>
     call<MailThread[]>("GET", `/mail/threads?person=${encodeURIComponent(id)}&limit=5`),
@@ -352,9 +361,11 @@ export const keys = {
   people: ["people"] as const,
   peopleList: (q: string) => ["people", "list", q] as const,
   person: (id: string) => ["people", "person", id] as const,
-  /** Events, conversations, notes and mail about someone. */
-  personExtra: (id: string, what: "events" | "conversations" | "memory" | "mail") =>
+  /** Events, conversations, notes, mail and access about someone. */
+  personExtra: (id: string, what: "events" | "conversations" | "memory" | "mail" | "access") =>
     ["people", "person", id, what] as const,
+  /** Cards people the user trusts are waiting on the user for. */
+  guestApprovals: ["access", "approvals"] as const,
   duplicates: ["people", "duplicates"] as const,
   removedPeople: ["people", "removed"] as const,
   // Under "mail" for #, so new mail refreshes the suggestions.

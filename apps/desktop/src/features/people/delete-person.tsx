@@ -32,8 +32,10 @@ import { useAssistantName } from "@/lib/queries";
 export type Doomed = { id: string; name: string };
 
 /** What deleting someone does, in plain words. */
-function consequences(name: string, p: Person | undefined, assistant: string) {
-  const kept = `What ${assistant} remembers about them is kept.`;
+function consequences(name: string, p: Person | undefined, assistant: string, trusted: boolean) {
+  const kept =
+    `What ${assistant} remembers about them is kept.` +
+    (trusted ? ` Their own conversations with ${assistant} are deleted, and they can't ask it things anymore.` : "");
   // Only cards from address books can be brought back; what was added by hand can't.
   if (p && !p.sources.some((s) => s.source_id !== null)) {
     return `${name} and the ways to reach them you added will be deleted. ${kept} This can't be undone.`;
@@ -89,6 +91,12 @@ export function DeletePersonDialog({
     enabled: !!person,
     retry: false,
   });
+  const access = useQuery({
+    queryKey: keys.personExtra(person?.id ?? "", "access"),
+    queryFn: () => api.personAccess(person!.id),
+    enabled: !!person,
+    retry: false,
+  });
   // Keep the last person while the dialog animates out.
   const [shown, setShown] = useState<Doomed | null>(person);
   if (person && person.id !== shown?.id) setShown(person);
@@ -118,7 +126,7 @@ export function DeletePersonDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Delete {name}?</AlertDialogTitle>
           <AlertDialogDescription>
-            {consequences(name, person ? details.data : undefined, assistant)}
+            {consequences(name, person ? details.data : undefined, assistant, !!access.data?.enabled)}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
