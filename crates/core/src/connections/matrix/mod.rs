@@ -535,16 +535,17 @@ pub fn answer_invite(config: &MatrixConfig, inviter: Option<&str>, direct: bool)
     answer_invite_from(config, inviter, direct, false)
 }
 
-/// [`answer_invite`], knowing whether the inviter is someone the owner lets ask the
-/// assistant things (`trusted`): their direct chats are joined and kept. Their groups
-/// aren't: only the owner brings the assistant into groups.
+/// [`answer_invite`], knowing whether the invitation is a direct chat from someone the
+/// owner lets ask the assistant things (`trusted_direct`: the inviter is trusted and
+/// it's just the two of them): it's joined and kept as their chat. Their groups aren't:
+/// only the owner brings the assistant into groups.
 pub fn answer_invite_from(
     config: &MatrixConfig,
     inviter: Option<&str>,
     direct: bool,
-    trusted: bool,
+    trusted_direct: bool,
 ) -> Invitation {
-    if trusted && direct && config.owner.is_some() && inviter != config.owner.as_deref() {
+    if trusted_direct && config.owner.is_some() && inviter != config.owner.as_deref() {
         return Invitation::KeepDirect;
     }
     match &config.owner {
@@ -921,17 +922,18 @@ async fn handle(
                 .ok()
                 .and_then(|i| i.inviter)
                 .map(|m| m.user_id().to_string());
-            let direct =
-                room.is_direct().await.unwrap_or(false) || room.active_members_count() <= 2;
-            let trusted = match inviter.as_deref() {
+            let direct = room.is_direct().await.unwrap_or(false);
+            // Someone trusted opening a chat of two: marked direct, or just them and it.
+            let trusted_direct = match inviter.as_deref() {
                 Some(who) if config.owner.as_deref() != Some(who) => {
-                    crate::access::find(state, mimi_protocol::Channel::Matrix, who)
-                        .await
-                        .is_some()
+                    (direct || room.active_members_count() <= 2)
+                        && crate::access::find(state, mimi_protocol::Channel::Matrix, who)
+                            .await
+                            .is_some()
                 }
                 _ => false,
             };
-            match answer_invite_from(config, inviter.as_deref(), direct, trusted) {
+            match answer_invite_from(config, inviter.as_deref(), direct, trusted_direct) {
                 Invitation::KeepDirect => {
                     let id = room.room_id().to_string();
                     // Recorded first, so the sync doesn't leave the chat it's joining.

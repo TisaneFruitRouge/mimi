@@ -841,13 +841,19 @@ fn trusted_people_open_direct_chats_but_not_groups() {
         answer_invite_from(&config, Some(MAYA), true, true),
         Invitation::KeepDirect
     );
+    // Not a chat of two, or not trusted: declined as before.
     assert_eq!(
-        answer_invite_from(&config, Some(MAYA), false, true),
+        answer_invite_from(&config, Some(MAYA), false, false),
         Invitation::Decline
     );
     assert_eq!(
         answer_invite_from(&config, Some(EVE), true, false),
         Invitation::Decline
+    );
+    // The owner's groups are still the owner's, even when only two are in them yet.
+    assert_eq!(
+        answer_invite_from(&config, Some(OWNER), false, false),
+        Invitation::KeepGroup
     );
     // Prompts are kept per chat: hers never answer the owner's.
     let connection = uuid::Uuid::now_v7();

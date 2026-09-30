@@ -107,7 +107,7 @@ pub async fn load(state: &AppState) {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Guest {
     pub person_id: Uuid,
-    /// Their name in People.
+    /// What the user calls them in People: their nickname, else their name.
     pub name: String,
     /// The calendars shared with them: the only ones their turns can read or write.
     pub calendars: Vec<String>,
@@ -501,7 +501,11 @@ pub async fn guest(state: &AppState, person: Uuid) -> Option<Guest> {
     }
     Some(Guest {
         person_id: id,
-        name: found.name,
+        // What the user calls them: "Maya" rather than "Oumaya Laadhari".
+        name: found
+            .nickname
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or(found.name),
         calendars: stored.calendars,
         approver: stored.approver,
         owner: owner_name(state).await,
