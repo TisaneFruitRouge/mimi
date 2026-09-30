@@ -263,7 +263,9 @@ than inventing their own.
   `$MIMI_HOME/daemon.json`, and read the code from `GET /v1/connections`.
 - **Matrix** (`connections/matrix/`, matrix-sdk with `e2e-encryption`; details in
   `docs/architecture.md` › Messaging apps › Matrix): an account the user makes for the
-  assistant on any server. Mimi signs in with its password (server found through
+  assistant on any server: signing up in Element, or, on their own server with sign-up
+  closed, the command the dialog shows for their server program (`matrixServers` in
+  `connect-dialogs.tsx`; keep those commands checked against each program's docs). Mimi signs in with its password (server found through
   `.well-known`, else the "Server address"), sets up cross-signing with it, and never
   keeps it. Keys live in `<data>/matrix/<id>/` (matrix-sdk's SQLite store, its
   passphrase in the connection config); one client per connection, in

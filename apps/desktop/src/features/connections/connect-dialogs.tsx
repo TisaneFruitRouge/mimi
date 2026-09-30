@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import QRCode from "qrcode";
-import { ChevronRight, CircleCheck, ExternalLink, Loader2, Lock, TriangleAlert } from "lucide-react";
+import { Check, ChevronRight, CircleCheck, Copy, ExternalLink, Loader2, Lock, TriangleAlert } from "lucide-react";
 import { cn } from "cn";
 
 import type { Connection } from "@/bindings/Connection";
@@ -9,6 +9,7 @@ import type { ConnectionSetup } from "@/bindings/ConnectionSetup";
 import type { MailDiscovery } from "@/bindings/MailDiscovery";
 import type { MailSecurity } from "@/bindings/MailSecurity";
 import type { MailServers } from "@/bindings/MailServers";
+import { copyText } from "@/components/app-context-menu";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -649,9 +650,76 @@ function SignalCode({ connection, onRetry, busy }: { connection: Connection; onR
   );
 }
 
+/**
+ * How to make the assistant's account on a server whose sign-up is closed, per server
+ * program. `asks`: the command asks for the password itself (so it stays out of the
+ * shell's history); otherwise it's in the command.
+ */
+const matrixServers = [
+  {
+    id: "synapse",
+    name: "Synapse",
+    where: "On the server, in a terminal:",
+    command: (name: string) =>
+      `register_new_matrix_user -c /etc/matrix-synapse/homeserver.yaml -u ${name} --no-admin`,
+    asks: true,
+    note: "Change the path if your homeserver.yaml is somewhere else.",
+  },
+  {
+    id: "synapse-docker",
+    name: "Synapse in Docker",
+    where: "On the server, in a terminal:",
+    command: (name: string) =>
+      `docker exec -it synapse register_new_matrix_user -c /data/homeserver.yaml -u ${name} --no-admin`,
+    asks: true,
+    note: "Change synapse to your container's name if it's different.",
+  },
+  {
+    id: "tuwunel",
+    name: "Tuwunel, conduwuit or Continuwuity",
+    where: "Send this in your server's admin room:",
+    command: (name: string, password: string) => `!admin users create-user ${name} ${password}`,
+    asks: false,
+    note: null,
+  },
+  {
+    id: "mas",
+    name: "Matrix Authentication Service",
+    where: "Where mas-cli runs:",
+    command: (name: string, password: string) =>
+      `mas-cli manage register-user --username ${name} --password ${password} --no-admin --yes`,
+    asks: false,
+    note: "Your server must allow signing in with a password, for apps like this one.",
+  },
+  {
+    id: "dendrite",
+    name: "Dendrite",
+    where: "On the server, in a terminal:",
+    command: (name: string) => `create-account -config dendrite.yaml -username ${name}`,
+    asks: true,
+    note: "Change the path if your dendrite.yaml is somewhere else.",
+  },
+] as const;
+
+/** A strong password with nothing a shell or chat command would trip on. */
+function newPassword() {
+  const letters = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  return Array.from(bytes, (b) => letters[b % letters.length]).join("");
+}
+
+/** The name part of a Matrix address: "@mimi:example.org" → "mimi". */
+function localPart(address: string) {
+  const name = address.trim().replace(/^@/, "").split(":")[0].toLowerCase();
+  return /^[a-z0-9._=\/+-]+$/.test(name) ? name : "";
+}
+
 function Matrix({ onDone }: { onDone: () => void }) {
+  const [ownServer, setOwnServer] = useState(false);
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
+  // The password suggested for an account made on the user's own server.
+  const [suggested, setSuggested] = useState("");
   const [homeserver, setHomeserver] = useState("");
   const [showServer, setShowServer] = useState(false);
   const { busy, error, created, connect } = useConnect();
@@ -664,6 +732,77 @@ function Matrix({ onDone }: { onDone: () => void }) {
   if (live) return <MatrixPairing connection={live} />;
 
   const ready = user.trim().length > 0 && password.length > 0;
+  const addressField = (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor="matrix-user">Address</Label>
+      <Input
+        id="matrix-user"
+        value={user}
+        onChange={(e) => setUser(e.target.value)}
+        placeholder={ownServer ? "@assistant:example.org" : "@my-assistant:matrix.org"}
+        autoComplete="off"
+        spellCheck={false}
+        autoFocus
+      />
+    </div>
+  );
+  const form = (
+    <form
+      className="flex flex-col gap-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!ready) return;
+        connect({
+          integration: "matrix",
+          user,
+          password,
+          homeserver: homeserver.trim() || null,
+        });
+      }}
+    >
+      {!ownServer && addressField}
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="matrix-password">Password</Label>
+        <Input
+          id="matrix-password"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          autoComplete="off"
+        />
+      </div>
+      <button
+        type="button"
+        onClick={() => setShowServer((v) => !v)}
+        className="flex items-center gap-1 self-start type-subhead font-medium text-muted-foreground hover:text-foreground"
+        aria-expanded={showServer}
+      >
+        <ChevronRight className={cn("size-3.5 transition-transform", showServer && "rotate-90")} />
+        Server settings
+      </button>
+      {showServer && (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="matrix-server">Server address</Label>
+          <Input
+            id="matrix-server"
+            value={homeserver}
+            onChange={(e) => setHomeserver(e.target.value)}
+            placeholder="https://matrix.example.org"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <p className="type-subhead text-muted-foreground">
+            Only needed when Mimi can't find the server from the address.
+          </p>
+        </div>
+      )}
+      {error && <p className="type-subhead text-destructive">{error}</p>}
+      <Button type="submit" className="self-start" disabled={busy || !ready}>
+        {busy && <Loader2 className="animate-spin" />} {busy ? "Signing in…" : "Connect"}
+      </Button>
+    </form>
+  );
+
   return (
     <>
       <DialogHeader>
@@ -672,95 +811,147 @@ function Matrix({ onDone }: { onDone: () => void }) {
           Chat with your assistant from Element or any Matrix app, end-to-end encrypted.
         </DialogDescription>
       </DialogHeader>
-      <Steps>
-        <Step n={1}>
-          <span>
-            Make a new account for your assistant, separate from yours. Any server works, like
-            matrix.org or your own.
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            className="self-start"
-            onClick={() => openExternal("https://app.element.io/#/register")}
-          >
-            <ExternalLink /> Create an account in Element
-          </Button>
-        </Step>
-        <Step n={2}>
-          <span>Enter the new account's address and password.</span>
-          <form
-            className="flex flex-col gap-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!ready) return;
-              connect({
-                integration: "matrix",
-                user,
-                password,
-                homeserver: homeserver.trim() || null,
-              });
+      <div className="grid grid-cols-2 rounded-[10px] bg-fill p-[3px]" role="radiogroup" aria-label="Where its account lives">
+        {[
+          { own: false, label: "A public server" },
+          { own: true, label: "My own server" },
+        ].map((o) => (
+          <button
+            key={o.label}
+            role="radio"
+            aria-checked={ownServer === o.own}
+            onClick={() => {
+              setOwnServer(o.own);
+              // On their own server they make the account: suggest a strong password. On a
+              // public one they choose it when signing up.
+              if (o.own && !password) {
+                const p = newPassword();
+                setPassword(p);
+                setSuggested(p);
+              } else if (!o.own && password === suggested) {
+                setPassword("");
+              }
             }}
-          >
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="matrix-user">Address</Label>
-              <Input
-                id="matrix-user"
-                value={user}
-                onChange={(e) => setUser(e.target.value)}
-                placeholder="@my-assistant:matrix.org"
-                autoComplete="off"
-                spellCheck={false}
-                autoFocus
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="matrix-password">Password</Label>
-              <Input
-                id="matrix-password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete="off"
-              />
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowServer((v) => !v)}
-              className="flex items-center gap-1 self-start type-subhead font-medium text-muted-foreground hover:text-foreground"
-              aria-expanded={showServer}
-            >
-              <ChevronRight className={cn("size-3.5 transition-transform", showServer && "rotate-90")} />
-              Server settings
-            </button>
-            {showServer && (
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="matrix-server">Server address</Label>
-                <Input
-                  id="matrix-server"
-                  value={homeserver}
-                  onChange={(e) => setHomeserver(e.target.value)}
-                  placeholder="https://matrix.example.org"
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <p className="type-subhead text-muted-foreground">
-                  Only needed when Mimi can't find the server from the address.
-                </p>
-              </div>
+            className={cn(
+              "h-7 rounded-[7px] text-[13px] font-medium transition-all duration-200",
+              ownServer === o.own
+                ? "bg-background text-foreground shadow-[0_0_0_0.5px_rgb(0_0_0/0.06),0_1px_3px_rgb(0_0_0/0.12)]"
+                : "text-muted-foreground hover:text-foreground",
             )}
-            {error && <p className="type-subhead text-destructive">{error}</p>}
-            <Button type="submit" className="self-start" disabled={busy || !ready}>
-              {busy && <Loader2 className="animate-spin" />} {busy ? "Signing in…" : "Connect"}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+      {ownServer ? (
+        <Steps>
+          <Step n={1}>
+            <span>Choose an address for your assistant on your server, separate from yours.</span>
+            {addressField}
+          </Step>
+          <Step n={2}>
+            <span>Create the account on your server.</span>
+            <MatrixAccountCommand name={localPart(user)} password={password} />
+          </Step>
+          <Step n={3}>
+            <span>Connect with the account's password.</span>
+            {form}
+          </Step>
+        </Steps>
+      ) : (
+        <Steps>
+          <Step n={1}>
+            <span>
+              Make a new account for your assistant, separate from yours, on matrix.org or any server
+              that lets people sign up. If your server's sign-up is closed, choose <b>My own server</b>.
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="self-start"
+              onClick={() => openExternal("https://app.element.io/#/register")}
+            >
+              <ExternalLink /> Create an account in Element
             </Button>
-          </form>
-        </Step>
-      </Steps>
+          </Step>
+          <Step n={2}>
+            <span>Enter the new account's address and password.</span>
+            {form}
+          </Step>
+        </Steps>
+      )}
       <Note>
         Your assistant uses only its own account, never yours, and talks only to you. Its password
         is used once to set up encryption and isn't kept.
       </Note>
     </>
+  );
+}
+
+/** The command that makes the assistant's account, for the server program the user picks. */
+function MatrixAccountCommand({ name, password }: { name: string; password: string }) {
+  const [serverId, setServerId] = useState<(typeof matrixServers)[number]["id"]>("synapse");
+  const server = matrixServers.find((s) => s.id === serverId)!;
+  return (
+    <div className="flex flex-col gap-2.5">
+      <Select value={serverId} onValueChange={(v) => setServerId(v as typeof serverId)}>
+        <SelectTrigger className="w-full" aria-label="Your server's program">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {matrixServers.map((s) => (
+            <SelectItem key={s.id} value={s.id}>
+              {s.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {name ? (
+        <>
+          <span className="type-subhead text-muted-foreground">{server.where}</span>
+          <CopyBox text={server.command(name, password)} label="command" />
+          {server.asks && (
+            <>
+              <span className="type-subhead text-muted-foreground">When it asks for a password, use this one:</span>
+              <CopyBox text={password} label="password" />
+            </>
+          )}
+          {server.note && <span className="type-subhead text-muted-foreground">{server.note}</span>}
+        </>
+      ) : (
+        <span className="type-subhead text-muted-foreground">
+          Enter an address above to see the command, like @assistant:example.org.
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** Text to paste somewhere else, with a Copy button. */
+function CopyBox({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(t);
+  }, [copied]);
+  return (
+    <div className="flex items-start gap-2 rounded-[10px] bg-subtle py-2 pr-2 pl-3">
+      <code className="min-w-0 flex-1 font-mono text-[12.5px] leading-5 break-all select-all">{text}</code>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-label={`Copy the ${label}`}
+        className="shrink-0 rounded-full text-muted-foreground"
+        onClick={() => {
+          copyText(text);
+          setCopied(true);
+        }}
+      >
+        {copied ? <Check /> : <Copy />}
+      </Button>
+    </div>
   );
 }
 

@@ -652,9 +652,16 @@ short reply or a reaction, matched to the prompt by `channels::replies`.
 ### Matrix
 
 `connections/matrix/` (matrix-sdk, Apache-2.0, with `e2e-encryption` and its SQLite
-store). The user makes an account for the assistant on any server (in Element, on
-matrix.org or their own) and enters its address and password;
-`ConnectionSetup::Matrix { user, password, homeserver? }`.
+store). The user makes an account for the assistant on any server and enters its
+address and password; `ConnectionSetup::Matrix { user, password, homeserver? }`. The
+dialog has two paths: **A public server** (sign up in Element, on matrix.org or any
+server with open sign-up) and **My own server**, for servers with sign-up closed: the
+user picks the address, and the dialog shows the command that makes the account for
+their server program (`matrixServers` in `connect-dialogs.tsx`: Synapse's
+`register_new_matrix_user`, also in Docker; `!admin users create-user` in the admin room
+of Tuwunel, conduwuit or Continuwuity; `mas-cli manage register-user`; Dendrite's
+`create-account`), with a password generated on this computer and already filled in.
+Commands that can ask for the password do, so it stays out of the shell's history.
 
 - **Signing in** (`connect`): the server comes from the address through
   `.well-known/matrix/client`, else the address's host, else the "Server address" the
