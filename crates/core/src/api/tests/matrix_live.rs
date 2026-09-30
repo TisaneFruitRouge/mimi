@@ -273,6 +273,12 @@ async fn live_matrix() {
             )
         } else if asked.contains("note") {
             Reply::Call("send_note", json!({"to": "Sam"}))
+        } else if asked.contains("tickets") {
+            Reply::Call(
+                "calendar_add_event",
+                json!({"title": "Train to Lyon", "start": "2026-10-20T08:00",
+                       "end": "2026-10-20T10:00", "calendar": "Family"}),
+            )
         } else {
             Reply::Text("Hello from **your assistant**!")
         }
@@ -657,6 +663,193 @@ async fn live_matrix() {
             .map(|m| m.membership().clone()),
         Some(MembershipState::Join)
     );
+
+    // --- Someone the owner trusts --------------------------------------------------------
+
+    // A calendar to share with them: Google, faked, so nothing leaves this computer.
+    let mut google = crate::connections::calendar::google_fake::Fake::default();
+    google.calendars = vec![
+        json!({"id": "family@group.calendar.google.com", "summary": "Family", "accessRole": "owner"}),
+        json!({"id": "work@group.calendar.google.com", "summary": "Work", "accessRole": "owner"}),
+    ];
+    google.refresh_tokens = vec!["refresh-0".into()];
+    let (google, endpoints) = crate::connections::calendar::google_fake::start(google).await;
+    *h.state
+        .connections
+        .feeds
+        .google
+        .endpoints_override
+        .lock()
+        .unwrap() = Some(endpoints);
+    let calendars = ["Family", "Work"]
+        .iter()
+        .map(
+            |name| crate::connections::calendar::google::GoogleCalendar {
+                id: format!("{}@group.calendar.google.com", name.to_lowercase()),
+                name: (*name).into(),
+                color: None,
+                writable: true,
+            },
+        )
+        .collect();
+    crate::connections::save_google_account(
+        &h.state,
+        None,
+        crate::connections::calendar::google::GoogleAccountConfig {
+            email: "owner@example.org".into(),
+            refresh_token: "refresh-0".into(),
+            calendars,
+            signed_out: false,
+        },
+    )
+    .await
+    .unwrap();
+    let (_, cals) = h
+        .call(reqwest::Method::GET, "/calendars", Value::Null)
+        .await;
+    let family = cals
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "Family")
+        .unwrap()["id"]
+        .clone();
+
+    // The owner lets the friend ask things, and shares Family with them.
+    let (status, maya) = h
+        .call(
+            reqwest::Method::POST,
+            "/people",
+            json!({"name": "Maya", "handles": [{"channel": "matrix", "value": friend}]}),
+        )
+        .await;
+    assert_eq!(status, 200, "{maya}");
+    let maya = maya["id"].as_str().unwrap().to_owned();
+    let (status, access) = h
+        .call(
+            reqwest::Method::PUT,
+            &format!("/people/{maya}/access"),
+            json!({"enabled": true, "calendars": [family]}),
+        )
+        .await;
+    assert_eq!(status, 200, "{access}");
+    assert_eq!(access["addresses"], json!([friend]));
+    assert_eq!(access["assistant_addresses"], json!([bot]));
+
+    // What they write in the chat the assistant opened is a request now, answered there,
+    // as them, with the approval theirs; the owner sees none of it.
+    let forwards = owner.count(&bot, "replied:");
+    let prompts = owner.count(&bot, "Waiting for you");
+    say(&dm, "Please add the train tickets to our calendar").await;
+    let theirs = friend_app.wait_for(&bot, "Waiting for you").await;
+    let prompt = friend_app
+        .seen
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(id, ..)| *id == theirs)
+        .map(|(_, _, b)| b.clone())
+        .unwrap();
+    assert!(
+        prompt.contains("Train to Lyon") && prompt.contains("Family"),
+        "{prompt}"
+    );
+    say(&dm, "yes").await;
+    friend_app.wait_for(&bot, "Approved").await;
+    eventually("the event in the shared calendar", async || {
+        google.lock().unwrap().events["family@group.calendar.google.com"]
+            .iter()
+            .any(|e| e["summary"] == "Train to Lyon")
+    })
+    .await;
+    friend_app.wait_for(&bot, "Done, I sent it.").await;
+    let asked = llm
+        .requests()
+        .into_iter()
+        .rev()
+        .find(|r| r.to_string().contains("You are talking with Maya"))
+        .expect("their turn ran as them");
+    for tool in asked["tools"].as_array().unwrap() {
+        let name = tool["function"]["name"].as_str().unwrap();
+        assert!(
+            crate::access::tools::allowed(name),
+            "{name} offered to a guest"
+        );
+    }
+    assert_eq!(owner.count(&bot, "replied:"), forwards, "never passed on");
+    assert_eq!(owner.count(&bot, "Waiting for you"), prompts);
+    let (_, conversations) = h
+        .call(reqwest::Method::GET, "/conversations", Value::Null)
+        .await;
+    assert!(
+        !conversations.to_string().contains("Maya"),
+        "their conversation isn't the owner's: {conversations}"
+    );
+
+    // When the owner approves for them, only the card reaches the owner, and the owner's
+    // 👍 approves it; they're told it waits.
+    let (status, _) = h
+        .call(
+            reqwest::Method::PUT,
+            &format!("/people/{maya}/access"),
+            json!({"approver": "owner"}),
+        )
+        .await;
+    assert_eq!(status, 200);
+    say(&dm, "Add the return tickets too").await;
+    let card = owner.wait_for(&bot, "For Maya: Add “Train to Lyon”").await;
+    friend_app.wait_for(&bot, "to OK this first").await;
+    assert_eq!(
+        owner.count(&bot, "return tickets"),
+        0,
+        "never the conversation"
+    );
+    room.send(ReactionEventContent::new(Annotation::new(
+        card,
+        "👍".to_owned(),
+    )))
+    .await
+    .unwrap();
+    eventually("the second event", async || {
+        google.lock().unwrap().events["family@group.calendar.google.com"]
+            .iter()
+            .filter(|e| e["summary"] == "Train to Lyon")
+            .count()
+            == 2
+    })
+    .await;
+
+    // They open a chat of their own: the assistant joins it and answers there.
+    let hers = friend_app.client.create_dm(&bot_id).await.unwrap();
+    eventually("the assistant to join their chat", async || {
+        membership(&hers, &bot_id).await == Some(MembershipState::Join)
+    })
+    .await;
+    say(&hers, "Hi!").await;
+    let hello = friend_app
+        .wait_for(&bot, "Hello from **your assistant**!")
+        .await;
+    assert!(
+        hers.event(&hello, None).await.is_ok(),
+        "answered in their chat"
+    );
+
+    // Turned off: it leaves the chat they opened and keeps the one it opened, where
+    // replies are passed on to the owner again.
+    let (status, _) = h
+        .call(
+            reqwest::Method::PUT,
+            &format!("/people/{maya}/access"),
+            json!({"enabled": false}),
+        )
+        .await;
+    assert_eq!(status, 200);
+    eventually("the assistant to leave their chat", async || {
+        membership(&hers, &bot_id).await == Some(MembershipState::Leave)
+    })
+    .await;
+    say(&dm, "Are you still there?").await;
+    owner.wait_for(&bot, "> Are you still there?").await;
 
     // Removing the connection signs the device out and deletes its keys.
     let row = crate::connections::store::get(&h.state.db, id)
