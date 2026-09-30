@@ -211,7 +211,8 @@ small in the prompt however much accumulates. It works like a tiny file system:
     people or details. With Qwen3 8B through Ollama a pass takes 15-25 s instead of
     40 s to over 2 minutes.
   - **Sources:** only the user's own messages count as sources; the assistant's replies
-    are context.
+    are context. Conversations of people the user trusts (see People the user trusts)
+    are never learned from.
   - **Exclusions:** a message where the user asks not to remember something is left out
     before the model sees it.
   - **Restarts:** unread conversations are picked up after a restart.
@@ -262,7 +263,10 @@ and "Default", which empties it.
   (`triage::draft_reply`) get the instructions only (the draft is the user's voice, not
   the assistant's); drafts the assistant writes in a chat already have both. Sorting,
   summaries, smart folders and memory learning never see them: their output has a fixed
-  shape, and learning reads only the user's messages.
+  shape, and learning reads only the user's messages. Someone the user trusts gets the
+  personality in their turns but not the instructions: those are the user's standing
+  wishes about acting for the user ("sign my emails as Vincent"), may name private
+  things, and would be followed as if the guest had asked (`Persona::guest_block`).
 - **They can't lift the rules.** The texts sit in `<personality>` and
   `<user_instructions>` blocks (the tags are removed from the text itself), introduced
   as the user's preferences that don't change the approval step, the rule that emails,
@@ -405,6 +409,10 @@ at 7, send me my day").
     notification center on macOS), when `Settings.desktop_notifications` is on.
   - The app: a `schedule_delivered` event (toast with Done / Snooze) and the history.
   Snoozing sets `snoozed_until`; the snooze comes back through the same catch-up rules.
+  An item set up for someone the user trusts (`for_person`, migration 0026) goes only to
+  that person's chat (answered there by reply or reaction), with no notification, toast
+  or history for the user; their routines run as them, in a conversation of theirs, and
+  their approvals follow their card (see People the user trusts).
 - **Routines.** Each has its own conversation, created on first run and titled with the
   routine's name. A run is a normal chat turn (`chat::send_with_context`) whose
   instruction is the user message, plus a hidden `<routine>` note telling the model it's
@@ -707,7 +715,9 @@ Commands that can ask for the password do, so it stays out of the shell's histor
   message that arrives unencrypted is ignored: a server on the way could have made it
   up. Reactions are the exception (Matrix apps never encrypt them); they only ever
   answer a prompt the assistant sent. A message it can't decrypt gets "try sending it
-  again". Replies are Markdown turned into Matrix HTML with pulldown-cmark
+  again", and is logged (room and sender, never content); from anyone else it's logged
+  too, and said to a trusted person in their own chat, or, for a reply in a chat the
+  assistant opened, to the owner (and to the sender when they're in People). Replies are Markdown turned into Matrix HTML with pulldown-cmark
   (`format.rs`): the model's raw HTML is shown as text, links keep only http(s) and
   mailto, pictures become their description, and long replies split at line breaks
   (12,000 characters) without cutting a code block in two.
@@ -768,11 +778,15 @@ from its own account (`matrix/send.rs`, `rooms.rs`, `messenger.rs`).
   before joining, and rooms it made itself are never left, so a sync racing the send
   can't make it leave. A chat whose other person left is left and forgotten; the next
   message opens a new one.
-- **Nobody else gives instructions.** Only the owner's chat is a conversation. A reply
-  in a chat the assistant opened is passed to the owner's chat as it is, quoted and
-  escaped ("💬 Sam Carter (@sam:example.org) replied: > …", at most 2,000 characters;
-  only encrypted ones once the chat is), without the model. Groups get nothing: what
-  people say there, the owner included, is ignored.
+- **Nobody else gives instructions**, except people the owner trusts, in their own
+  direct chat (see People the user trusts). For anyone else, a reply in a chat the
+  assistant opened is passed to the owner's chat as it is, quoted and escaped ("💬 Sam
+  Carter (@sam:example.org) replied: > …", at most 2,000 characters; only encrypted ones
+  once the chat is), without the model, and logged (never its content), whether it went
+  through or not. Groups get nothing: what people say there, the owner included, is
+  ignored. The sender is matched to the chat without letter case: a reply from
+  "@maya:…" to a chat opened for "@Maya:…" (as typed in People) used to be dropped
+  without a word.
 - **Settings › Permissions** offers people with a Matrix address and the groups from
   `GET /v1/matrix/groups` as exceptions, and the switch under the kind.
 
@@ -847,6 +861,86 @@ from its own account (`matrix/send.rs`, `rooms.rs`, `messenger.rs`).
   (`features/chat/mentions/`), picked items become `@label` text tracked as tokens and
   drawn as pills behind the text, and a token deletes as a whole. People is a top-bar
   panel (`#/people/<id>`); see below.
+
+## People the user trusts
+
+`crates/core/src/access/`. The owner can let someone in People ask their assistant
+things from that person's own messaging app (Matrix today): "the assistant for Maya" on
+their card. Everything about it is off until the owner turns it on, and only the owner's
+own API calls change it.
+
+- **Choices** (`person_access`, migration 0026; `GET|PUT /v1/people/{id}/access`,
+  `PersonAccessChanged`): whether they may ask, the calendars shared with them (ids from
+  `GET /v1/calendars`; unknown ones are refused), and who approves what they ask for:
+  them, in their own chat (the default), or the owner. The view adds where they write
+  from (their usable Matrix addresses) and to (the assistant's accounts), so the card can
+  say what's missing.
+- **Recognising them** (`access::find`): an app address that's theirs in People from an
+  address book or added by hand (a card Mimi made from mail doesn't count, a name never
+  does), with access on. If two people with access share it, nobody is recognised.
+- **Matrix** (`matrix/guests.rs`): their messages count in a direct chat the assistant
+  keeps with them: one it opened to message them for the owner, or one they open (their
+  invitation, marked direct or with just the two of them, is joined and kept as
+  `Why::Direct`; it then tries to turn encryption on, as for the owner). Once a chat is
+  encrypted, only encrypted messages count. Their groups are declined; what they say in
+  the owner's groups is ignored. Reactions answer only their own prompts. Everything
+  there goes through `Messenger`, so `api/tests/access_flow.rs` drives it with the fake.
+  Telegram can plug in the same way later (recognise with `find`, keep a `Line`, give a
+  `Channel` back from `access::lines`); Signal is a linked device on the owner's own
+  account, so other people's Signal chats never can.
+- **Their conversation is theirs.** Each line (app, assistant account, their address,
+  the chat) has one conversation (`guest_conversations`), titled with their name; `/new`
+  replaces it; each routine of theirs has one too. They're stored because the chat engine
+  needs the history, but the owner's clients never get them: `list_conversations` leaves
+  them out, every `/conversations/{id}` route answers 404, and `/v1/events` drops every
+  event about them (`Access::hides`, from a set of ids loaded at startup and marked
+  before a conversation is saved). A trusted person's messages are never passed on to the
+  owner, not even replies in a chat the assistant opened. Turning access off, or
+  deleting the person, deletes their conversations and their reminders and routines, and
+  the assistant leaves the chats they opened (`access::revoke`); after a sync that drops
+  someone, `access::tidy` does the same.
+- **The guest boundary.** Who a turn is for (`Principal`) comes from the conversation,
+  never from what's in it (`access::principal_for`); a conversation whose person is gone
+  or turned off refuses new turns. For a guest, `chat::send` builds a different prompt
+  (who's talking, that the owner isn't there, the shared calendars by name or plainly
+  that none is shared yet, the personality without the owner's instructions, and none
+  of the owner's memory: no profile, no recall), drops mentions, never schedules
+  learning, and offers only `access::tools::registry`: an allow-list
+  (`access::tools::ALLOWED`), not the owner's registry minus some. `Turn::act` refuses
+  anything outside the list again, and `ToolContext.principal` reaches every tool:
+  - Calendars: the tools work on the accounts cut down to the shared calendars
+    (`calendar::restrict`), so the others are never read; every event and target is
+    checked against the list again; an id from anywhere else is "not found", as if it
+    didn't exist; writes only to calendars saved into directly (not Google by private
+    address: its page would open in the guest's browser); guests of an event only as
+    email addresses (nothing looked up in the owner's contacts); read problems say only
+    that a shared calendar couldn't be read; invitations are never offered for emailing
+    (the owner can send them from the Calendar panel).
+  - Reminders and routines: created with `for_person` (`schedule::create_for`), listed,
+    changed and cancelled only among their own (`schedule/tools.rs › belongs`); an event
+    to time one to is looked for only in the shared calendars. The owner's lists,
+    history and calendar leave them out, and the API answers 404 for them.
+  - Nothing else: no mail, memory, people, `matrix_send`, `message_me`, or anything else
+    that reads or sends the owner's data. Approval cards never offer "Don't ask again":
+    that changes the owner's settings.
+- **Approvals** follow Settings › Permissions as for the owner, known-recipients net
+  included. Theirs are asked in their own chat; prompts are remembered per chat
+  (`replies::line`), so their "yes" answers only their own and the owner's only the
+  owner's. When their card says the owner approves, only the card reaches the owner
+  (`access::ask_owner`: the owner's messaging apps, headed "For Maya:", a desktop
+  notification, and a `GuestApproval` event the app shows as a card of its own,
+  `GET /v1/access/approvals` at launch), and they're told it waits for the owner.
+- **People changes.** Merging combines everyone's access the strict way, as for
+  permission exceptions (on only if all who had a choice had it on, the calendars they
+  all had, the owner approving if anyone's card said so); undoing the merge puts it back
+  unless it was changed since. Their conversations and reminders keep the old ids,
+  which resolve through `people_merged`. Deleting someone deletes their access (and what
+  `revoke` removes); bringing them back doesn't restore it.
+- **Tests:** `api/tests/access_flow.rs` (the owner turning it on, the prompt and tools a
+  guest gets, shared calendars read and written, invented ids refused, a scripted model
+  trying mail, memory, people and messaging, reminders and routines reaching them,
+  approvals in their chat or the owner's, strangers unchanged, unreadable messages,
+  turning it off, merges, undo and deletion) and the live Matrix test's trusted friend.
 
 ## Panels and navigation
 

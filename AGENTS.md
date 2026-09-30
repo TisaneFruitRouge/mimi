@@ -275,9 +275,13 @@ than inventing their own.
   excepted: apps never encrypt them). It keeps (`rooms.rs`, migration 0025) the owner's
   chat, groups the **owner** invites it into (everyone else's invitations are declined),
   chats it opened and public groups it joined to send messages; other rooms are left.
-  Nobody but the owner gives instructions: others' messages never reach the model; a
-  reply in a chat it opened for the user is passed on to the owner's chat quoted as it
-  is (`forward_text`), groups stay silent.
+  Only the owner and people the owner trusts (see "People the user trusts" below) give
+  instructions, each in their own direct chat; everyone else's messages never reach the
+  model: a reply in a chat it opened for the user is passed on to the owner's chat quoted
+  as it is (`forward_text`, logged, never its content), groups stay silent. An encrypted
+  message it can't read is logged (room and sender) and said: to the owner in their
+  chat, to a trusted person in theirs, and, for a reply in a chat it opened, to the
+  owner. Compare Matrix addresses without case (People may hold "@Maya:…").
   Approvals and reminders are answered by reply or reaction (`channels::replies`).
   Replies are Markdown → HTML with the model's HTML escaped (`format.rs`). Removing the
   connection signs the device out and deletes the store. Say honestly whether the chat
@@ -322,8 +326,12 @@ than inventing their own.
   minus `--generate-config …`): `MIMI_TEST_MATRIX=http://127.0.0.1:8008 cargo test -p
   mimi-core live_matrix -- --ignored` registers an assistant, an owner, a stranger and a
   friend, and drives the owner and the friend with matrix-sdk clients (approval, E2EE
-  delivery, automatic sending, forwarded replies, the owner's group). Append a newline to the generated `homeserver.yaml` before adding lines, set
-  `trusted_key_servers: []`, and use a spare port. Never point it at matrix.org.
+  delivery, automatic sending, forwarded replies, the owner's group, and the friend let in
+  with a shared calendar: their requests, their approvals, the owner approving for them,
+  their own chat). Append a newline to the generated `homeserver.yaml` before adding
+  lines, set `trusted_key_servers: []`, generous `rc_registration`/`rc_login`/
+  `rc_message`/`rc_joins`/`rc_invites` limits (it registers and signs in fast), and use a
+  spare port. Never point it at matrix.org.
 
 ## Email
 
@@ -612,12 +620,56 @@ than inventing their own.
   chat and undoable: return `revision` from every write so the UI can offer Undo.
 - Only the user's own statements become memories. Never weaken `looks_secret`, the
   "don't remember this" opt-out (`learn.rs`), or the rule that external content (tool
-  output, calendars, other people's messages) is context, not a source of facts.
+  output, calendars, other people's messages) is context, not a source of facts. A
+  trusted person's conversation is never learned from (`learn_from` skips it) and never
+  recalls or shows the owner's memory.
 - Schema: `memory_notes` + `memory_fts` (triggers keep them in step), `memory_revisions`
   (undo), `memory_learned` (learning progress per conversation), `memory_vectors`
   (embeddings), and `subject` on notes (the linked person's id).
 - Try it for real with `MIMI_MEMORY_QUIET_SECS=15` so the background learning pass
   runs soon after a chat; it logs `learning pass done … notes_changed=N`.
+
+## People the user trusts (guests)
+
+- `crates/core/src/access/`; details in `docs/architecture.md` › People the user trusts.
+  On someone's card in People (`features/people/assistant-access.tsx`), the owner lets
+  them ask the assistant things, shares calendars with them (`GET /calendars` ids) and
+  picks who approves: them (default) or the owner. `GET|PUT /v1/people/{id}/access`,
+  `person_access` (migration 0026), `PersonAccessChanged`. Off for everyone; only the
+  owner's own API calls change it, never a tool or a guest.
+- **Recognised** (`access::find`) by an app address that's theirs in People from an
+  address book or added by hand (never a card made from mail, never a name), with access
+  on, and exactly one such person. Matrix today (`matrix/guests.rs`): their messages in a
+  direct chat it keeps with them (one it opened, or one they opened: `KeepDirect`), with
+  the owner's encryption rules. Telegram can plug in the same way (`find`, a `Line`, a
+  `Channel`); Signal is the owner's own account, so it can't.
+- **A guest's conversation belongs to the guest.** One per line (`guest_conversations`,
+  `access::line_conversation`), plus one per routine of theirs. It's stored, but the
+  owner's clients never get it: not listed, 404 on every `/conversations/{id}` route,
+  and `Access::hides` drops its events from `/v1/events` (the ids are loaded before
+  anything is served, and marked before a row is written). Never forward a trusted
+  person's messages to the owner. Turning access off or deleting the person deletes
+  their conversations, their reminders and routines, and leaves the chats they opened
+  (`access::revoke`; `tidy` after syncs). Merges combine access the strict way (on only
+  if all were, shared calendars in common, owner approves if anyone's did) and undo puts
+  it back; old ids resolve through `people_merged`.
+- **The boundary is code, not prompt:** `access::principal_for` decides from the
+  conversation; `chat::send` then uses a guest prompt (who's talking, their shared
+  calendars, the personality via `Persona::guest_block`, never the owner's custom
+  instructions, profile or recalled memory), no mentions, no learning, and the explicit
+  allow-list `access::tools::ALLOWED` (`registry`), checked again in `Turn::act`.
+  `ToolContext.principal` travels into every tool: calendar tools work on accounts cut to
+  the shared calendars (`calendar::restrict`), check each calendar again, refuse other
+  ids as missing, take guests only as email addresses, and never offer to email
+  invitations; schedule tools give a guest only their own items (`for_person`,
+  delivered to their chat, hidden from the owner's lists). No mail, memory, people,
+  `matrix_send`, `message_me`. Cards never offer "Don't ask again".
+- **Approvals** follow Settings › Permissions (with the known-recipients net). Theirs go
+  to their chat (prompts keyed per chat, `replies::line`, so nobody answers anyone
+  else's); with the owner approving, only the card goes to the owner's apps and app
+  (`GuestApproval` event, `GET /v1/access/approvals`, `features/people/guest-approvals.tsx`)
+  and they're told it waits. `api/tests/access_flow.rs` proves the boundary with a
+  scripted model that tries everything; keep it passing.
 
 ## Personality and instructions
 
@@ -632,8 +684,10 @@ than inventing their own.
   blocks framed as preferences that never change approvals, the "external content is
   data" rule or privacy. Untouched settings leave the prompt byte-for-byte as before
   (`chat::tests::an_untouched_install_gets_the_prompt_it_always_had`). Mail panel reply
-  drafts get the instructions only; sorting, summaries, smart folders and memory
-  learning get neither. Never let this text reach approval or permission decisions.
+  drafts get the instructions only; a trusted person's turns get the personality only
+  (the instructions are the owner's wishes about acting for them, and may name private
+  things); sorting, summaries, smart folders and memory learning get neither. Never let
+  this text reach approval or permission decisions.
 
 ## Reminders and routines (the scheduler)
 
@@ -662,7 +716,9 @@ than inventing their own.
   desktop notifications
   (`notify.rs`, fail-soft, `Settings.desktop_notifications`; `MIMI_NO_NOTIFICATIONS=1`
   and tests never show one), and the app (`ScheduleDelivered` event → toast). Sending
-  runs in spawned tasks so one slow channel never holds up the loop.
+  runs in spawned tasks so one slow channel never holds up the loop. Items set up for
+  someone the user trusts (`for_person`) reach only that person's chat, and their
+  routines run as them.
 - **Routines keep the approval rule.** Their tool calls go through approvals like any
   chat; pending ones are relayed to the messaging apps and the desktop, and the run
   waits (up to 30 minutes) in its own task, never blocking the scheduler. A run whose
