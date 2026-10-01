@@ -59,10 +59,19 @@ scope is used, and a sentence per scope. It takes days to weeks.
 The daemon reads `MIMI_GOOGLE_CLIENT_ID` and `MIMI_GOOGLE_CLIENT_SECRET` at build time
 (`option_env!`), and the same variables at run time override them.
 
+For local installers, put them in `.env.google` at the repo root (gitignored, keep it
+`chmod 600`); `scripts/prepare-bundle.sh` reads it when the variables aren't already
+set, and says whether the build has sign-in:
+
 ```sh
-# Installers with sign-in built in:
-MIMI_GOOGLE_CLIENT_ID=1234-abc.apps.googleusercontent.com \
-MIMI_GOOGLE_CLIENT_SECRET=GOCSPX-… pnpm bundle
+# .env.google
+MIMI_GOOGLE_CLIENT_ID=1234-abc.apps.googleusercontent.com
+MIMI_GOOGLE_CLIENT_SECRET=GOCSPX-…
+```
+
+```sh
+# Installers with sign-in built in (.env.google, or the variables inline):
+pnpm bundle
 
 # Development, without rebuilding:
 MIMI_GOOGLE_CLIENT_ID=… MIMI_GOOGLE_CLIENT_SECRET=… pnpm dev

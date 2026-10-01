@@ -888,7 +888,9 @@ MIMI_HOME=/tmp/h1 ...  # any other isolated instance
 
 `pnpm dev` runs next to an installed Mimi: its own data (`.dev/`), port (7438) and app
 identity (`src-tauri/tauri.dev.conf.json`, "Mimi Dev"). To install the current code as
-the real app: `pnpm bundle` (on Arch, `NO_STRIP=true` for the AppImage step), then
+the real app: `pnpm bundle` (on Arch, `NO_STRIP=true` for the AppImage step; Google
+sign-in only if `.env.google` or `MIMI_GOOGLE_CLIENT_*` is set, see
+`docs/google-oauth.md`), then
 `scripts/install.sh --file target/release/bundle/appimage/Mimi_*.AppImage`.
 
 When testing `pnpm dev` from an agent session, stop it by exact PID or by the
