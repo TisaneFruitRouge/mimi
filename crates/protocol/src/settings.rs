@@ -21,6 +21,9 @@ pub struct Settings {
     pub custom_instructions: String,
     /// Model used for new messages. `None` until the user finishes setup.
     pub default_model: Option<ModelRef>,
+    /// Optional model that answers messages with photos (and the message right after)
+    /// when the default model can't see pictures. `None`: the default answers everything.
+    pub photo_model: Option<ModelRef>,
     /// Whether the assistant learns new things about the user from conversations.
     pub memory_learning: bool,
     /// The model chosen during setup while it's still downloading. When its download
@@ -75,6 +78,7 @@ impl Default for Settings {
             personality: String::new(),
             custom_instructions: String::new(),
             default_model: None,
+            photo_model: None,
             memory_learning: true,
             pending_model: None,
             onboarding_done: false,

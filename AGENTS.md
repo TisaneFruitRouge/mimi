@@ -556,8 +556,14 @@ than inventing their own.
   `/props`, `/models` modalities, OpenAI's own families); unknown is no. Cached ten
   minutes. `GET /v1/models/vision` tells the composer. A model that can't see gets a note
   instead ("the user sent 2 photos…"), the message is marked `attachments_unseen`, the
-  UI says "This model can't see photos. Choose one that can in Models." and messaging
-  apps get `channels::UNSEEN_NOTE`. Never drop photos silently.
+  UI says "This model can't see photos. Choose one that can, or one just for photos, in
+  Models." and messaging apps get `channels::UNSEEN_NOTE` (a trusted person gets
+  `GUEST_UNSEEN_NOTE`: they can't change the owner's models). Never drop photos silently.
+- **Model for photos** (`Settings.photo_model`, optional): when the default can't see, a
+  message with photos and the user's next message go to it (`chat::photo_model`), unless
+  a model was picked for the message or its source is gone. Built-in models are refused
+  for it; removing its source clears it. Settings › Models greys it out while the default
+  sees. `photo_flow › photos_go_to_the_model_for_photos_when_the_default_cant_see`.
 - **Small prompts**: pictures go as `ChatMessage.images` (OpenAI `image_url` data URLs,
   Anthropic `image` blocks, before the text) with the latest 2 user messages that have
   some, at most 10 in all, each counted as 4,000 characters of history; older ones

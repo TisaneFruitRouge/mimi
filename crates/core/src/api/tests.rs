@@ -5761,6 +5761,131 @@ mod photo_flow {
         assert_eq!(list[0]["title"], "Photo");
     }
 
+    /// Adds a model source for `port` and makes its model the model for photos.
+    async fn choose_photo_model(h: &Harness, port: u16) -> Value {
+        let (status, source) = h
+            .call(
+                reqwest::Method::POST,
+                "/providers",
+                json!({"name": "Eyes", "base_url": format!("http://127.0.0.1:{port}/v1")}),
+            )
+            .await;
+        assert_eq!(status, 200, "{source}");
+        let model = json!({"provider_id": source["id"], "model": "eye-model"});
+        let (_, mut settings) = h.call(reqwest::Method::GET, "/settings", Value::Null).await;
+        settings["photo_model"] = model.clone();
+        let (status, saved) = h.call(reqwest::Method::PUT, "/settings", settings).await;
+        assert_eq!((status, &saved["photo_model"]), (200, &model), "{saved}");
+        model
+    }
+
+    /// Sends one message and waits for the reply; returns the send result.
+    async fn turn(h: &mut Harness, conv: &str, text: &str, photos: Vec<Vec<u8>>) -> Value {
+        let body = json!({"content": text, "attachments": photos.iter().map(|p| json!({"data": b64(p)})).collect::<Vec<_>>()});
+        let (status, sent) = send(h, conv, body).await;
+        assert_eq!(status, 200, "{sent}");
+        h.wait_for_reply(sent["assistant_message"]["id"].as_str().unwrap())
+            .await;
+        sent
+    }
+
+    #[tokio::test]
+    async fn photos_go_to_the_model_for_photos_when_the_default_cant_see() {
+        let blind = scripted_llm(|_, _| Reply::Text("Noted.")).await;
+        let eyes = scripted_llm_seeing(|_, _| Reply::Text("A train on Friday.")).await;
+        let mut h = Harness::new().await;
+        h.use_mock(blind.port()).await;
+        let photo_model = choose_photo_model(&h, eyes.port()).await;
+        // The composer hears that photos will be seen.
+        let (_, vision) = h
+            .call(reqwest::Method::GET, "/models/vision", Value::Null)
+            .await;
+        assert_eq!(vision, json!({"sees_images": true}));
+        let conv = conversation(&h).await;
+
+        turn(&mut h, &conv, "Hello", vec![]).await;
+        let sent = turn(&mut h, &conv, "", vec![screenshot_png(40, 40)]).await;
+        assert_eq!(sent["assistant_message"]["model"], photo_model);
+        assert_eq!(sent["user_message"]["attachments_unseen"], false);
+        // The message right after still goes there, with the photo.
+        let sent = turn(&mut h, &conv, "Add the second one", vec![]).await;
+        assert_eq!(sent["assistant_message"]["model"], photo_model);
+        // Then back to the default, told the photo was seen.
+        let sent = turn(&mut h, &conv, "Thanks", vec![]).await;
+        assert_ne!(sent["assistant_message"]["model"], photo_model);
+
+        let (blind_asked, eyes_asked) = (blind.requests(), eyes.requests());
+        assert_eq!((blind_asked.len(), eyes_asked.len()), (2, 2));
+        let counts = |r: &Value| user_messages(r).iter().map(images).collect::<Vec<_>>();
+        assert_eq!(counts(&eyes_asked[0]), [0, 1]);
+        assert_eq!(counts(&eyes_asked[1]), [0, 1, 0]);
+        let photo = user_messages(&blind_asked[1]).remove(1);
+        assert_eq!(
+            parts(&photo)[0].1,
+            "(The user sent a photo here, no longer shown to you.)"
+        );
+
+        // Removing its source forgets the model for photos; the default is told.
+        let source = photo_model["provider_id"].as_str().unwrap();
+        let (status, _) = h
+            .call(
+                reqwest::Method::DELETE,
+                &format!("/providers/{source}"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(status, 200);
+        let (_, settings) = h.call(reqwest::Method::GET, "/settings", Value::Null).await;
+        assert_eq!(settings["photo_model"], Value::Null);
+        let sent = turn(&mut h, &conv, "", vec![screenshot_png(30, 30)]).await;
+        assert_eq!(sent["user_message"]["attachments_unseen"], true);
+        assert_eq!(blind.requests().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn a_picked_model_or_a_default_that_sees_keeps_photos() {
+        let blind = scripted_llm(|_, _| Reply::Text("I can't see it.")).await;
+        let eyes = scripted_llm_seeing(|_, _| Reply::Text("For photos.")).await;
+        let sees = scripted_llm_seeing(|_, _| Reply::Text("I see it.")).await;
+        let mut h = Harness::new().await;
+        h.use_mock(blind.port()).await;
+        choose_photo_model(&h, eyes.port()).await;
+        let conv = conversation(&h).await;
+
+        // A model picked for one message answers it, photos or not.
+        let (_, mut settings) = h.call(reqwest::Method::GET, "/settings", Value::Null).await;
+        let picked = settings["default_model"].clone();
+        let body = json!({"content": "Look", "model": picked, "attachments": [{"data": b64(&screenshot_png(20, 20))}]});
+        let (status, sent) = send(&h, &conv, body).await;
+        assert_eq!(status, 200, "{sent}");
+        assert_eq!(sent["assistant_message"]["model"], picked);
+        assert_eq!(sent["user_message"]["attachments_unseen"], true);
+        h.wait_for_reply(sent["assistant_message"]["id"].as_str().unwrap())
+            .await;
+
+        // A default that sees keeps its photos.
+        let (_, source) = h
+            .call(
+                reqwest::Method::POST,
+                "/providers",
+                json!({"name": "Sees", "base_url": format!("http://127.0.0.1:{}/v1", sees.port())}),
+            )
+            .await;
+        settings["default_model"] = json!({"provider_id": source["id"], "model": "sees-model"});
+        let (status, _) = h.call(reqwest::Method::PUT, "/settings", settings).await;
+        assert_eq!(status, 200);
+        let sent = turn(&mut h, &conv, "And this", vec![screenshot_png(30, 30)]).await;
+        assert_eq!(sent["user_message"]["attachments_unseen"], false);
+        assert_eq!(
+            (
+                blind.requests().len(),
+                eyes.requests().len(),
+                sees.requests().len()
+            ),
+            (1, 0, 1)
+        );
+    }
+
     #[tokio::test]
     async fn what_isnt_a_photo_is_refused() {
         let llm = scripted_llm(|_, _| Reply::Text("Hi")).await;

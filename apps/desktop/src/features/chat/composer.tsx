@@ -143,7 +143,7 @@ export const Composer = forwardRef<
         {photos.length > 0 && <DraftPhotos photos={photos} onRemove={removePhoto} />}
         {photos.length > 0 && seesImages === false && (
           <p className="px-5 pt-2.5 type-footnote text-muted-foreground">
-            This model can't see photos. Choose one that can in{" "}
+            This model can't see photos. Choose one that can, or one just for photos, in{" "}
             <ModelsLink onModels={() => onSection("models")} />.
           </p>
         )}

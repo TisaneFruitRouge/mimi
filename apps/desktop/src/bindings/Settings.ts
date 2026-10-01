@@ -28,6 +28,11 @@ custom_instructions: string,
  */
 default_model: ModelRef | null, 
 /**
+ * Optional model that answers messages with photos (and the message right after)
+ * when the default model can't see pictures. `None`: the default answers everything.
+ */
+photo_model: ModelRef | null, 
+/**
  * Whether the assistant learns new things about the user from conversations.
  */
 memory_learning: boolean, 

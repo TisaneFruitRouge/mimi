@@ -162,18 +162,28 @@ pub async fn vision(
     State(state): State<Arc<AppState>>,
     Query(q): Query<VisionQuery>,
 ) -> ApiResult<VisionSupport> {
-    let model = match (q.provider_id, q.model) {
-        (Some(provider_id), Some(model)) => Some(ModelRef { provider_id, model }),
-        _ => crate::settings::load(&state.db).await?.default_model,
+    // Asked about one model, that model; otherwise what a new message gets: the default,
+    // or the model for photos when the default can't see.
+    let models = match (q.provider_id, q.model) {
+        (Some(provider_id), Some(model)) => vec![ModelRef { provider_id, model }],
+        _ => {
+            let settings = crate::settings::load(&state.db).await?;
+            settings
+                .default_model
+                .into_iter()
+                .chain(settings.photo_model)
+                .collect()
+        }
     };
-    let Some(model) = model else {
-        return Ok(Json(VisionSupport { sees_images: false }));
-    };
-    let sees_images = match crate::providers::store::get(&state.db, model.provider_id).await? {
-        Some(record) => crate::providers::vision::sees_images(&state, &record, &model.model).await,
-        None => false,
-    };
-    Ok(Json(VisionSupport { sees_images }))
+    for model in models {
+        let Some(record) = crate::providers::store::get(&state.db, model.provider_id).await? else {
+            continue;
+        };
+        if crate::providers::vision::sees_images(&state, &record, &model.model).await {
+            return Ok(Json(VisionSupport { sees_images: true }));
+        }
+    }
+    Ok(Json(VisionSupport { sees_images: false }))
 }
 
 /// Stops the reply being written in this conversation, keeping what was written so far.

@@ -32,6 +32,8 @@ export interface ModelOption {
   sizeBytes: number | null;
   /** Whether it can use tools, when the source says. */
   supportsTools: boolean | null;
+  /** Whether it can see photos, when the source says. */
+  seesImages: boolean | null;
   price: ModelPrice | null;
 }
 
@@ -54,6 +56,7 @@ export function useAllModels() {
       locality: p.locality,
       sizeBytes: m.size_bytes,
       supportsTools: m.supports_tools,
+      seesImages: m.sees_images,
       price: m.price,
     })),
   );
@@ -109,9 +112,8 @@ export function useActiveModel() {
   return { ref, provider, ...info(ref.model, sourceName) };
 }
 
-/** Whether the default model can see photos; `null` while that isn't known yet. */
-export function useSeesImages(): boolean | null {
-  const ref = useSettings().data?.default_model ?? null;
+/** Whether a model can see photos; `null` without one or while that isn't known yet. */
+function useModelSees(ref: ModelRef | null): boolean | null {
   const vision = useQuery({
     queryKey: keys.vision(ref?.provider_id ?? "", ref?.model ?? ""),
     queryFn: () => api.vision(ref!.provider_id, ref!.model),
@@ -121,4 +123,21 @@ export function useSeesImages(): boolean | null {
   });
   if (!ref) return null;
   return vision.data?.sees_images ?? null;
+}
+
+/** Whether the default model itself can see photos; `null` while that isn't known yet. */
+export function useDefaultSeesImages(): boolean | null {
+  return useModelSees(useSettings().data?.default_model ?? null);
+}
+
+/**
+ * Whether photos sent now are seen: by the default model, or else by the model for
+ * photos. `null` while that isn't known yet.
+ */
+export function useSeesImages(): boolean | null {
+  const settings = useSettings().data;
+  const byDefault = useModelSees(settings?.default_model ?? null);
+  const byPhotoModel = useModelSees(byDefault === false ? (settings?.photo_model ?? null) : null);
+  if (byDefault !== false) return byDefault;
+  return settings?.photo_model ? byPhotoModel : false;
 }

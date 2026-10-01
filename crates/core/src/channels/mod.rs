@@ -24,7 +24,10 @@ pub mod replies;
 pub mod tools;
 
 /// Said on the app when the model couldn't see the photos the user sent.
-pub const UNSEEN_NOTE: &str = "The model I'm using can't see photos. You can choose one that can in the app's Models settings.";
+pub const UNSEEN_NOTE: &str = "The model I'm using can't see photos. You can choose one that can, or one just for photos, in the app's Models settings.";
+/// The same, for someone the user trusts: they can't change the user's models.
+pub const GUEST_UNSEEN_NOTE: &str =
+    "I can't see photos right now. Could you type out what's in it?";
 
 /// A private line to the user in a messaging app.
 #[async_trait]
@@ -179,7 +182,12 @@ pub async fn converse(
         }
     };
     if sent.user_message.attachments_unseen {
-        let _ = channel.send(&Outgoing::text(UNSEEN_NOTE)).await;
+        let note = if state.access.is_guest_conversation(conversation) {
+            GUEST_UNSEEN_NOTE
+        } else {
+            UNSEEN_NOTE
+        };
+        let _ = channel.send(&Outgoing::text(note)).await;
     }
     let assistant = sent.assistant_message.id;
     // In a trusted person's conversation whose card says the owner approves, the card

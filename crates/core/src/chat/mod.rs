@@ -147,7 +147,8 @@ pub async fn send_with_attachments(
     }
     let settings = settings::load(&state.db).await?;
     let persona = Persona::from_settings(&settings);
-    let model = model.or(settings.default_model).ok_or_else(|| {
+    let picked = model.is_some();
+    let model = model.or(settings.default_model.clone()).ok_or_else(|| {
         AppError::new(
             axum::http::StatusCode::BAD_REQUEST,
             "no_model",
@@ -210,6 +211,14 @@ pub async fn send_with_attachments(
     let contexts = store::mention_contexts(&state.db, conversation_id)
         .await
         .unwrap_or_default();
+    // A model picked for this message stays; otherwise photos may go to the model for
+    // photos.
+    let photo = if picked {
+        None
+    } else {
+        photo_model(&state, &settings, &history, &attachments, &provider, &model).await
+    };
+    let (model, provider) = photo.unwrap_or((model, provider));
     let photos = prompt_photos(&state, &provider, &model.model, &history, &attachments).await;
     let prompt = match &guest {
         // None of the owner's memory, and not their custom instructions: those are their
@@ -803,7 +812,8 @@ fn replay(
         let images = photos.earlier.get(&m.id).cloned().unwrap_or_default();
         if !m.attachments.is_empty() && images.is_empty() {
             let label = crate::attachments::count_label(m.attachments.len());
-            let note = if photos.sees {
+            // Seen when sent (maybe by the model for photos), or there now.
+            let note = if photos.sees || !m.attachments_unseen {
                 format!("(The user sent {label} here, no longer shown to you.)")
             } else {
                 format!("(The user sent {label} here, which you couldn't see.)")
@@ -922,6 +932,51 @@ async fn prompt_photos(
     photos
 }
 
+/// The model for photos (Settings › Models) and its source, when it should answer this
+/// turn: one is chosen, the new message or the user's previous one has photos, and the
+/// default model can't see them. `None` keeps the default, also when the chosen one's
+/// source is gone or can't be used.
+async fn photo_model(
+    state: &AppState,
+    settings: &mimi_protocol::Settings,
+    history: &[Message],
+    new: &[crate::attachments::Prepared],
+    default: &providers::store::ProviderRecord,
+    default_model: &ModelRef,
+) -> Option<(ModelRef, providers::store::ProviderRecord)> {
+    let chosen = settings.photo_model.clone()?;
+    let previous_had_photos = history
+        .iter()
+        .rev()
+        .find(|m| m.role == MessageRole::User)
+        .is_some_and(|m| !m.attachments.is_empty());
+    if (new.is_empty() && !previous_had_photos)
+        || chosen == *default_model
+        || providers::vision::sees_images(state, default, &default_model.model).await
+    {
+        return None;
+    }
+    let record = match provider_store::get(&state.db, chosen.provider_id).await {
+        Ok(Some(record)) => record,
+        Ok(None) => {
+            tracing::warn!("the model for photos' source was removed; using the default");
+            return None;
+        }
+        Err(e) => {
+            tracing::warn!("reading the model for photos' source failed: {e}");
+            return None;
+        }
+    };
+    if record.provider.kind == mimi_protocol::ProviderKind::Builtin {
+        return None;
+    }
+    if let Err(e) = providers::connect(&state.http, &record) {
+        tracing::warn!("the model for photos can't be used, using the default: {e}");
+        return None;
+    }
+    Some((chosen, record))
+}
+
 /// Text with a note after it (or only the note).
 fn join_note(text: &str, note: &str) -> String {
     if text.trim().is_empty() {
@@ -964,6 +1019,7 @@ fn build_prompt(
         contexts,
         new_message,
         photos,
+        false,
     )
 }
 
@@ -1046,7 +1102,15 @@ fn build_guest_prompt(
          can't, without guessing."
     ));
     let reserved = personality.map_or(0, |b| b.len());
-    assemble(system, reserved, history, contexts, new_message, photos)
+    assemble(
+        system,
+        reserved,
+        history,
+        contexts,
+        new_message,
+        photos,
+        true,
+    )
 }
 
 /// The opening of the owner's prompt: who the assistant is, the date, their
@@ -1093,7 +1157,8 @@ fn owner_system(assistant_name: &str, persona: &Persona, memory: &PromptMemory) 
 
 /// The system prompt, then as much history as fits, then the new message with its
 /// photos. `reserved` is what the system prompt's user-written parts take from the
-/// history's budget.
+/// history's budget. A `guest` can't change the owner's models, so they're never sent
+/// there.
 fn assemble(
     system: String,
     reserved: usize,
@@ -1101,15 +1166,20 @@ fn assemble(
     contexts: &HashMap<Uuid, String>,
     new_message: &str,
     photos: &PromptPhotos,
+    guest: bool,
 ) -> Vec<ChatMessage> {
     // The new message; its photos, or a note that the model can't see them.
     let new_message = if photos.new_count > 0 && !photos.sees {
+        let instead = if guest {
+            "ask them to type out what matters in it"
+        } else {
+            "that a model that can, or one just for photos, is chosen in Models"
+        };
         join_note(
             new_message,
             &format!(
                 "(They sent {}, but the current model can't see pictures. If it matters, \
-                 tell them briefly that you can't see it, and that a model that can is \
-                 chosen in Models.)",
+                 tell them briefly that you can't see it, and {instead}.)",
                 crate::attachments::count_label(photos.new_count)
             ),
         )
@@ -1192,6 +1262,33 @@ pub fn new_conversation(title: Option<String>) -> Conversation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_guest_is_asked_to_type_out_a_photo_not_sent_to_models() {
+        let photos = PromptPhotos {
+            new_count: 1,
+            ..Default::default()
+        };
+        let note = |guest| {
+            let prompt = assemble(
+                String::new(),
+                0,
+                &[],
+                &HashMap::new(),
+                "Look",
+                &photos,
+                guest,
+            );
+            prompt.last().unwrap().content.clone()
+        };
+        assert!(note(false).contains("one just for photos, is chosen in Models"));
+        let guest = note(true);
+        assert!(
+            guest.contains("ask them to type out what matters in it"),
+            "{guest}"
+        );
+        assert!(!guest.contains("Models"), "{guest}");
+    }
 
     /// The system prompt with its date line (which changes every minute) blanked out.
     fn system_text(

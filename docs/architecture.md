@@ -852,9 +852,23 @@ The user can send photos with a message, from the app, a browser or a messaging 
   on `api.openai.com`, the families known to see (gpt-4o, gpt-4.1, gpt-5, o-series,
   without audio/realtime/TTS models). A source that says nothing counts as no. Answers
   are cached ten minutes per source and model (an unreachable one isn't cached).
-  `GET /v1/models/vision[?provider_id&model]` answers for the default model, so the
-  composer can say so before sending; `ModelInfo.sees_images` carries what model lists
-  say.
+  `GET /v1/models/vision[?provider_id&model]` answers for one model, or without one for
+  what a new message gets (the default, else the model for photos), so the composer can
+  say so before sending; `ModelInfo.sees_images` carries what model lists say, and for
+  sources on the user's machines (which tell only when asked about one model) the
+  models route asks for each model that lists leave unknown.
+- **Model for photos** (`Settings.photo_model`, optional, `None` by default; Settings ›
+  Models). When the default model can't see, a message with photos, and the user's
+  message right after it ("add the second one"), goes to this model instead
+  (`chat::photo_model`, decided once the history is loaded): the whole turn, tool calls
+  included, and the reply records it as its `model`. Everything else stays on the
+  default, so a cheap text model can keep answering while photos cost a little more.
+  It's skipped when a model was picked for the message, when the default sees, and when
+  its source is gone or unusable (logged; the default answers and says it can't see).
+  `PUT /v1/settings` refuses a built-in model for it (they can't see), and removing a
+  source clears it. In Models the row is greyed out while the default sees; its picker
+  (`ModelPickerDialog forPhotos`) lists only models known to see, and its "…" menu
+  turns it off.
 - **Prompts.** `ChatMessage.images` (`ImagePart`: mime + bytes). OpenAI-compatible
   requests turn a message with pictures into content parts: `image_url` parts with
   `data:` URLs, then the text (none when it's empty). Anthropic gets `image` blocks
@@ -863,8 +877,10 @@ The user can send photos with a message, from the app, a browser or a messaging 
   the history budget. Older photos become a note in their message's text ("The user sent
   2 photos here, no longer shown to you."). For a model that can't see, no picture is
   sent: the message gets a note (the user sent N photos; if it matters, say you can't see
-  them and that a model that can is chosen in Models), older ones "which you couldn't
-  see", and the message is marked `attachments_unseen`. Internal calls (memory learning,
+  them and that a model that can, or one just for photos, is chosen in Models; for
+  someone the user trusts, ask them to type out what matters instead, since they can't
+  change the owner's models), older ones "which you couldn't see" (when they weren't
+  seen when sent either), and the message is marked `attachments_unseen`. Internal calls (memory learning,
   mail) never carry pictures, and learning skips messages that are only photos.
 - **Messaging apps.** A picture is fetched only once its sender is known to be the owner,
   and only up to 20 MB: Telegram's largest `photo` size (or a `document` whose type is a
@@ -882,11 +898,12 @@ The user can send photos with a message, from the app, a browser or a messaging 
 
   Commands (`/new`) and answers to prompts ("yes", a reaction) are handled before, so
   they never pick up photos. When the model couldn't see them, the app also gets
-  `channels::UNSEEN_NOTE`.
+  `channels::UNSEEN_NOTE`, or, in the chat of someone the user trusts,
+  `GUEST_UNSEEN_NOTE` (type it out instead).
 - **UI** (`features/chat/photos.tsx`). The composer takes photos from `+` › Add photos,
   paste and drops anywhere on the chat (with a quiet overlay), shows removable
-  thumbnails, and, when the default model can't see, "This model can't see photos.
-  Choose one that can in Models." A sent message shows its photos above the bubble (one
+  thumbnails, and, when neither the default model nor the model for photos can see,
+  "This model can't see photos. Choose one that can, or one just for photos, in Models." A sent message shows its photos above the bubble (one
   in its own shape, several as a grid), opening in a lightbox; a message the model
   couldn't see says so under it. No model names outside Models.
 - **Later: voice and video.** The `kind` enum, the table (`kind`, `mime`, BLOB) and
