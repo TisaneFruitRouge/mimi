@@ -14,10 +14,11 @@ saved: boolean, calendar: string,
  */
 open_url: string | null, 
 /**
- * Invitations the user may send now (nothing has been emailed).
+ * Invitations the user may send now (Mimi emailed nothing; on Google calendars Google
+ * tells the guests itself, and `note` says so).
  */
 invitations: Array<InvitationOffer>, 
 /**
- * Something to tell the user, e.g. why the guests weren't added.
+ * Something to tell the user, e.g. whom Google invited, or why the guests weren't added.
  */
 note: string | null, };

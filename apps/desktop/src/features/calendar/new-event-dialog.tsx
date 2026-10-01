@@ -34,7 +34,8 @@ import { openExternal } from "@/lib/transport";
 
 /**
  * Adding an event by hand (`start` is where the user clicked, if they did), or changing
- * one (`event`). Guests are saved without anyone being emailed; once saved, the dialog
+ * one (`event`). On Google calendars Google invites the guests; elsewhere they're saved
+ * without anyone being emailed, and once saved, the dialog
  * offers to send the invitations.
  */
 export function NewEventDialog({
@@ -314,7 +315,9 @@ function NewEventForm({
             <Label>Guests</Label>
             <GuestsField value={guests} onChange={setGuests} />
             <p className="type-footnote text-faint">
-              Nobody is emailed when you save. You can send the invitations next.
+              {calendar?.google && calendar.writable
+                ? "Google emails them the invitation when you save, and it shows in their calendar."
+                : "Nobody is emailed when you save. You can send the invitations next."}
             </p>
           </div>
         ) : (

@@ -616,12 +616,21 @@ sign-in, reads, writes, rules and revocation against `google_fake.rs`.
 
 ### Guests and invitations
 
-Events can have guests (`guests.rs`), and no calendar service ever emails them for Mimi:
+Events can have guests (`guests.rs`). Only Google ever emails them, on the user's own
+Google events, so that an event shows in a guest's calendar as soon as they're added:
 
-- **Google**: `attendees` on insert and patch, and `sendUpdates=none` on every insert,
-  patch and delete. Google replaces the whole list on a patch, so guests who stay are
-  given back exactly as Google had them (answers included). The organizer is the
-  calendar itself.
+- **Google**: `attendees` on insert and patch. A write of the user's own event that has
+  guests (before or after) passes `sendUpdates=all`: Google emails the invitation, the
+  change or the cancellation and puts the event in Google guests' calendars (as their
+  "Add invitations to my calendar" setting allows), exactly as saving with "Send" in
+  Google Calendar does. No offer is made; the answer's `note` says whom Google told
+  (`invite::told_note`), and the approval card's `email_note` says so beforehand. Every
+  other write passes `sendUpdates=none`, including a trusted person's when any guest it
+  reaches is someone the user doesn't know (`tools::google_may_tell` with `mail::known`):
+  they approve their own requests, so they mustn't make Google write to strangers in the
+  user's name. Adding guests the user doesn't know still asks first, as before. Google
+  replaces the whole list on a patch, so guests who stay are given back exactly as
+  Google had them (answers included). The organizer is the calendar itself.
 - **CalDAV**: `ORGANIZER` is the user's address for the account (the username when it's
   an address, else the first email account; without either, an event is saved without
   its guests and the answer says why) and each guest an `ATTENDEE` with `CN`,
@@ -637,7 +646,8 @@ Events can have guests (`guests.rs`), and no calendar service ever emails them f
   (`guests::is_mine`: no organizer, or one of their addresses, or Google's `self`), and
   one occurrence of a repeating event at a time (an override keeps the series' guests).
 
-Every write that could concern guests leaves *offers* (`invite.rs`, table
+Every quiet write that could concern guests (CalDAV, or Google without `sendUpdates`)
+leaves *offers* (`invite.rs`, table
 `calendar_invitations`, migration 0022): a snapshot of the event and who could be told.
 Adding gives an invitation; a change gives the invitation to new guests, the new details
 to guests who stay (only if the title, time, place or notes changed) and a withdrawn
@@ -647,7 +657,8 @@ says so): the message would need the series' rules. Nothing is sent until the us
 clicks (the Calendar panel's dialogs and toasts, or the button on the chat's card; `POST
 /calendar/invitations/{id}/send`) or the assistant's `calendar_send_invitations` runs
 under the `send_mail` permission. The tools' results say plainly that nothing was
-emailed, name the guests and tell the model to ask.
+emailed, name the guests and tell the model to ask. "Send invitations…" on any event,
+Google ones included, makes a fresh offer, for sending Mimi's own email anyway.
 
 Sending is one iMIP message (RFC 6047) per offer, to all its recipients: one copy in
 Sent of exactly what everyone got, and calendar apps find their own `ATTENDEE` in it

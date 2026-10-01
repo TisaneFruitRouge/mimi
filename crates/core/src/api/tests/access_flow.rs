@@ -867,3 +867,98 @@ fn trusted_people_open_direct_chats_but_not_groups() {
         crate::channels::replies::line(connection, EVE_ROOM)
     );
 }
+
+/// On Google, a trusted person adding themselves as a guest gets Google's invitation, so
+/// the event shows in their own calendar. They approve their own requests, so Google
+/// writes only to people the owner knows: a stranger they approve is added quietly.
+#[tokio::test]
+async fn google_invites_a_trusted_persons_guests_only_when_the_owner_knows_them() {
+    let llm = scripted_llm(|req, _| {
+        let last = req["messages"].as_array().unwrap().last().unwrap().clone();
+        if last["role"] == "tool" {
+            return Reply::Text("Done.");
+        }
+        let asked = last["content"].as_str().unwrap_or_default().to_owned();
+        if asked.contains("me as a guest") {
+            Reply::Call(
+                "calendar_add_event",
+                json!({"title": "Train to Strasbourg", "start": "2026-12-24T10:54",
+                       "end": "2026-12-24T12:52", "calendar": "Family",
+                       "guests": ["maya@example.org"]}),
+            )
+        } else if asked.contains("my friend") {
+            Reply::Call(
+                "calendar_add_event",
+                json!({"title": "Drinks", "start": "2026-12-26T18:00",
+                       "end": "2026-12-26T20:00", "calendar": "Family",
+                       "guests": ["stranger@example.net"]}),
+            )
+        } else {
+            Reply::Text("Hello!")
+        }
+    })
+    .await;
+    let w = World::new(&llm).await;
+    // Her email is in People, added by hand: someone the owner knows.
+    let (status, _) =
+        w.h.call(
+            reqwest::Method::POST,
+            &format!("/people/{}/handles", w.maya),
+            json!({"channel": "email", "value": "maya@example.org"}),
+        )
+        .await;
+    assert_eq!(status, 200);
+    w.access(json!({"enabled": true, "calendars": [w.family], "approver": "guest"}))
+        .await;
+    let (status, _) =
+        w.h.call(
+            reqwest::Method::PUT,
+            "/permissions/add_events",
+            json!({"autonomy": "automatic", "rules": []}),
+        )
+        .await;
+    assert_eq!(status, 200);
+    let family = "family@group.calendar.google.com";
+    let event = |title: &'static str| {
+        let google = w.google.clone();
+        move || {
+            google.lock().unwrap().events[family]
+                .iter()
+                .any(|e| e["summary"] == title)
+        }
+    };
+    let last_write = || w.google.lock().unwrap().writes.last().unwrap().clone();
+
+    // Herself: known, so added on its own, and Google invites her.
+    w.arrives(MAYA_ROOM, MAYA, "Add the train with me as a guest", true)
+        .await;
+    until("the train", event("Train to Strasbourg")).await;
+    assert_eq!(last_write().0, "insert");
+    assert_eq!(last_write().2.as_deref(), Some("all"));
+    until("her answer", || w.to_maya().iter().any(|m| m == "Done.")).await;
+    let results = tool_results(llm.requests().last().unwrap()).join("\n");
+    assert!(
+        results.contains("Google emailed maya@example.org"),
+        "{results}"
+    );
+
+    // A stranger waits for her yes, and even then Google tells nobody.
+    let prompts = || {
+        w.to_maya()
+            .iter()
+            .filter(|m| m.starts_with("Waiting for you"))
+            .count()
+    };
+    w.arrives(MAYA_ROOM, MAYA, "Add drinks with my friend", true)
+        .await;
+    until("her approval prompt", || prompts() == 1).await;
+    w.arrives(MAYA_ROOM, MAYA, "yes", true).await;
+    until("the drinks", event("Drinks")).await;
+    assert_eq!(last_write().2.as_deref(), Some("none"));
+    until("her second answer", || {
+        w.to_maya().iter().filter(|m| *m == "Done.").count() == 2
+    })
+    .await;
+    let results = tool_results(llm.requests().last().unwrap()).join("\n");
+    assert!(results.contains("Nothing was emailed"), "{results}");
+}

@@ -21,7 +21,8 @@ const EMAIL = /^[^\s@<>",;:]+@[^\s@<>",;:]+\.[^\s@<>",;:]+$/;
 /**
  * Guests as removable chips, and a field that suggests people from People by name or
  * address (each of their addresses) or takes an address typed out. Nobody is emailed
- * from here: that is offered once the event is saved.
+ * from here: on saving, Google invites them on Google calendars, and elsewhere sending
+ * is offered once the event is saved.
  */
 export function GuestsField({
   value,

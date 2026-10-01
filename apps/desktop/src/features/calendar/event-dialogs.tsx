@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Send } from "lucide-react";
 import { toast } from "sonner";
 
@@ -124,7 +124,8 @@ function SendInvitations({ event, onDone }: { event: CalendarEvent; onDone: () =
 
 /**
  * Deleting an event, confirmed first. A repeating one asks which: this time or every
- * time. Guests aren't emailed; a toast offers to tell them afterwards.
+ * time. On Google calendars Google tells the guests; elsewhere they aren't emailed, and a
+ * toast offers to tell them afterwards.
  */
 export function DeleteEventDialog({ event, onClose }: { event: CalendarEvent | null; onClose: () => void }) {
   const qc = useQueryClient();
@@ -141,6 +142,10 @@ export function DeleteEventDialog({ event, onClose }: { event: CalendarEvent | n
       .catch((e) => toast.error((e as Error).message));
   };
   const guests = event ? canInvite(event) : false;
+  const calendars = useQuery({ queryKey: keys.calendars, queryFn: api.calendars }).data ?? [];
+  const calendar = calendars.find((c) => c.id === event?.calendar_id);
+  // Signed in to Google: Google tells the guests itself.
+  const google = !!calendar?.google && calendar.writable;
   return (
     <AlertDialog open={!!event} onOpenChange={(o) => !o && onClose()}>
       <AlertDialogContent>
@@ -150,7 +155,8 @@ export function DeleteEventDialog({ event, onClose }: { event: CalendarEvent | n
             {event?.repeats
               ? "It repeats. Delete only this time, or every time?"
               : `It's removed from ${event?.calendar}.`}
-            {guests && " Your guests aren't emailed: you can tell them next."}
+            {guests &&
+              (google ? " Google tells your guests it's cancelled." : " Your guests aren't emailed: you can tell them next.")}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

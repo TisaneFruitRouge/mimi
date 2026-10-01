@@ -119,10 +119,11 @@ pub struct CreatedEvent {
     pub calendar: String,
     /// For Google calendars: the pre-filled page where the user presses Save.
     pub open_url: Option<String>,
-    /// Invitations the user may send now (nothing has been emailed).
+    /// Invitations the user may send now (Mimi emailed nothing; on Google calendars Google
+    /// tells the guests itself, and `note` says so).
     #[serde(default)]
     pub invitations: Vec<InvitationOffer>,
-    /// Something to tell the user, e.g. why the guests weren't added.
+    /// Something to tell the user, e.g. whom Google invited, or why the guests weren't added.
     #[serde(default)]
     pub note: Option<String>,
 }
@@ -159,9 +160,10 @@ pub struct EventChanged {
     /// The occurrence's id afterwards (it changes when the event moves); None once
     /// removed.
     pub event_id: Option<String>,
-    /// Messages the user may send the guests now (nothing has been emailed).
+    /// Messages the user may send the guests now (Mimi emailed nothing; on Google calendars
+    /// Google tells the guests itself, and `note` says so).
     pub invitations: Vec<InvitationOffer>,
-    /// Something to tell the user, e.g. why the guests weren't told.
+    /// Something to tell the user, e.g. whom Google told, or why the guests weren't told.
     pub note: Option<String>,
 }
 

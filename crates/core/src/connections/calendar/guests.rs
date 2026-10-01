@@ -1,11 +1,13 @@
 //! Guests on events: who they are (an address, or someone from People), how they're
 //! written into iCalendar data, and whose events the user may invite people to.
 //!
-//! Calendars never email guests on Mimi's behalf: Google writes are made with
-//! `sendUpdates=none`, and CalDAV attendees carry `SCHEDULE-AGENT=CLIENT` (RFC 6638), which
+//! On Google calendars, Google tells the guests itself (`sendUpdates=all`): the invitation,
+//! changes and cancellations, so the event shows in their calendars as soon as they're
+//! added. Only a trusted person's write to someone the user doesn't know stays quiet
+//! (`sendUpdates=none`). CalDAV attendees carry `SCHEDULE-AGENT=CLIENT` (RFC 6638), which
 //! tells servers such as iCloud, Fastmail and Nextcloud that the client does the
-//! scheduling. Invitations go out only through Mimi's own mail (`invite.rs`), when the
-//! user says so.
+//! scheduling: there, and for those quiet Google writes, invitations go out only through
+//! Mimi's own mail (`invite.rs`), when the user says so.
 
 use std::collections::HashSet;
 

@@ -4641,7 +4641,7 @@ mod calendar_guests {
     }
 
     #[tokio::test]
-    async fn guests_are_saved_quietly_and_invited_only_when_the_user_says_so() {
+    async fn google_tells_guests_itself_and_mimi_can_still_email_them() {
         let (h, google, mail) = setup(None).await;
         let (_, cals) = h
             .call(reqwest::Method::GET, "/calendars", Value::Null)
@@ -4649,7 +4649,8 @@ mod calendar_guests {
         assert_eq!(cals[0]["guests"], true);
         let calendar = cals[0]["id"].clone();
 
-        // Added from the panel with two guests: Google has them, and emailed nobody.
+        // Added from the panel with two guests: Google has them and invites them itself,
+        // so the event shows in their calendars. Mimi emails nothing and offers nothing.
         let (status, created) = h
             .call(
                 reqwest::Method::POST,
@@ -4668,21 +4669,13 @@ mod calendar_guests {
             .map(|a| a["email"].as_str().unwrap())
             .collect();
         assert_eq!(emails, ["sam@example.com", "lea@example.com"]);
-        let offer = created["invitations"][0].clone();
-        assert_eq!(offer["kind"], "invite");
-        assert_eq!(offer["guests"].as_array().unwrap().len(), 2);
-        assert_eq!(offer["from"], ME);
-        assert_eq!(
-            offer["from_note"],
-            Value::Null,
-            "sent from the organizer's own account"
-        );
-        assert_eq!(offer["sent_at"], Value::Null);
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(created["invitations"], json!([]));
+        let note = created["note"].as_str().unwrap();
         assert!(
-            mail.sent().is_empty(),
-            "nothing is emailed until the user says so"
+            note.starts_with("Google emailed Sam Carter") && note.contains("lea@example.com"),
+            "{note}"
         );
+        assert_eq!(google.lock().unwrap().writes[0].2.as_deref(), Some("all"));
 
         // The event shows its guests, and it's the user's own.
         let (_, events) = h
@@ -4697,7 +4690,52 @@ mod calendar_guests {
         assert_eq!(event["attendees"][0]["email"], "sam@example.com");
         let event_id = event["id"].as_str().unwrap().to_owned();
 
-        // The user's click sends one standard invitation to both, from their account.
+        // Moved: Google tells them.
+        let path = format!("/calendar/events/{}", encoded(&event_id));
+        let (status, changed) = h
+            .call(
+                reqwest::Method::PATCH,
+                &path,
+                json!({"start": at(2, 18), "end": at(2, 20)}),
+            )
+            .await;
+        assert_eq!(status, 200, "{changed}");
+        assert_eq!(changed["invitations"], json!([]));
+        assert!(
+            changed["note"]
+                .as_str()
+                .unwrap()
+                .contains("about the change"),
+            "{changed}"
+        );
+
+        // Renamed, then the user sends Mimi's own invitation ("Send invitations…"):
+        // one standard email to both, from their account, at a version above Google's,
+        // which doesn't count renames.
+        let event_id = changed["event_id"].as_str().unwrap().to_owned();
+        let path = format!("/calendar/events/{}", encoded(&event_id));
+        let (status, _) = h
+            .call(
+                reqwest::Method::PATCH,
+                &path,
+                json!({"title": "Dinner at Sam's"}),
+            )
+            .await;
+        assert_eq!(status, 200);
+        let (status, offer) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("{path}/invitations"),
+                json!({}),
+            )
+            .await;
+        assert_eq!(status, 200, "{offer}");
+        assert_eq!(offer["kind"], "invite");
+        assert_eq!(offer["from"], ME);
+        assert_eq!(offer["from_note"], Value::Null);
+        assert_eq!(offer["sent_at"], Value::Null);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(mail.sent().is_empty(), "Mimi emailed nobody on its own");
         let (status, sent) = send(&h, &offer).await;
         assert_eq!(status, 200, "{sent}");
         assert!(sent["sent_at"].is_number());
@@ -4709,10 +4747,7 @@ mod calendar_guests {
         assert_eq!(to, ["lea@example.com", "sam@example.com"]);
         assert!(out[0].data.contains("method=REQUEST"), "{}", out[0].data);
         let ics = calendar_data(&out[0].data);
-        assert!(
-            ics.contains("METHOD:REQUEST") && ics.contains("SEQUENCE:0"),
-            "{ics}"
-        );
+        assert!(ics.contains("METHOD:REQUEST"), "{ics}");
         assert!(ics.contains("UID:new"), "the UID Google gave it: {ics}");
         assert!(ics.contains(&format!("ORGANIZER:mailto:{ME}")));
         // Filed in Sent like any other email.
@@ -4720,7 +4755,7 @@ mod calendar_guests {
             if mail
                 .raw_messages("Sent")
                 .iter()
-                .any(|m| m.contains("Invitation: Dinner"))
+                .any(|m| m.contains("Invitation: Dinner at Sam's"))
             {
                 break;
             }
@@ -4729,48 +4764,13 @@ mod calendar_guests {
         assert!(
             mail.raw_messages("Sent")
                 .iter()
-                .any(|m| m.contains("Invitation: Dinner"))
+                .any(|m| m.contains("Invitation: Dinner at Sam's"))
         );
         // Once only.
         assert_eq!(send(&h, &offer).await.0, 400);
         assert_eq!(mail.sent().len(), 1);
 
-        // Moved: the guests may be told, with a newer version.
-        let path = format!("/calendar/events/{}", encoded(&event_id));
-        let (status, changed) = h
-            .call(
-                reqwest::Method::PATCH,
-                &path,
-                json!({"start": at(2, 18), "end": at(2, 20)}),
-            )
-            .await;
-        assert_eq!(status, 200, "{changed}");
-        let update = changed["invitations"][0].clone();
-        assert_eq!(update["kind"], "update");
-        assert_eq!(changed["invitations"].as_array().unwrap().len(), 1);
-        assert_eq!(mail.sent().len(), 1, "still nothing sent on its own");
-        assert_eq!(send(&h, &update).await.0, 200);
-        let ics = calendar_data(&mail.sent()[1].data);
-        assert!(
-            ics.contains("SEQUENCE:1") && ics.contains("DTSTART:20261002T180000Z"),
-            "{ics}"
-        );
-
-        // Renamed: Google doesn't count that as a new version; the guests' copy must.
-        let event_id = changed["event_id"].as_str().unwrap().to_owned();
-        let path = format!("/calendar/events/{}", encoded(&event_id));
-        let (_, renamed) = h
-            .call(
-                reqwest::Method::PATCH,
-                &path,
-                json!({"title": "Dinner at Sam's"}),
-            )
-            .await;
-        assert_eq!(send(&h, &renamed["invitations"][0]).await.0, 200);
-        let ics = calendar_data(&mail.sent()[2].data);
-        assert!(ics.contains("SEQUENCE:2"), "{ics}");
-
-        // Léa is taken off: only she may be told, and Sam stays on as he was.
+        // Léa is taken off: Google tells her, and Sam stays on as he was.
         let (_, removed) = h
             .call(
                 reqwest::Method::PATCH,
@@ -4778,38 +4778,34 @@ mod calendar_guests {
                 json!({"guests": ["sam@example.com"]}),
             )
             .await;
-        let offers = removed["invitations"].as_array().unwrap().clone();
-        assert_eq!(offers.len(), 1, "{removed}");
-        assert_eq!(offers[0]["kind"], "uninvite");
-        assert_eq!(offers[0]["guests"][0]["email"], "lea@example.com");
+        assert_eq!(removed["invitations"], json!([]), "{removed}");
+        assert!(
+            removed["note"]
+                .as_str()
+                .unwrap()
+                .contains("lea@example.com"),
+            "{removed}"
+        );
         let attendees = google.lock().unwrap().events[ME][0]["attendees"].clone();
         assert_eq!(
             attendees,
             json!([{"email": "sam@example.com", "displayName": "Sam Carter"}])
         );
 
-        // Deleted: Sam may be told it's cancelled.
+        // Deleted: Google tells Sam it's cancelled.
         let (status, gone) = h.call(reqwest::Method::DELETE, &path, Value::Null).await;
         assert_eq!(status, 200, "{gone}");
-        let cancel = gone["invitations"][0].clone();
-        assert_eq!(cancel["kind"], "cancel");
-        assert_eq!(send(&h, &cancel).await.0, 200);
-        let last = mail.sent().last().unwrap().clone();
-        assert_eq!(last.to, ["sam@example.com"]);
-        let ics = calendar_data(&last.data);
-        assert!(
-            ics.contains("METHOD:CANCEL") && ics.contains("SEQUENCE:3"),
-            "{ics}"
-        );
-        assert!(last.data.contains("method=CANCEL"));
+        assert_eq!(gone["invitations"], json!([]));
+        assert_eq!(gone["note"], "Google told Sam Carter it's cancelled.");
 
-        // Google was told to email nobody, every single time.
+        // Google was asked to tell the guests every time; Mimi sent the one email asked.
         let writes = google.lock().unwrap().writes.clone();
         assert_eq!(writes.len(), 5, "{writes:?}");
         assert!(
-            writes.iter().all(|(_, _, s)| s.as_deref() == Some("none")),
+            writes.iter().all(|(_, _, s)| s.as_deref() == Some("all")),
             "{writes:?}"
         );
+        assert_eq!(mail.sent().len(), 1);
     }
 
     /// The id of the event the model added, from the tool's result.
@@ -4904,6 +4900,11 @@ mod calendar_guests {
             action.summary
         );
         assert_eq!(action.always_allow, None, "no shortcut for a stranger");
+        // The card says Google would email her.
+        assert_eq!(
+            action.arguments["email_note"],
+            "Google emails them the invitation, and it shows in their calendar."
+        );
         reject(&h, &action).await;
         // And so does a new event with her.
         let action = pending(&mut h, &id).await;
@@ -4922,18 +4923,22 @@ mod calendar_guests {
             json!(["Sam Carter <sam@example.com>"])
         );
         let output = lunch.output.clone().unwrap();
-        assert_eq!(output["invitations"][0]["kind"], "invite");
+        assert_eq!(
+            output["invitations"],
+            Value::Null,
+            "Google invited Sam itself"
+        );
         assert!(
-            output["next"]
+            output["note"]
                 .as_str()
                 .unwrap()
-                .contains("Nothing was emailed"),
+                .starts_with("Google emailed Sam Carter the invitation"),
             "{output}"
         );
         assert_eq!(reply.actions[2].status, ActionStatus::Rejected);
         assert_eq!(reply.actions[3].status, ActionStatus::Rejected);
 
-        // Only Sam is on anything, and nobody got an email.
+        // Only Sam is on anything: Google invited him, Mimi emailed nobody.
         let events = google.lock().unwrap().events[ME].clone();
         assert_eq!(events.len(), 1);
         assert_eq!(
@@ -4941,12 +4946,12 @@ mod calendar_guests {
             json!([{"email": "sam@example.com", "displayName": "Sam Carter"}])
         );
         assert!(mail.sent().is_empty());
-        // The model was told to ask, with the guest's name.
+        let writes = google.lock().unwrap().writes.clone();
+        assert_eq!(writes.len(), 1, "{writes:?}");
+        assert_eq!(writes[0].2.as_deref(), Some("all"));
+        // The model was told whom Google invited.
         let asked = llm.requests()[2]["messages"].to_string();
-        assert!(
-            asked.contains("Ask the user whether to send the invitation to Sam Carter"),
-            "{asked}"
-        );
+        assert!(asked.contains("Google emailed Sam Carter"), "{asked}");
     }
 
     /// `calendar_send_invitations` is sending mail: it asks by default, and even when
@@ -4993,7 +4998,25 @@ mod calendar_guests {
                        "guests": ["sam@example.com", "mallory@example.net"]}),
             )
             .await;
-        let offer = created["invitations"][0]["id"].as_str().unwrap().to_owned();
+        assert_eq!(created["invitations"], json!([]), "Google invited them");
+        // Mimi's own invitation, from "Send invitations…" on the event.
+        let (_, events) = h
+            .call(
+                reqwest::Method::GET,
+                &format!("/calendar/events?from={}&to={}", at(9, 0), at(10, 0)),
+                Value::Null,
+            )
+            .await;
+        let event_id = events["events"][0]["id"].as_str().unwrap().to_owned();
+        let (status, offer) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/calendar/events/{}/invitations", encoded(&event_id)),
+                json!({}),
+            )
+            .await;
+        assert_eq!(status, 200, "{offer}");
+        let offer = offer["id"].as_str().unwrap().to_owned();
         let (status, _) = h
             .call(
                 reqwest::Method::PUT,

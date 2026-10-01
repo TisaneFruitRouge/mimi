@@ -216,17 +216,24 @@ than inventing their own.
   (`calendar/edit.rs`). Recurrence is expanded locally (`calendar/ics.rs`) for iCal and
   CalDAV, by Google itself for signed-in Google. Setup notes: `docs/google-oauth.md`.
 - **Guests** (`calendar/guests.rs`, `calendar/invite.rs`; details in `docs/architecture.md`
-  › Calendars › Guests and invitations): calendars never email anyone. Google writes
-  always pass `sendUpdates=none`; CalDAV writes `ORGANIZER` (the CalDAV username when
+  › Calendars › Guests and invitations): on signed-in Google calendars, Google tells the
+  guests itself: writes of the user's own events with guests pass `sendUpdates=all`
+  (invitation, change, cancellation), so the event shows in their calendars as soon as
+  they're added, and no offer is made; the result's note says whom Google told, and the
+  approval card's `email_note` says so beforehand. A trusted person approves their own
+  requests, so their writes notify only when the user knows every guest
+  (`tools::google_may_tell`, `mail::known`), else they pass `sendUpdates=none` like
+  everything else. CalDAV calendars never email anyone: CalDAV writes `ORGANIZER` (the CalDAV username when
   it's an address, else the first email account; without one, no guests, and the note
   says why) and `ATTENDEE`s with `SCHEDULE-AGENT=CLIENT`, and `edit::quiet` adds that
   to existing guests of the user's own events before any write or delete. Guests who
   stay keep their entry (answer included). Guests come as addresses, person ids, or a
   name only when it comes down to one address (`guests::resolve`: never a guess). They
   change only on events the user organizes (`CalendarEvent.mine`), one occurrence of a
-  series at a time. Each write with guests records *offers* (`calendar_invitations`,
+  series at a time. Each quiet write with guests records *offers* (`calendar_invitations`,
   migration 0022: invite, update, cancel, uninvite) that the user sends with a click or
-  the assistant with `calendar_send_invitations`; RSVPs aren't processed.
+  the assistant with `calendar_send_invitations`; "Send invitations…" makes a fresh one
+  for any event, Google ones included. RSVPs aren't processed.
 - Telegram is a bot the user creates with @BotFather, long-polled (nothing listens for
   inbound connections). A one-time `/start <code>` pairs it with its owner; every other
   chat is ignored. Messages go into a "Telegram" conversation; approval cards are sent as

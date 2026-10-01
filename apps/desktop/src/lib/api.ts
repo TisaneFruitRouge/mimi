@@ -253,10 +253,10 @@ export const api = {
   events: (from: number, to: number) =>
     call<CalendarEvents>("GET", `/calendar/events?from=${from}&to=${to}`),
   addEvent: (e: NewCalendarEvent) => call<CreatedEvent>("POST", "/calendar/events", e),
-  /** Changes one occurrence; only the fields given change. Nobody is emailed. */
+  /** Changes one occurrence; only the fields given change. Only Google tells guests. */
   changeEvent: (id: string, change: EventChange) =>
     call<EventChanged>("PATCH", `/calendar/events/${encodeURIComponent(id)}`, change),
-  /** Removes one occurrence, or (`all`) the whole repeating event. Nobody is emailed. */
+  /** Removes one occurrence, or (`all`) the whole repeating event. Only Google tells guests. */
   removeEvent: (id: string, all = false) =>
     call<EventChanged>(
       "DELETE",

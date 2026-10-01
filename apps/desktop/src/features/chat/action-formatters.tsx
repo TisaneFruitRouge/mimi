@@ -18,7 +18,7 @@ type Formatter = {
 export const formatters: Record<string, Formatter> = {
   // Guests are listed one per line: an event with them reaches each of them.
   calendar_add_event: {
-    keys: ["title", "start", "end", "calendar", "location", "notes", "guests", "guests_note"],
+    keys: ["title", "start", "end", "calendar", "location", "notes", "guests", "guests_note", "email_note"],
     rows: (a) => {
       const rows: ArgRow[] = [{ label: "Event", value: text(a.title) }];
       rows.push({ label: "When", value: when(text(a.start), present(a.end) ? text(a.end) : null) });
@@ -27,7 +27,12 @@ export const formatters: Record<string, Formatter> = {
       if (present(a.guests)) rows.push({ label: "Guests", value: lines(a.guests) });
       if (present(a.guests_note)) rows.push({ label: "Guests", value: text(a.guests_note) });
       if (present(a.notes)) rows.push({ label: "Notes", value: text(a.notes) });
-      if (present(a.guests)) rows.push({ label: "Email", value: "Nobody is emailed. You can send the invitations after." });
+      // The daemon says how the guests hear of it (Google invites them, or nobody does).
+      if (present(a.guests))
+        rows.push({
+          label: "Email",
+          value: present(a.email_note) ? text(a.email_note) : "Nobody is emailed. You can send the invitations after.",
+        });
       return rows;
     },
   },
@@ -51,6 +56,7 @@ export const formatters: Record<string, Formatter> = {
       "add_guests",
       "remove_guests",
       "guests",
+      "email_note",
     ],
     rows: (a) => {
       const rows: ArgRow[] = [
@@ -68,7 +74,8 @@ export const formatters: Record<string, Formatter> = {
       if (present(a.add_guests)) rows.push({ label: "Invite", value: lines(a.add_guests) });
       if (present(a.remove_guests)) rows.push({ label: "Take off", value: lines(a.remove_guests) });
       if (present(a.guests)) rows.push({ label: "Guests after", value: lines(a.guests) });
-      if (present(a.add_guests) || present(a.remove_guests))
+      if (present(a.email_note)) rows.push({ label: "Email", value: text(a.email_note) });
+      else if (present(a.add_guests) || present(a.remove_guests))
         rows.push({ label: "Email", value: "Nobody is emailed. You can tell them after." });
       return rows;
     },

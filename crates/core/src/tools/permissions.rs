@@ -117,7 +117,7 @@ pub const KINDS: &[Kind] = &[
         id: "add_events",
         title: "Add calendar events",
         ask_detail: "Shows you each event to approve before it's added.",
-        automatic_detail: "Adds events to your calendars on its own. Invitations are only emailed when you say so.",
+        automatic_detail: "Adds events to your calendars on its own. On Google calendars, Google invites the guests; still asks before inviting anyone new.",
         note: Some(
             "An event with a guest who isn't in your contacts and hasn't had an email from you always waits for your OK.",
         ),
@@ -133,7 +133,7 @@ pub const KINDS: &[Kind] = &[
         id: "change_events",
         title: "Change or remove calendar events",
         ask_detail: "Shows you each change or removal to approve first.",
-        automatic_detail: "Moves, renames and removes events on its own. Guests are only emailed when you say so.",
+        automatic_detail: "Moves, renames and removes events on its own. On Google calendars, Google tells the guests.",
         note: Some(
             "Inviting someone who isn't in your contacts and hasn't had an email from you always waits for your OK.",
         ),

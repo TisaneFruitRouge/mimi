@@ -354,7 +354,7 @@ pub struct NewEvent {
     pub all_day: bool,
     pub location: Option<String>,
     pub notes: Option<String>,
-    /// People invited. Nobody is emailed by the calendar service.
+    /// People invited. Only Google tells them itself, when the write says so (`notify`).
     #[serde(default)]
     pub guests: Vec<guests::Guest>,
     /// The user's address, as the organizer of an event with guests (CalDAV; Google
@@ -463,11 +463,14 @@ pub enum Created {
     OpenToSave { url: String },
 }
 
+/// Adds an event. With `notify`, Google emails its guests the invitation itself; other
+/// calendars never tell anyone.
 pub async fn create(
     http: &reqwest::Client,
     cache: &FeedCache,
     target: &Target,
     event: &NewEvent,
+    notify: bool,
 ) -> Result<Created, String> {
     match target {
         Target::Google { .. } => Ok(Created::OpenToSave {
@@ -482,10 +485,17 @@ pub async fn create(
             if !calendar.writable {
                 return Err("You can only read that calendar.".to_owned());
             }
-            let (uid, ical_uid) =
-                google::insert(&cache.google, http, *account, config, calendar, event)
-                    .await
-                    .map_err(|e| e.to_string())?;
+            let (uid, ical_uid) = google::insert(
+                &cache.google,
+                http,
+                *account,
+                config,
+                calendar,
+                event,
+                notify,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
             Ok(Created::Saved {
                 calendar: calendar.name.clone(),
                 uid,
@@ -622,9 +632,17 @@ async fn dav_object(
         .ok_or_else(|| "That event isn't in the calendar anymore.".to_owned())
 }
 
+/// How a write treats an event's guests: who the user is (`me`), and whether Google tells
+/// the guests itself (`notify`). Otherwise nobody is emailed by the calendar service:
+/// Google is told not to, and CalDAV guests of the user's own events are marked as
+/// handled by the client (`edit::quiet`).
+#[derive(Clone, Copy)]
+pub struct Guests<'a> {
+    pub me: &'a HashSet<String>,
+    pub notify: bool,
+}
+
 /// Changes an event: this occurrence only, or (`whole`) the whole event or series.
-/// Nobody is emailed by the calendar service: Google is told not to, and CalDAV guests
-/// of the user's own events (`me`) are marked as handled by the client (`edit::quiet`).
 pub async fn change_event(
     http: &reqwest::Client,
     cache: &FeedCache,
@@ -632,7 +650,7 @@ pub async fn change_event(
     r: &EventRef,
     whole: bool,
     changes: &edit::Changes,
-    me: &HashSet<String>,
+    guests: Guests<'_>,
 ) -> Result<(), String> {
     let target = all_targets(accounts)
         .into_iter()
@@ -665,24 +683,21 @@ pub async fn change_event(
             } else {
                 found.id
             };
-            google::patch(
-                &cache.google,
-                http,
-                *account,
-                config,
-                calendar,
-                &id,
-                &google::patch_fields(changes, &found.attendees),
-            )
-            .await
-            .map_err(|e| e.to_string())
+            let patch = google::Patch {
+                event_id: &id,
+                fields: google::patch_fields(changes, &found.attendees),
+                notify: guests.notify,
+            };
+            google::patch(&cache.google, http, *account, config, calendar, patch)
+                .await
+                .map_err(|e| e.to_string())
         }
         Target::CalDav {
             config, calendar, ..
         } => {
             let (object, found) = dav_object(config, calendar, r).await?;
             let data = edit::change(&object.data, &r.uid, found, whole, changes, &Local)?;
-            let data = edit::quiet(&data, &r.uid, me)?.unwrap_or(data);
+            let data = edit::quiet(&data, &r.uid, guests.me)?.unwrap_or(data);
             CalDav::new(&config.username, &config.password)
                 .replace(&object, data)
                 .await
@@ -692,14 +707,14 @@ pub async fn change_event(
 }
 
 /// Removes an event: this occurrence only, or (`whole`) the whole event or series.
-/// As with changes, the calendar service tells nobody.
+/// As with changes, only Google tells the guests, and only with `notify`.
 pub async fn remove_event(
     http: &reqwest::Client,
     cache: &FeedCache,
     accounts: &[Account],
     r: &EventRef,
     whole: bool,
-    me: &HashSet<String>,
+    guests: Guests<'_>,
 ) -> Result<(), String> {
     let target = all_targets(accounts)
         .into_iter()
@@ -729,9 +744,17 @@ pub async fn remove_event(
             } else {
                 found.id
             };
-            google::delete(&cache.google, http, *account, config, calendar, &id)
-                .await
-                .map_err(|e| e.to_string())
+            google::delete(
+                &cache.google,
+                http,
+                *account,
+                config,
+                calendar,
+                &id,
+                guests.notify,
+            )
+            .await
+            .map_err(|e| e.to_string())
         }
         Target::CalDav {
             config, calendar, ..
@@ -741,13 +764,13 @@ pub async fn remove_event(
             match found.occurrence {
                 Some(occurrence) if found.repeats && !whole => {
                     let data = edit::remove_occurrence(&object.data, &r.uid, occurrence, &Local)?;
-                    let data = edit::quiet(&data, &r.uid, me)?.unwrap_or(data);
+                    let data = edit::quiet(&data, &r.uid, guests.me)?.unwrap_or(data);
                     client.replace(&object, data).await
                 }
                 _ => {
                     // A server would tell guests it isn't told to leave alone that the
                     // event is cancelled: say so first, then remove it.
-                    let object = match edit::quiet(&object.data, &r.uid, me)? {
+                    let object = match edit::quiet(&object.data, &r.uid, guests.me)? {
                         None => object,
                         Some(quiet) => {
                             client
@@ -826,6 +849,11 @@ mod tests {
     use chrono::TimeZone;
 
     use super::*;
+
+    /// A write that tells nobody, for a user with these addresses.
+    fn quiet(me: &HashSet<String>) -> Guests<'_> {
+        Guests { me, notify: false }
+    }
 
     #[test]
     fn ics_urls() {
@@ -1088,7 +1116,7 @@ ATTENDEE:mailto:nobody\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
             ..Default::default()
         };
         assert!(matches!(
-            create(&http, &cache, &target, &event).await.unwrap(),
+            create(&http, &cache, &target, &event, false).await.unwrap(),
             Created::Saved { .. }
         ));
         // A weekly series.
@@ -1142,7 +1170,7 @@ END:VEVENT\r\nEND:VCALENDAR\r\n";
             &r,
             false,
             &changes,
-            &HashSet::new(),
+            quiet(&HashSet::new()),
         )
         .await
         .unwrap();
@@ -1181,7 +1209,7 @@ END:VEVENT\r\nEND:VCALENDAR\r\n";
             &second,
             false,
             &later,
-            &HashSet::new(),
+            quiet(&HashSet::new()),
         )
         .await
         .unwrap();
@@ -1190,9 +1218,16 @@ END:VEVENT\r\nEND:VCALENDAR\r\n";
             uid: standups[2].uid.clone(),
             start: standups[2].start,
         };
-        remove_event(&http, &cache, &accounts, &third, false, &HashSet::new())
-            .await
-            .unwrap();
+        remove_event(
+            &http,
+            &cache,
+            &accounts,
+            &third,
+            false,
+            quiet(&HashSet::new()),
+        )
+        .await
+        .unwrap();
         let events = read(at(1, 0), at(31, 0)).await;
         let starts: Vec<_> = events
             .iter()
@@ -1221,7 +1256,7 @@ END:VEVENT\r\nEND:VCALENDAR\r\n";
                 &first,
                 true,
                 &later,
-                &HashSet::new()
+                quiet(&HashSet::new()),
             )
             .await
             .is_err()
@@ -1237,22 +1272,36 @@ END:VEVENT\r\nEND:VCALENDAR\r\n";
             &first,
             true,
             &renamed,
-            &HashSet::new(),
+            quiet(&HashSet::new()),
         )
         .await
         .unwrap();
         // Then the whole series goes, and the single event too.
-        remove_event(&http, &cache, &accounts, &first, true, &HashSet::new())
-            .await
-            .unwrap();
+        remove_event(
+            &http,
+            &cache,
+            &accounts,
+            &first,
+            true,
+            quiet(&HashSet::new()),
+        )
+        .await
+        .unwrap();
         let moved_ref = EventRef {
             calendar_id: cid.clone(),
             uid: r.uid.clone(),
             start: at(3, 10),
         };
-        remove_event(&http, &cache, &accounts, &moved_ref, false, &HashSet::new())
-            .await
-            .unwrap();
+        remove_event(
+            &http,
+            &cache,
+            &accounts,
+            &moved_ref,
+            false,
+            quiet(&HashSet::new()),
+        )
+        .await
+        .unwrap();
         assert!(read(at(1, 0), at(31, 0)).await.is_empty());
 
         // An event with a guest: saved with the organizer, kept through a change (the
@@ -1270,7 +1319,7 @@ END:VEVENT\r\nEND:VCALENDAR\r\n";
             organizer: Some("mimi-test@example.org".into()),
             ..Default::default()
         };
-        create(&http, &cache, &target, &lunch).await.unwrap();
+        create(&http, &cache, &target, &lunch, false).await.unwrap();
         let found = read(at(6, 0), at(7, 0)).await;
         assert_eq!(found[0].attendees[0].email, "sam@example.com");
         assert_eq!(
@@ -1287,15 +1336,23 @@ END:VEVENT\r\nEND:VCALENDAR\r\n";
             title: Some("Lunch with Sam".into()),
             ..Default::default()
         };
-        change_event(&http, &cache, &accounts, &lunch_ref, false, &renamed, &me)
-            .await
-            .unwrap();
+        change_event(
+            &http,
+            &cache,
+            &accounts,
+            &lunch_ref,
+            false,
+            &renamed,
+            quiet(&me),
+        )
+        .await
+        .unwrap();
         let found = read(at(6, 0), at(7, 0)).await;
         assert_eq!(found[0].title, "Lunch with Sam");
         assert_eq!(found[0].attendees.len(), 1);
         let located = locate(&http, &cache, &accounts, &lunch_ref).await.unwrap();
         assert_eq!(located.sequence, 1);
-        remove_event(&http, &cache, &accounts, &lunch_ref, false, &me)
+        remove_event(&http, &cache, &accounts, &lunch_ref, false, quiet(&me))
             .await
             .unwrap();
         assert!(read(at(1, 0), at(31, 0)).await.is_empty());

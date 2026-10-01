@@ -184,8 +184,9 @@ pub async fn create(
         organizer: None,
     };
     // The user pressed "Add" themselves: this is their own action, not the assistant's.
-    // Nobody is emailed; the answer carries the invitations they may send.
-    let (created, outcome) = invite::add(&state, &target, event)
+    // Google invites the guests itself; elsewhere nobody is emailed, and the answer carries
+    // the invitations they may send.
+    let (created, outcome) = invite::add(&state, &target, event, true)
         .await
         .map_err(|e| AppError::bad_request(format!("Couldn't add the event: {e}")))?;
     let invitations = invite::views(&state, &outcome.offers).await;
@@ -218,7 +219,8 @@ async fn find(
 }
 
 /// The user changes one occurrence of an event in the Calendar panel: their own action,
-/// so no approval card. Guests aren't emailed; the answer offers what to tell them.
+/// so no approval card. Google tells the guests itself; elsewhere they aren't emailed,
+/// and the answer offers what to tell them.
 pub async fn change(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -280,7 +282,7 @@ pub async fn change(
             note: None,
         }));
     }
-    let (after, outcome) = invite::change(&state, &r, &found, false, changes)
+    let (after, outcome) = invite::change(&state, &r, &found, false, changes, true)
         .await
         .map_err(|e| AppError::bad_request(format!("Couldn't change the event: {e}")))?;
     Ok(Json(EventChanged {
@@ -303,7 +305,7 @@ pub async fn remove(
 ) -> ApiResult<EventChanged> {
     let (r, found) = find(&state, &id).await?;
     let whole = q.which.as_deref() == Some("all");
-    let outcome = invite::remove(&state, &r, &found, whole)
+    let outcome = invite::remove(&state, &r, &found, whole, true)
         .await
         .map_err(|e| AppError::bad_request(format!("Couldn't remove the event: {e}")))?;
     Ok(Json(EventChanged {

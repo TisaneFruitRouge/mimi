@@ -220,6 +220,32 @@ fn guests_schema() -> Value {
 
 /// What the result says about invitations: that nothing was emailed, to whom it could
 /// go, and that the user decides. The chat shows a button for each offer.
+/// Whether Google may tell this write's guests itself (`notify`), so the event shows in
+/// their calendars. For the user, yes: adding people already asks unless the user knows
+/// them all. Someone the user trusts approves their own requests, so for them Google
+/// writes only to people the user knows (themselves included, when they're in People).
+async fn google_may_tell(ctx: &ToolContext, guests: &[Guest]) -> bool {
+    if ctx.principal.guest().is_none() || guests.is_empty() {
+        return true;
+    }
+    let emails: Vec<String> = guests.iter().map(|g| g.email.clone()).collect();
+    crate::mail::known::all_known(&ctx.state, &emails).await
+}
+
+/// What an approval card says about email for a write reaching `guests` (an invitation,
+/// or news of a change): what `run` will do, decided the same way.
+async fn email_note(ctx: &ToolContext, target: &Target, guests: &[Guest], invite: bool) -> String {
+    let google = matches!(target, Target::GoogleApi { .. }) && google_may_tell(ctx, guests).await;
+    match (google, invite, ctx.principal.guest().is_some()) {
+        (true, true, _) => "Google emails them the invitation, and it shows in their calendar.",
+        (true, false, _) => "Google tells them.",
+        (false, _, true) => "Nobody is emailed.",
+        (false, true, false) => "Nobody is emailed. You can send the invitations after.",
+        (false, false, false) => "Nobody is emailed. You can tell them after.",
+    }
+    .to_owned()
+}
+
 async fn follow_up(ctx: &ToolContext, out: &mut Value, outcome: &Outcome) {
     let state = &ctx.state;
     if let Some(note) = &outcome.note {
@@ -299,8 +325,9 @@ impl Tool for AddEvent {
     fn description(&self) -> &str {
         "Add an event to one of the user's calendars, only when they ask to put something in \
          their calendar or schedule a meeting/appointment. Not for \"remind me …\": that's \
-         reminder_add, when available. `guests` invites people; nobody is emailed, and the \
-         result says how to offer the invitations. Depending on the user's settings it may be \
+         reminder_add, when available. `guests` invites people: on Google calendars Google \
+         emails them the invitation and the event shows in their calendar; elsewhere nobody \
+         is emailed. The result says which, and how to offer the invitations if needed. Depending on the user's settings it may be \
          added straight away. Some Google calendars can't be written to directly: for those, a \
          pre-filled Google Calendar page opens and the user presses Save there; tell them so."
     }
@@ -351,6 +378,7 @@ impl Tool for AddEvent {
             if let Some(o) = args.as_object_mut() {
                 o.remove("guests");
                 o.remove("guests_note");
+                o.remove("email_note");
             }
             if raw.is_empty() {
                 return Ok(args);
@@ -365,7 +393,10 @@ impl Tool for AddEvent {
                 return Err("That calendar isn't shared with them.".to_owned());
             }
             match guests::organizer_for(&ctx.state, target).await {
-                Ok(_) => args["guests"] = mailboxes(&list),
+                Ok(_) => {
+                    args["guests"] = mailboxes(&list);
+                    args["email_note"] = json!(email_note(ctx, target, &list, true).await);
+                }
                 Err(why) => {
                     args["guests_note"] = json!(format!(
                         "{why} It will be saved without {}.",
@@ -426,7 +457,8 @@ impl Tool for AddEvent {
             }
             let state = &ctx.state;
             let start = event.start;
-            let (created, outcome) = invite::add(state, target, event).await?;
+            let notify = google_may_tell(ctx, &event.guests).await;
+            let (created, outcome) = invite::add(state, target, event, notify).await?;
             let mut out = match created {
                 Created::Saved { calendar, uid, .. } => json!({
                     "status": "saved",
@@ -621,8 +653,8 @@ impl Tool for ChangeEvent {
          it). Times are local, YYYY-MM-DDTHH:MM, or YYYY-MM-DD for all day; a new start \
          keeps the length. For a repeating event, `which` is \"this\" (default) or \"all\"; \
          every occurrence can be renamed at once but not moved, and guests change one \
-         occurrence at a time. Nobody is emailed: the result says how to offer telling the \
-         guests. Depending on the user's settings it may happen straight away."
+         occurrence at a time. On Google calendars Google tells the guests; elsewhere \
+         nobody is emailed. The result says which, and how to offer telling them if needed. Depending on the user's settings it may happen straight away."
     }
 
     fn parameters(&self) -> Value {
@@ -677,7 +709,7 @@ impl Tool for ChangeEvent {
             let add_raw = list_arg(&args["add_guests"]);
             let remove_raw = list_arg(&args["remove_guests"]);
             if let Some(o) = args.as_object_mut() {
-                for key in ["guests", "add_guests", "remove_guests"] {
+                for key in ["guests", "add_guests", "remove_guests", "email_note"] {
                     o.remove(key);
                 }
             }
@@ -735,6 +767,20 @@ impl Tool for ChangeEvent {
                 }
                 if !added.is_empty() || !removed.is_empty() {
                     args["guests"] = mailboxes(&after);
+                    let mut told = after.clone();
+                    told.extend(removed.iter().cloned());
+                    args["email_note"] = json!(email_note(ctx, &target, &told, !added.is_empty()).await);
+                }
+            } else if changes.details() {
+                // The guests a change reaches, on the user's own event.
+                let accounts = crate::connections::calendar_accounts(state).await;
+                let me = guests::my_addresses(state, &accounts).await;
+                let current = guests::guests_of(&found.event, &me);
+                if !current.is_empty()
+                    && guests::is_mine(&found.event, &me)
+                    && let Some(target) = super::target_by_id(&accounts, &r.calendar_id)
+                {
+                    args["email_note"] = json!(email_note(ctx, &target, &current, false).await);
                 }
             }
             Ok(args)
@@ -821,8 +867,14 @@ impl Tool for ChangeEvent {
                 }
                 changes.guests = Some(after);
             }
+            // Everyone Google may write to: the guests before and after.
+            let accounts = crate::connections::calendar_accounts(state).await;
+            let me = guests::my_addresses(state, &accounts).await;
+            let mut told = guests::guests_of(&found.event, &me);
+            told.extend(changes.guests.iter().flatten().cloned());
+            let notify = google_may_tell(ctx, &told).await;
             let (after, outcome) =
-                invite::change(state, &r, &found, which_is_all(&args), changes).await?;
+                invite::change(state, &r, &found, which_is_all(&args), changes, notify).await?;
             let mut out = json!({
                 "status": "changed",
                 "calendar": found.event.calendar,
@@ -847,8 +899,9 @@ impl Tool for RemoveEvent {
     fn description(&self) -> &str {
         "Remove an event from the user's calendars, only when the user asks. Pass the event's \
          `id` from calendar_events. For a repeating event, `which` is \"this\" (default) or \
-         \"all\" to remove the whole series. Guests aren't emailed: the result says how to \
-         offer telling them. Depending on the user's settings it may happen straight away."
+         \"all\" to remove the whole series. On Google calendars Google tells the guests it's \
+         cancelled; elsewhere they aren't emailed and the result says how to offer telling \
+         them. Depending on the user's settings it may happen straight away."
     }
 
     fn parameters(&self) -> Value {
@@ -921,7 +974,10 @@ impl Tool for RemoveEvent {
                     "The event moved to another calendar meanwhile. Look it up again.".to_owned(),
                 );
             }
-            let outcome = invite::remove(state, &r, &found, which_is_all(&args)).await?;
+            let accounts = crate::connections::calendar_accounts(state).await;
+            let me = guests::my_addresses(state, &accounts).await;
+            let notify = google_may_tell(ctx, &guests::guests_of(&found.event, &me)).await;
+            let outcome = invite::remove(state, &r, &found, which_is_all(&args), notify).await?;
             let mut out = json!({ "status": "removed", "calendar": found.event.calendar });
             follow_up(ctx, &mut out, &outcome).await;
             Ok(out)

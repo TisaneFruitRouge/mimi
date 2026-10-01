@@ -11,10 +11,11 @@ export type EventChanged = {
  */
 event_id: string | null, 
 /**
- * Messages the user may send the guests now (nothing has been emailed).
+ * Messages the user may send the guests now (Mimi emailed nothing; on Google calendars
+ * Google tells the guests itself, and `note` says so).
  */
 invitations: Array<InvitationOffer>, 
 /**
- * Something to tell the user, e.g. why the guests weren't told.
+ * Something to tell the user, e.g. whom Google told, or why the guests weren't told.
  */
 note: string | null, };

@@ -630,10 +630,12 @@ fn guest_json(email: &str, name: Option<&str>) -> Value {
     v
 }
 
-/// Every write tells Google to email nobody: invitations, updates and cancellations are
-/// the user's to send, through Mimi's own mail, when they say so.
-fn quietly(mut url: Url) -> Url {
-    url.query_pairs_mut().append_pair("sendUpdates", "none");
+/// Whether Google itself tells the event's guests about a write (`notify`): it emails the
+/// invitation, the change or the cancellation, and the event shows in their calendars,
+/// as when the user saves with guests in Google Calendar. Otherwise it tells nobody.
+fn sending_updates(mut url: Url, notify: bool) -> Url {
+    let value = if notify { "all" } else { "none" };
+    url.query_pairs_mut().append_pair("sendUpdates", value);
     url
 }
 
@@ -645,8 +647,9 @@ pub async fn insert(
     config: &GoogleAccountConfig,
     calendar: &GoogleCalendar,
     event: &NewEvent,
+    notify: bool,
 ) -> Result<(String, String), GoogleError> {
-    let url = quietly(access.url(&["calendars", &calendar.id, "events"])?);
+    let url = sending_updates(access.url(&["calendars", &calendar.id, "events"])?, notify);
     let saved = access
         .api(
             http,
@@ -740,20 +743,37 @@ pub async fn find_occurrence(
         .ok_or(GoogleError::NotFound)
 }
 
-/// Changes an event (an occurrence's id changes only that occurrence; the series' id,
-/// all of them). `fields` is Google's event shape, only what changes.
+/// A change for Google: the event (an occurrence's id changes only that occurrence; the
+/// series' id, all of them), Google's event fields (only what changes), and whether
+/// Google tells the guests (see [`sending_updates`]).
+pub struct Patch<'a> {
+    pub event_id: &'a str,
+    pub fields: Value,
+    pub notify: bool,
+}
+
+/// Changes an event.
 pub async fn patch(
     access: &GoogleAccess,
     http: &reqwest::Client,
     account: Uuid,
     config: &GoogleAccountConfig,
     calendar: &GoogleCalendar,
-    event_id: &str,
-    fields: &Value,
+    patch: Patch<'_>,
 ) -> Result<(), GoogleError> {
-    let url = quietly(access.url(&["calendars", &calendar.id, "events", event_id])?);
+    let url = sending_updates(
+        access.url(&["calendars", &calendar.id, "events", patch.event_id])?,
+        patch.notify,
+    );
     access
-        .api(http, account, config, Method::PATCH, url, Some(fields))
+        .api(
+            http,
+            account,
+            config,
+            Method::PATCH,
+            url,
+            Some(&patch.fields),
+        )
         .await
         .map(|_| ())
 }
@@ -765,8 +785,12 @@ pub async fn delete(
     config: &GoogleAccountConfig,
     calendar: &GoogleCalendar,
     event_id: &str,
+    notify: bool,
 ) -> Result<(), GoogleError> {
-    let url = quietly(access.url(&["calendars", &calendar.id, "events", event_id])?);
+    let url = sending_updates(
+        access.url(&["calendars", &calendar.id, "events", event_id])?,
+        notify,
+    );
     match access
         .api(http, account, config, Method::DELETE, url, None)
         .await
