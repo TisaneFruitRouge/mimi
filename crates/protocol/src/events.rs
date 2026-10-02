@@ -80,4 +80,11 @@ pub enum Event {
     },
     /// This client fell behind and missed events. Refetch any state you display.
     Resync,
+    /// The user clicked a new-mail notification on this computer: the desktop app comes
+    /// forward and opens Mail, on that conversation when there's one (`None`: several).
+    /// Browsers ignore it.
+    OpenMail {
+        #[ts(type = "number | null")]
+        thread_id: Option<i64>,
+    },
 }

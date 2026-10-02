@@ -101,7 +101,7 @@ mid-way; use the script instead.
 | `MIMI_BUILD_ID` | Build id reported by `/health` (set by `pnpm bundle` and the release workflow) | [Daemon lifecycle](daemon-lifecycle.md#after-an-update) |
 | `MIMI_LLAMA_SERVER` | Which `llama-server` the built-in runtime uses | [Models](models.md#finding-llama-server) |
 | `MIMI_GOOGLE_CLIENT_ID` / `_SECRET` | Google sign-in app identity, at build or run time | [Google OAuth](google-oauth.md), [Calendar](calendar.md) |
-| `MIMI_NO_NOTIFICATIONS=1` | No desktop notifications (tests never show one) | [Reminders and routines](reminders-and-routines.md) |
+| `MIMI_NO_NOTIFICATIONS=1` | No desktop notifications (tests never show one) | [Reminders and routines](reminders-and-routines.md), [Email](email.md#new-mail-notifications) |
 | `MIMI_DEV_TOOLS=1` | Debug builds: the fake tools `dev_lookup` and `dev_send_note` | [Tools and approvals](tools-and-approvals.md) |
 | `MIMI_MEMORY_QUIET_SECS` | Quiet time before a conversation is learned from (default 2 minutes) | [Memory](memory.md) |
 | `MIMI_TELEGRAM_API` | Telegram Bot API base, e.g. a fake bot server | [Messaging](messaging.md) |

@@ -411,13 +411,19 @@ async fn sync_mailbox(
             messages.push(m.read(conn, mailbox, folder, &account.config.email).await);
         }
         let (name, now) = (mailbox.to_owned(), now_ms());
+        // A mailbox's first pass copies old mail: nothing to announce.
+        let watch = last_uid.is_some();
         let added = state
             .db
             .call(move |c| {
                 let tx = c.transaction()?;
                 let mut added = 0;
                 for m in &messages {
-                    added += usize::from(store::insert(&tx, m)?.is_some());
+                    let new = store::insert(&tx, m)?.is_some();
+                    if new {
+                        super::notify::queue(&tx, m, watch, now)?;
+                    }
+                    added += usize::from(new);
                 }
                 if let Some(reached) = reached {
                     store::set_sync_state(&tx, conn, &name, validity, reached, now)?;

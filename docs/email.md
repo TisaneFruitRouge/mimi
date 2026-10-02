@@ -69,6 +69,10 @@ for showing mail. Connections in general: [Connections](connections.md).
   `api/tests/unsubscribe_flow.rs` passing. A one-click address is fetched over https
   only, from the internet only (checked after DNS, on the address connected to, and on
   every redirect), with nothing of the user's in the request.
+- New-mail notifications never announce an account's first sync, old mail that arrives
+  late, the user's own mail or the same message twice, and never show a suspicious
+  email's subject (`mail::notify`; see [New mail notifications](#new-mail-notifications)).
+  Tests never show a real notification.
 
 ## Connecting
 
@@ -196,6 +200,9 @@ find older mail; the server can.
 - `mail_sync`: UIDVALIDITY and high-water mark per mailbox.
 - `mail_thread_ids` (migration 0016): thread ids are never reused, so a stale id can't
   reach another conversation.
+- `mail_notify_queue`, `mail_notify_seen` (migration 0031): new mail waiting to be
+  announced, and Message-IDs already considered (see
+  [New mail notifications](#new-mail-notifications)).
 
 A message joins the thread of its In-Reply-To or References, or of a message that
 already refers to it (Message-ID), else (for "Re:"-style subjects) a thread from the
@@ -510,6 +517,68 @@ stop sending you these emails."); website lists say it opens in the browser. Aft
 the button reads "Unsubscribed" and the sheet offers to archive this conversation or
 all of them from that sender.
 
+## New mail notifications
+
+`mail/notify.rs`, migration 0031, `Settings.mail_notifications` (Settings › Reminders &
+notifications › New email). New mail in an Inbox shows as a notification on this
+computer, from the daemon, so it appears with the app closed.
+
+**Which mail** (`MailNotifications.notify`, `NewMailNotify`):
+
+- **Off**.
+- **Important** (the default): conversations the sorter files as needs a reply or
+  important. With nothing to sort (sorting off, no model, Jev chosen without a key) it
+  can't tell, so it means every new email except newsletters and automatic mail; the
+  setting says so.
+- **All**: every new email in the Inbox, newsletters and automatic mail included.
+
+**Never announced:**
+
+- anything found by a mailbox's first pass (a new account, or a renumbered mailbox): the
+  sync only queues messages when the mailbox already had a high-water mark;
+- mail sent or received more than an hour ago (`RECENT_MS`: old mail that merely
+  arrived late, or mail moved back into the Inbox, which keeps its received date);
+- the user's own mail (`outgoing`), mail already read elsewhere, and mail read or gone
+  before its notification is due;
+- a Message-ID already considered (`mail_notify_seen`, kept a week): a copy back with a
+  new UID, or the same message in a second account;
+- with Important: automatic mail, and suspicious mail while sorting is on (it's never
+  sorted, so never important).
+
+**How:** the sync queues each new Inbox message in the transaction that stores it
+(`notify::queue` into `mail_notify_queue`). The notifier (`notify::run`, started by
+`mail::install`) listens to `mail_changed` and `settings_changed` on the event bus (the
+sync and the sorter already publish them), so it hears each pass and each conversation
+the sorter finishes without hooks of its own. Each look (`notify::tick`, with the clock
+passed in for tests) decides every queued message (`verdict`) and removes it from the
+queue before anything shows, so a crash or restart can't announce it twice.
+
+**Waiting for the sorter:** with Important and something sorting, a message waits until
+its conversation is sorted (`sorted_at >= last_at`). If the sorter is slow (a local
+model on a small computer, the user chatting meanwhile) or failing, it's announced
+anyway after `SORT_WAIT_MS` (3 minutes), unless it's automatic: a late notification
+beats a missed email.
+
+**Together:** what's ready is held while other new mail still waits for the sorter, so
+they arrive as one notification ("3 new emails", up to three "Sender: Subject" lines
+and "and 2 more"), but never past `SORT_WAIT_MS` after it was queued. One email says
+"New email from Sam Carter" with its subject.
+
+**Privacy:** notifications can show on a lock screen. `MailNotifications.show_details`
+(on by default, "Show who it's from and the subject") turns them into a plain "New
+email" / "3 new emails". Suspicious mail never shows its subject, even with details on.
+On Linux, servers that read markup get the body escaped (`<b>` in a subject stays text).
+
+**A click** (Linux: the notification's default action over D-Bus, heard for an hour by
+`schedule::notify::show_clickable`) publishes `open_mail` (`Event::OpenMail
+{ thread_id }`, `None` for several conversations). The desktop app's relay brings its
+window forward and the page opens Mail on that conversation (`showMailThread`);
+browsers ignore the event. Nothing happens if the app isn't running. On macOS,
+notifications from the background daemon don't report clicks, so it's a plain one.
+
+Mail notifications are separate from the reminders' "Notifications on this computer"
+switch; `MIMI_NO_NOTIFICATIONS=1` and tests silence both.
+
 ## Invitations
 
 Event invitations, updates and cancellations are sent through this mail's SMTP path and
@@ -527,7 +596,8 @@ They never count as known recipients for `mail::known`. `GET
 
 ## API
 
-All under `/v1`. Changes publish `MailChanged` (`mail_changed`).
+All under `/v1`. Changes publish `MailChanged` (`mail_changed`); a click on a new-mail
+notification publishes `open_mail`.
 
 - `GET /v1/mail`: accounts, counts, whether sorting is on, the model's locality.
   `?account=` / `?address=` narrow the counts.
@@ -573,6 +643,8 @@ All under `/v1`. Changes publish `MailChanged` (`mail_changed`).
 - `folder-looks.tsx`: the smart folders' icons and colours.
 - `unsubscribe.tsx`: the reader's Unsubscribe button and its sheet (see
   [Unsubscribing](#unsubscribing)).
+- `mail-notifications.tsx`: the New email group of Settings › Reminders & notifications
+  (which mail, and whether to show who and what).
 
 Mail panel reply drafts get the user's custom instructions only, not the personality
 (see [Personality](personality.md)).
@@ -607,4 +679,7 @@ Mail panel reply drafts get the user's custom instructions only, not the persona
   brackets, mailto subject and body), the refused addresses and redirects, one-click
   against a list server on this computer and the email through the fake SMTP;
   `api/tests/unsubscribe_flow.rs` proves only the user's click unsubscribes.
+- `mail/notify_tests.rs`: which mail is announced (each choice, the sorter's wait and
+  fallback), batching, first-sync silence and no duplicates, against the fake server.
+  Tests look at what `notify::tick` would show; nothing is ever shown.
 - Never point tests at a real mailbox.

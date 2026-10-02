@@ -94,7 +94,10 @@ function subscribeBrowser(onEvent: (e: Event) => void, onConnection: (c: boolean
     };
     socket.onmessage = (msg) => {
       try {
-        onEvent(JSON.parse(msg.data) as Event);
+        const event = JSON.parse(msg.data) as Event;
+        // A click on a notification on the daemon's computer is for the desktop app there,
+        // not for a browser that happens to be open.
+        if (event.type !== "open_mail") onEvent(event);
       } catch {
         // Ignore events this version doesn't understand.
       }

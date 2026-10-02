@@ -101,6 +101,10 @@ fn spawn_event_relay(app: AppHandle, connected: Arc<AtomicBool>) {
             if let Some(mut stream) = stream {
                 set(&app, true);
                 while let Some(Ok(event)) = stream.next().await {
+                    // A click on a new-mail notification: come forward to show it.
+                    if matches!(event, mimi_protocol::Event::OpenMail { .. }) {
+                        show_main_window(&app);
+                    }
                     let _ = app.emit("daemon-event", &event);
                 }
             }

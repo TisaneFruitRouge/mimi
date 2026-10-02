@@ -68,6 +68,11 @@ whatlang = "0.18.0"
 mime = "0.3.17"
 sys-locale = "0.3.2"
 
+# Desktop notifications that hear clicks (new mail opens in the app): the same zbus that
+# notify-rust and keyring already use.
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+zbus = "5"
+
 [lints]
 workspace = true
 

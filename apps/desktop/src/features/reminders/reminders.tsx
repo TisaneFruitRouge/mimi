@@ -53,6 +53,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { IntegrationIcon } from "@/features/connections/connections-view";
+import { MailNotificationsGroup } from "@/features/mail/mail-notifications";
 import { ScheduleDialog } from "@/features/reminders/schedule-dialog";
 import { clock, when } from "@/features/reminders/time";
 import { api, keys } from "@/lib/api";
@@ -206,9 +207,10 @@ export function NotificationsSettings({
     <Page>
       <PageHeader
         title="Reminders and notifications"
-        subtitle="How reminders and routine results reach you, and what went off lately."
+        subtitle="How reminders, routine results and new email reach you, and what went off lately."
       />
       <WhereTheyGo />
+      <MailNotificationsGroup />
 
       <Section title="Your reminders and routines">
         <Grouped>

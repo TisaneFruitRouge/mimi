@@ -8,6 +8,7 @@ import type { GuestApproval } from "@/bindings/GuestApproval";
 import type { Message } from "@/bindings/Message";
 import type { ModelPull } from "@/bindings/ModelPull";
 import { keys } from "@/lib/api";
+import { showMailThread } from "@/features/mail/mail-view";
 import { announceDelivery } from "@/features/reminders/announce";
 import { subscribe } from "@/lib/transport";
 
@@ -164,6 +165,12 @@ function apply(qc: QueryClient, event: Event) {
       break;
     case "resync":
       qc.invalidateQueries();
+      break;
+    case "open_mail":
+      // The user clicked a new-mail notification (the app's window is already coming
+      // forward): show Mail, on that conversation when there's one.
+      if (event.thread_id !== null) showMailThread(event.thread_id);
+      location.hash = "#/mail";
       break;
   }
 }

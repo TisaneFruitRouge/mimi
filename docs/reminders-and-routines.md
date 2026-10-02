@@ -97,7 +97,9 @@ matched by `channels::replies` (see [Messaging apps](messaging.md)). Snoozing se
 `snoozed_until`; the snooze comes back through the same catch-up rules.
 
 Where reminders reach the user is set in Settings › Reminders & notifications
-(`#/settings/notifications`).
+(`#/settings/notifications`). The same page holds the new-mail notifications, which also
+use `notify.rs` (`show_clickable`: text from outside, escaped for servers that read
+markup, and a click heard on Linux); see [Email](email.md#new-mail-notifications).
 
 ## Routines
 

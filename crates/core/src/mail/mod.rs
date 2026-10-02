@@ -31,6 +31,7 @@ pub mod known;
 pub mod mentions;
 pub mod model;
 pub mod net;
+pub mod notify;
 pub mod older;
 pub mod parse;
 pub mod render;
@@ -411,11 +412,13 @@ pub async fn forget(state: &AppState, id: Uuid) {
     changed(state);
 }
 
-/// Registers the mail tools, the correspondents contact source and the sorting queue.
+/// Registers the mail tools, the correspondents contact source, the sorting queue and
+/// the new-mail notifier.
 pub fn install(state: &Arc<AppState>) {
     state.tool_sources.add(Arc::new(tools::MailTools));
     state.people.sources.add(Arc::new(contacts::Correspondents));
     tokio::spawn(triage::run(state.clone()));
+    tokio::spawn(notify::run(state.clone()));
 }
 
 // --- What the panel and the tools use -------------------------------------------------

@@ -150,9 +150,12 @@ function storeFolder(id: number | null) {
 
 // A conversation another panel asked to show (e.g. "Recent emails" on a person's page).
 let pendingThread: number | null = null;
-/** Opens a conversation the next time the Mail panel shows. */
+// The panel while it's showing, so a request (a click on a new-mail notification) reaches it.
+let openThread: ((id: number) => void) | null = null;
+/** Opens a conversation the next time the Mail panel shows, or now if it's showing. */
 export function showMailThread(id: number) {
-  pendingThread = id;
+  if (openThread) openThread(id);
+  else pendingThread = id;
 }
 
 // Which account or address the panel shows, per viewer (like the view).
@@ -303,6 +306,12 @@ export function MailView({
     pendingThread = null;
     return id;
   });
+  useEffect(() => {
+    openThread = setSelected;
+    return () => {
+      openThread = null;
+    };
+  }, []);
   const [composing, setComposing] = useState<MailDraft | null>(null);
   // Conversations being deleted: gone from the list at once (the server's move to the
   // Trash follows), back if it fails. Kept apart from the query cache, so a refresh that

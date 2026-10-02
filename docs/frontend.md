@@ -86,7 +86,13 @@ Types `Tab`, `SettingsPage` and `Section` are in `src/features/shell/top-bar.tsx
 - **Chat is home.**
 - **Reminders and routines** live in Calendar (side list, bells in the grid); where
   they're delivered is Settings › Reminders & notifications (see
-  [Reminders and routines](reminders-and-routines.md)).
+  [Reminders and routines](reminders-and-routines.md)), which also has New email
+  (`features/mail/mail-notifications.tsx`; see
+  [Email](email.md#new-mail-notifications)).
+- **A click on a new-mail notification** arrives as the `open_mail` event: the app's
+  relay shows the window, and `lib/events.ts` opens Mail on the conversation
+  (`showMailThread`, which also reaches a Mail panel that's already showing). The
+  browser transport drops the event: it's for the app on the daemon's computer.
 - **First run** is the onboarding (see [Onboarding](onboarding.md)), which may name
   models like the Models page. The Models page in setup mode remains the fallback when a
   finished setup has lost its model.
