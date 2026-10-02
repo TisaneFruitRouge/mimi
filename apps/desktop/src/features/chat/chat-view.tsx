@@ -91,6 +91,7 @@ export function ChatView({
     content: string,
     mentions: Mention[],
     attachments: NewAttachment[],
+    spoken: boolean,
   ): Promise<boolean> => {
     try {
       let id = conversationId;
@@ -101,7 +102,7 @@ export function ChatView({
         qc.setQueryData<ConversationDetail>(keys.conversation(id), { conversation, messages: [] });
         onCreated(id);
       }
-      const sent = await api.send(id, { content, model: null, mentions, attachments });
+      const sent = await api.send(id, { content, model: null, mentions, attachments, spoken });
       // Events usually get here first; only fill in what's missing.
       qc.setQueryData<ConversationDetail>(keys.conversation(id), (d) =>
         d

@@ -98,8 +98,18 @@ struct TgMessage {
     photo: Option<Vec<PhotoSize>>,
     /// A file, which may be a picture sent uncompressed.
     document: Option<Document>,
+    /// A voice message.
+    voice: Option<Sound>,
+    /// A sound file (a forwarded recording, a voice memo).
+    audio: Option<Sound>,
     /// The words sent with a photo or file.
     caption: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Sound {
+    file_id: String,
+    file_size: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -118,6 +128,20 @@ struct Document {
     file_size: Option<u64>,
 }
 
+/// What came with the words, to download once it's known to be from the owner.
+#[derive(Debug, Default)]
+struct Media {
+    picture: Option<Picture>,
+    /// The file id of a voice message or sound file.
+    voice: Option<String>,
+}
+
+impl Media {
+    fn is_empty(&self) -> bool {
+        self.picture.is_none() && self.voice.is_none()
+    }
+}
+
 /// A picture in a message, to download once it's known to be from the owner.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Picture {
@@ -127,6 +151,16 @@ struct Picture {
 }
 
 impl TgMessage {
+    /// The voice message it carries, or a sound file (within what may be downloaded).
+    fn voice(&self) -> Option<String> {
+        let limit = crate::attachments::MAX_UPLOAD_BYTES as u64;
+        self.voice
+            .as_ref()
+            .or(self.audio.as_ref())
+            .filter(|s| s.file_size.is_none_or(|n| n <= limit))
+            .map(|s| s.file_id.clone())
+    }
+
     /// The picture it carries: the largest size of a photo (within what may be
     /// downloaded), or a file that says it's a picture.
     fn picture(&self) -> Option<Picture> {
@@ -384,6 +418,39 @@ impl Bot {
         }
     }
 
+    /// Sends a voice message (Ogg/Opus).
+    async fn send_voice(
+        &self,
+        chat_id: i64,
+        note: &crate::voice::audio::VoiceNote,
+    ) -> Result<(), TgError> {
+        let file = reqwest::multipart::Part::bytes(note.ogg.clone())
+            .file_name("voice.ogg")
+            .mime_str("audio/ogg")
+            .map_err(|_| TgError::Api("bad voice message".to_owned()))?;
+        let form = reqwest::multipart::Form::new()
+            .text("chat_id", chat_id.to_string())
+            .text("duration", note.duration_ms.div_ceil(1000).to_string())
+            .part("voice", file);
+        // As with every call: errors without their text, which would hold the token.
+        let res = self
+            .http
+            .post(format!("{}/sendVoice", self.base))
+            .multipart(form)
+            .timeout(Duration::from_secs(60))
+            .send()
+            .await
+            .map_err(|_| TgError::Unreachable)?;
+        if res.status().is_success() {
+            Ok(())
+        } else {
+            Err(TgError::Api(format!(
+                "sending a voice message failed ({})",
+                res.status().as_u16()
+            )))
+        }
+    }
+
     async fn typing(&self, chat_id: i64) {
         let _: Result<bool, _> = self
             .call(
@@ -508,15 +575,18 @@ pub async fn run(state: Arc<AppState>, id: Uuid, cancel: CancellationToken) {
             if message.chat.kind != "private" {
                 continue;
             }
-            let picture = message.picture();
+            let media = Media {
+                picture: message.picture(),
+                voice: message.voice(),
+            };
             let Some(text) = message
                 .text
                 .or(message.caption)
-                .or(picture.as_ref().map(|_| String::new()))
+                .or((!media.is_empty()).then(String::new))
             else {
                 continue;
             };
-            handle(&state, id, &bot, &mut config, message.chat, text, picture).await;
+            handle(&state, id, &bot, &mut config, message.chat, text, media).await;
         }
         let mut row = row;
         row.config = serde_json::to_value(&config).expect("config serializes");
@@ -531,7 +601,7 @@ async fn handle(
     config: &mut TelegramConfig,
     chat: Chat,
     text: String,
-    picture: Option<Picture>,
+    media: Media,
 ) {
     let text = text.trim().to_owned();
     match config.owner_chat_id {
@@ -562,12 +632,12 @@ async fn handle(
             }
         }
         Some(owner) if owner == chat.id => {
-            if picture.is_none() && text == "/new" {
+            if media.is_empty() && text == "/new" {
                 config.conversation_id = None;
                 let _ = bot.send(owner, "Started a new conversation.").await;
                 return;
             }
-            if picture.is_none() && text.starts_with("/start") {
+            if media.is_empty() && text.starts_with("/start") {
                 let _ = bot.send(owner, "I'm here. What can I do for you?").await;
                 return;
             }
@@ -580,9 +650,28 @@ async fn handle(
                     .await;
                 return;
             };
-            // Only now that it's known to be the owner's is the photo downloaded.
+            let channel = Arc::new(TelegramChannel {
+                bot: bot.clone(),
+                chat: owner,
+            });
+            // Only now that it's known to be the owner's is anything downloaded.
+            if let Some(voice) = media.voice {
+                match bot.download(&voice).await {
+                    Ok(audio) => channels::voice::hear(state, channel, conversation, audio, text),
+                    Err(e) => {
+                        tracing::warn!("downloading a voice message from Telegram failed: {e}");
+                        let _ = bot
+                            .send(
+                                owner,
+                                "I couldn't get that voice message from Telegram. Try sending it again.",
+                            )
+                            .await;
+                    }
+                }
+                return;
+            }
             let mut photos = Vec::new();
-            if let Some(picture) = picture {
+            if let Some(picture) = media.picture {
                 match bot.download(&picture.file_id).await {
                     Ok(data) => photos.push(crate::attachments::Upload::new(
                         data,
@@ -604,10 +693,6 @@ async fn handle(
                 }
             }
             // Replies can take a while; this returns at once.
-            let channel = Arc::new(TelegramChannel {
-                bot: bot.clone(),
-                chat: owner,
-            });
             channels::photos::deliver(state, channel, conversation, text, photos);
         }
         // Anyone else: ignore silently. The bot is private.
@@ -724,6 +809,17 @@ impl Channel for TelegramChannel {
 
     async fn typing(&self) {
         self.bot.typing(self.chat).await;
+    }
+
+    fn sends_voice(&self) -> bool {
+        true
+    }
+
+    async fn send_voice(&self, note: &crate::voice::audio::VoiceNote) -> Result<(), String> {
+        self.bot
+            .send_voice(self.chat, note)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     async fn ask_approval(&self, action: &Action) -> Result<(), String> {

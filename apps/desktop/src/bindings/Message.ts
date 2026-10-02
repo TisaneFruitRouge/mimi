@@ -36,4 +36,9 @@ attachments: Array<Attachment>,
  * The model this message went to couldn't see its photos, so it was only told that
  * the user sent some. Clients say so under the message.
  */
-attachments_unseen: boolean, };
+attachments_unseen: boolean, 
+/**
+ * The user said it out loud: the words were transcribed from the microphone or a
+ * voice message, so one may be misheard.
+ */
+spoken: boolean, };

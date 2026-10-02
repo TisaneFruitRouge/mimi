@@ -1250,6 +1250,7 @@ mod tool_use {
             mentions: Vec::new(),
             attachments: Vec::new(),
             attachments_unseen: false,
+            spoken: false,
         };
         crate::chat::store::upsert_message(&db, message)
             .await
@@ -2087,6 +2088,7 @@ SUMMARY:Dentist\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
 
 mod access_flow;
 mod matrix_live;
+mod voice_flow;
 
 /// A fake Telegram Bot API: queued updates go out through getUpdates, and everything
 /// sent comes back through `sent()`.
@@ -2107,12 +2109,15 @@ mod fake_telegram {
         pub files: Arc<Mutex<std::collections::HashMap<String, Vec<u8>>>>,
         /// Every file id the bot asked for.
         pub fetched: Arc<Mutex<Vec<String>>>,
+        /// Voice messages sent (`sendVoice`): their sizes.
+        pub voices: Arc<Mutex<Vec<usize>>>,
     }
 
     impl FakeTelegram {
         pub async fn start() -> (Self, String) {
             let fake = FakeTelegram::default();
             let app = Router::new()
+                .route("/{bot}/sendVoice", post(voice))
                 .route("/{bot}/{method}", post(handle))
                 .route("/file/{bot}/{*path}", axum::routing::get(file))
                 .with_state(fake.clone());
@@ -2156,6 +2161,24 @@ mod fake_telegram {
                 .unwrap()
                 .push(json!({ "update_id": *id, "message": message }));
             file
+        }
+
+        /// Queues a voice message from `chat_id`.
+        pub fn voice(&self, chat_id: i64, data: Vec<u8>) {
+            let mut id = self.next_id.lock().unwrap();
+            *id += 1;
+            let file = format!("voice{}", *id);
+            self.files
+                .lock()
+                .unwrap()
+                .insert(file.clone(), data.clone());
+            self.updates.lock().unwrap().push(json!({
+                "update_id": *id,
+                "message": {
+                    "chat": { "id": chat_id, "type": "private", "first_name": "Someone" },
+                    "voice": { "file_id": file, "duration": 2, "mime_type": "audio/ogg", "file_size": data.len() },
+                }
+            }));
         }
 
         /// Queues a tap on an inline button.
@@ -2250,6 +2273,25 @@ mod fake_telegram {
             _ => json!(true),
         };
         Json(json!({ "ok": true, "result": result }))
+    }
+
+    /// `sendVoice`, which comes as a form with the recording.
+    async fn voice(
+        State(fake): State<FakeTelegram>,
+        Path(bot): Path<String>,
+        mut form: axum::extract::Multipart,
+    ) -> Json<Value> {
+        if bot != "bot123:secret" {
+            return Json(json!({ "ok": false, "error_code": 401, "description": "Unauthorized" }));
+        }
+        while let Ok(Some(field)) = form.next_field().await {
+            if field.name() == Some("voice") {
+                let data = field.bytes().await.unwrap();
+                assert_eq!(&data[..4], b"OggS");
+                fake.voices.lock().unwrap().push(data.len());
+            }
+        }
+        Json(json!({ "ok": true, "result": { "message_id": 2 } }))
     }
 
     async fn file(
@@ -4321,6 +4363,7 @@ mod people_removal {
                 }],
                 attachments: Vec::new(),
                 attachments_unseen: false,
+                spoken: false,
             },
         )
         .await
@@ -5193,6 +5236,7 @@ mod signal_flow {
             quote: None,
             timestamp: 1,
             photos: Vec::new(),
+            voice: None,
         };
 
         signal::on_message(&state, id, &worker, note("Please send Sam a note")).await;
@@ -6044,6 +6088,7 @@ mod photo_flow {
                 .into_iter()
                 .map(|p| crate::attachments::Upload::new(p, None, Some("image/png".into())))
                 .collect(),
+            voice: None,
         }
     }
 

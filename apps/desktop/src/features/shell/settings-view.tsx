@@ -19,6 +19,7 @@ import {
   Smile,
   Sparkles,
   TriangleAlert,
+  AudioLines,
 } from "lucide-react";
 import { cn } from "cn";
 import { toast } from "sonner";
@@ -45,6 +46,7 @@ import { PermissionsView } from "@/features/permissions/permissions-view";
 import { PersonalityView } from "@/features/personality/personality-view";
 import { NotificationsSettings } from "@/features/reminders/reminders";
 import { UpdatesGroup } from "@/features/shell/updates";
+import { VoiceView } from "@/features/voice/voice-view";
 import type { Section as Place, SettingsPage } from "@/features/shell/top-bar";
 import { api, keys } from "@/lib/api";
 import { mod } from "@/lib/platform";
@@ -69,6 +71,7 @@ export const settingsPages: {
   { id: "personality", label: "Personality", icon: Smile, tone: "bg-[#ff2d55] text-white" },
   { id: "connections", label: "Connections", icon: Blocks, tone: "bg-[#0a84ff] text-white" },
   { id: "models", label: "Models", icon: Sparkles, tone: "bg-lime text-lime-ink" },
+  { id: "voice", label: "Voice", icon: AudioLines, tone: "bg-[#5e5ce6] text-white" },
   { id: "memory", label: "Memory", icon: BookOpen, tone: "bg-[#bf5af2] text-white" },
   { id: "notifications", label: "Reminders & notifications", icon: BellRing, tone: "bg-[#ff3b30] text-white" },
   { id: "permissions", label: "Permissions", icon: Hand, tone: "bg-[#ff9f0a] text-white" },
@@ -150,6 +153,7 @@ export function SettingsView({
             {page === "personality" && <PersonalityView />}
             {page === "connections" && <ConnectionsView onPeople={() => onSection("people")} />}
             {page === "models" && <ModelsView onChat={() => onSection("chat")} />}
+            {page === "voice" && <VoiceView />}
             {page === "memory" && <MemoryView />}
             {page === "notifications" && (
               <NotificationsSettings onOpenConversation={onOpenConversation} onCalendar={() => onSection("calendar")} />

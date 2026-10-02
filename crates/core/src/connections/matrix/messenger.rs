@@ -2,12 +2,15 @@
 //! the running client ([`super::Live`]) implements it, and tests use a fake instead of a
 //! homeserver.
 
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use matrix_sdk::RoomMemberships;
+use matrix_sdk::room::MessagesOptions;
 use matrix_sdk::ruma::api::error::ErrorKind;
 use matrix_sdk::ruma::events::room::message::RoomMessageEventContent;
 use matrix_sdk::ruma::room::JoinRuleKind;
-use matrix_sdk::ruma::{RoomAliasId, RoomId, UserId};
+use matrix_sdk::ruma::{RoomAliasId, RoomId, UInt, UserId};
 use matrix_sdk::{Room, RoomState};
 
 use super::{Live, format, plain_error};
@@ -28,6 +31,18 @@ pub struct RoomInfo {
     pub public: bool,
     /// Who made it.
     pub creator: Option<String>,
+}
+
+/// A message in a room's history.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Said {
+    /// Who wrote it, `@name:server`.
+    pub sender: String,
+    /// Their display name in the room, when they set one.
+    pub name: Option<String>,
+    pub at_ms: i64,
+    /// What it says; `None` when it couldn't be decrypted.
+    pub text: Option<String>,
 }
 
 /// Why looking someone up failed.
@@ -55,6 +70,8 @@ pub trait Messenger: Send + Sync {
     /// Everyone in a room the assistant is in, joined or invited; `None` when it isn't in
     /// that room.
     async fn members(&self, room: &str) -> Option<Vec<String>>;
+    /// The latest messages in a room the assistant is in, oldest first, at most `limit`.
+    async fn history(&self, room: &str, limit: usize) -> Result<Vec<Said>, String>;
     /// Opens an end-to-end encrypted direct chat with someone, inviting them. Its id.
     async fn create_dm(&self, user: &str) -> Result<String, String>;
     /// Joins a public room.
@@ -177,6 +194,53 @@ impl Messenger for Live {
         let room = joined_room(self, room)?;
         let members = room.members(RoomMemberships::ACTIVE).await.ok()?;
         Some(members.iter().map(|m| m.user_id().to_string()).collect())
+    }
+
+    async fn history(&self, room: &str, limit: usize) -> Result<Vec<Said>, String> {
+        let room = joined_room(self, room)
+            .ok_or_else(|| "Your assistant isn't in that chat.".to_owned())?;
+        // Newest first; state changes and reactions come mixed in, so ask for more.
+        let mut options = MessagesOptions::backward();
+        options.limit = UInt::from((limit.saturating_mul(3)).clamp(1, 300) as u32);
+        let response = room.messages(options).await.map_err(|e| plain_error(&e))?;
+        let mut names: HashMap<String, Option<String>> = HashMap::new();
+        let mut out = Vec::new();
+        for event in response.chunk {
+            let Ok(event) = event.raw().deserialize() else {
+                continue;
+            };
+            let (sender, at_ms) = (
+                event.sender().to_owned(),
+                i64::from(event.origin_server_ts().0),
+            );
+            let Some(text) = super::words_of(event) else {
+                continue;
+            };
+            let name = match names.get(sender.as_str()) {
+                Some(name) => name.clone(),
+                None => {
+                    let name = room
+                        .get_member_no_sync(&sender)
+                        .await
+                        .ok()
+                        .flatten()
+                        .and_then(|m| m.display_name().map(str::to_owned));
+                    names.insert(sender.to_string(), name.clone());
+                    name
+                }
+            };
+            out.push(Said {
+                sender: sender.to_string(),
+                name,
+                at_ms,
+                text,
+            });
+            if out.len() >= limit {
+                break;
+            }
+        }
+        out.reverse();
+        Ok(out)
     }
 
     async fn create_dm(&self, user: &str) -> Result<String, String> {

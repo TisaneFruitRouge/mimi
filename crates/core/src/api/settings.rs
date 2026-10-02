@@ -22,6 +22,7 @@ pub async fn put(
         ));
     }
     crate::persona::validate(&mut new).map_err(AppError::bad_request)?;
+    crate::voice::validate(&mut new.voice).map_err(AppError::bad_request)?;
     for model in [&new.default_model, &new.pending_model, &new.photo_model]
         .into_iter()
         .flatten()
@@ -60,6 +61,9 @@ pub async fn put(
     }
     if update_check_on {
         state.updates.wake.notify_one();
+    }
+    if current.voice != new.voice {
+        crate::voice::publish(&state);
     }
     state.events.publish(Event::SettingsChanged {
         settings: new.clone(),

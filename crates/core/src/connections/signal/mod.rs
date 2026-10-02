@@ -318,6 +318,17 @@ pub(crate) async fn on_message(
     let answer = match incoming {
         Incoming::Note {
             text,
+            voice: Some(audio),
+            ..
+        } => {
+            // Said out loud: heard first, then on like a written note.
+            if let Some(conversation) = open_conversation(state, id, &channel).await {
+                channels::voice::hear(state, Arc::new(channel), conversation, audio, text);
+            }
+            return;
+        }
+        Incoming::Note {
+            text,
             quote,
             photos,
             ..
@@ -360,19 +371,26 @@ async fn chat(
     text: String,
     photos: Vec<crate::attachments::Upload>,
 ) {
+    let Some(conversation) = open_conversation(state, id, &channel).await else {
+        return;
+    };
+    // Replies can take a while; this returns at once.
+    channels::photos::deliver(state, Arc::new(channel), conversation, text, photos);
+}
+
+/// The Signal conversation, opened again if it was deleted. Says so when it can't be.
+async fn open_conversation(state: &AppState, id: Uuid, channel: &SignalChannel) -> Option<Uuid> {
     let current = load(state, id).await.and_then(|(_, c)| c.conversation_id);
     let conversation = channels::ensure_conversation(state, current, "Signal").await;
     if conversation != current {
         update(state, id, |c| c.conversation_id = conversation).await;
     }
-    let Some(conversation) = conversation else {
+    if conversation.is_none() {
         let _ = channel
             .send(&Outgoing::text("Sorry, I couldn't open our conversation."))
             .await;
-        return;
-    };
-    // Replies can take a while; this returns at once.
-    channels::photos::deliver(state, Arc::new(channel), conversation, text, photos);
+    }
+    conversation
 }
 
 /// Every linked Signal account, for messages Mimi sends on its own.

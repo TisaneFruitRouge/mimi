@@ -15,14 +15,16 @@ use presage::libsignal_service::protocol::ServiceId;
 /// What an incoming message is, for Mimi.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Incoming {
-    /// Something the user wrote in Note to Self. `quote` is the timestamp of the message
-    /// it replies to, if any. `photos` are filled in by the worker, which downloads the
-    /// message's [`pictures`]; `text` may be empty when there are some.
+    /// Something the user wrote or said in Note to Self. `quote` is the timestamp of the
+    /// message it replies to, if any. `photos` and `voice` are filled in by the worker,
+    /// which downloads the message's [`pictures`] and [`recording`]; `text` may be empty
+    /// when there are some.
     Note {
         text: String,
         quote: Option<u64>,
         timestamp: u64,
         photos: Vec<crate::attachments::Upload>,
+        voice: Option<Vec<u8>>,
     },
     /// A reaction the user put on a message in Note to Self (`target` is its timestamp).
     Reaction { emoji: String, target: u64 },
@@ -72,8 +74,8 @@ pub fn classify(
         };
     }
     let text = message.body.as_deref().unwrap_or("").trim();
-    if text.is_empty() && pictures_in(message).is_empty() {
-        // Files, stickers, voice notes and control messages: not for the assistant.
+    if text.is_empty() && pictures_in(message).is_empty() && recording_in(message).is_none() {
+        // Files, stickers and control messages: not for the assistant.
         return Incoming::Ignore;
     }
     Incoming::Note {
@@ -81,7 +83,28 @@ pub fn classify(
         quote: message.quote.as_ref().and_then(|q| q.id),
         timestamp,
         photos: Vec::new(),
+        voice: None,
     }
+}
+
+/// The voice note (or other recording) of a message [`classify`] found to be a note, to
+/// download, if it isn't larger than may be downloaded.
+pub fn recording(content: &Content, account: Uuid) -> Option<AttachmentPointer> {
+    note_message(content, account).and_then(|(message, _)| recording_in(message))
+}
+
+fn recording_in(message: &DataMessage) -> Option<AttachmentPointer> {
+    message
+        .attachments
+        .iter()
+        .find(|a| {
+            a.content_type
+                .as_deref()
+                .is_some_and(|t| t.starts_with("audio/"))
+                && a.size
+                    .is_some_and(|n| n as usize <= crate::attachments::MAX_UPLOAD_BYTES)
+        })
+        .cloned()
 }
 
 /// The pictures of a message [`classify`] found to be a note, to download: at most as
@@ -212,6 +235,7 @@ mod tests {
                 quote: Some(99),
                 timestamp: 42,
                 photos: Vec::new(),
+                voice: None,
             }
         );
         // From a desktop app linked to the same account, too.
@@ -296,7 +320,7 @@ mod tests {
             content(ME, PHONE, EditMessage::default()),
             // Other sync messages (read receipts, contacts…).
             content(ME, PHONE, SyncMessage::default()),
-            // A file or voice note saved to Note to Self, with no text.
+            // A file saved to Note to Self, with no text.
             content(ME, PHONE, sent_to(ME, DataMessage::default())),
             content(
                 ME,
@@ -309,16 +333,14 @@ mod tests {
                     },
                 ),
             ),
+            // Someone else's voice note.
             content(
-                ME,
+                FRIEND,
                 PHONE,
-                sent_to(
-                    ME,
-                    DataMessage {
-                        attachments: vec![attachment("audio/aac", 1000)],
-                        ..DataMessage::default()
-                    },
-                ),
+                DataMessage {
+                    attachments: vec![attachment("audio/aac", 1000)],
+                    ..DataMessage::default()
+                },
             ),
             // Someone else's photo.
             content(
@@ -364,6 +386,7 @@ mod tests {
                 quote: None,
                 timestamp: 44,
                 photos: Vec::new(),
+                voice: None,
             }
         );
         let found = pictures(&note, ME);
@@ -396,5 +419,45 @@ mod tests {
             ),
         );
         assert!(pictures(&theirs, ME).is_empty());
+    }
+
+    #[test]
+    fn voice_notes_in_note_to_self_are_for_the_assistant() {
+        let said = DataMessage {
+            attachments: vec![attachment("audio/aac", 40_000)],
+            timestamp: Some(45),
+            ..Default::default()
+        };
+        let note = content(ME, PHONE, sent_to(ME, said));
+        assert!(matches!(sort(&note), Incoming::Note { text, .. } if text.is_empty()));
+        assert_eq!(
+            recording(&note, ME).unwrap().content_type.as_deref(),
+            Some("audio/aac")
+        );
+        // Too long to download, or someone else's: nothing.
+        let huge = content(
+            ME,
+            PHONE,
+            sent_to(
+                ME,
+                DataMessage {
+                    attachments: vec![attachment("audio/aac", 90_000_000)],
+                    ..Default::default()
+                },
+            ),
+        );
+        assert_eq!(sort(&huge), Incoming::Ignore);
+        let theirs = content(
+            ME,
+            PHONE,
+            sent_to(
+                FRIEND,
+                DataMessage {
+                    attachments: vec![attachment("audio/aac", 1000)],
+                    ..Default::default()
+                },
+            ),
+        );
+        assert!(recording(&theirs, ME).is_none());
     }
 }

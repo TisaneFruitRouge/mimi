@@ -26,6 +26,9 @@ import type { RemovedPerson } from "@/bindings/RemovedPerson";
 import type { ModelPull } from "@/bindings/ModelPull";
 import type { RuntimeStatus } from "@/bindings/RuntimeStatus";
 import type { UpdateStatus } from "@/bindings/UpdateStatus";
+import type { Speech } from "@/bindings/Speech";
+import type { Transcript } from "@/bindings/Transcript";
+import type { VoiceStatus } from "@/bindings/VoiceStatus";
 import type { ModelInfo } from "@/bindings/ModelInfo";
 import type { NewProvider } from "@/bindings/NewProvider";
 import type { ProbeRequest } from "@/bindings/ProbeRequest";
@@ -132,6 +135,19 @@ export const api = {
   putSettings: (s: Settings) => call<Settings>("PUT", "/settings", s),
   updates: () => call<UpdateStatus>("GET", "/updates"),
   checkForUpdates: () => call<UpdateStatus>("POST", "/updates/check"),
+  /** What's needed to listen and speak, and how far along it is. */
+  voice: () => call<VoiceStatus>("GET", "/voice"),
+  /** The words in a recording (base64). */
+  transcribe: (data: string) => call<Transcript>("POST", "/voice/transcribe", { data }),
+  /** Loads the speech recognizer while the user is still talking. */
+  prepareListening: () => call<null>("POST", "/voice/prepare"),
+  /** One part of a text as speech; `voice` picks one to hear (with empty text, a sample). */
+  speak: (text: string, part: number, voice?: string) =>
+    call<Speech>("POST", "/voice/speak", { text, part, voice: voice ?? null }),
+  downloadVoicePack: (id: string) =>
+    call<VoiceStatus>("POST", `/voice/packs/${encodeURIComponent(id)}/download`),
+  cancelVoicePack: (id: string) => call<null>("POST", `/voice/packs/${encodeURIComponent(id)}/cancel`),
+  removeVoicePack: (id: string) => call<VoiceStatus>("DELETE", `/voice/packs/${encodeURIComponent(id)}`),
   /** What the assistant may do without asking, kind by kind, with the user's choices. */
   permissions: () => call<PermissionKind[]>("GET", "/permissions"),
   setPermission: (kind: string, choice: KindPermission) =>
@@ -351,6 +367,7 @@ export const api = {
 export const keys = {
   settings: ["settings"] as const,
   updates: ["updates"] as const,
+  voice: ["voice"] as const,
   permissions: ["permissions"] as const,
   status: ["status"] as const,
   providers: ["providers"] as const,

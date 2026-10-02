@@ -14,7 +14,8 @@
 //! - there are as many as one message can take.
 //!
 //! Commands and answers to prompts ("/new", "yes") are handled before this, so they
-//! never pick up photos.
+//! never pick up photos. Voice messages come here as their words ([`deliver_spoken`]),
+//! so a spoken "add these dates" takes the photos along like a typed one.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -51,6 +52,8 @@ impl Default for Held {
 struct Pending {
     text: String,
     photos: Vec<Upload>,
+    /// Some of the words were said out loud.
+    spoken: bool,
     /// Bumped by every addition, so only the latest timer sends them.
     generation: u64,
 }
@@ -95,6 +98,7 @@ impl Held {
         conversation: Uuid,
         text: String,
         photos: Vec<Upload>,
+        spoken: bool,
     ) -> (Option<Pending>, u64, Duration) {
         let (settle, wait_for_words) = *self.windows.lock().unwrap_or_else(|e| e.into_inner());
         let mut map = self.map();
@@ -108,6 +112,7 @@ impl Held {
         let pending = map.entry(conversation).or_default();
         pending.text = join(std::mem::take(&mut pending.text), text);
         pending.photos.extend(photos);
+        pending.spoken |= spoken;
         pending.generation += 1;
         let generation = pending.generation;
         let wait = if pending.text.trim().is_empty() {
@@ -132,29 +137,50 @@ pub fn deliver(
     text: String,
     photos: Vec<Upload>,
 ) {
+    deliver_with(state, channel, conversation, text, photos, false);
+}
+
+/// Like [`deliver`], for words the user said in a voice message.
+pub fn deliver_spoken(
+    state: &Arc<AppState>,
+    channel: Arc<dyn Channel>,
+    conversation: Uuid,
+    text: String,
+) {
+    deliver_with(state, channel, conversation, text, Vec::new(), true);
+}
+
+fn deliver_with(
+    state: &Arc<AppState>,
+    channel: Arc<dyn Channel>,
+    conversation: Uuid,
+    text: String,
+    photos: Vec<Upload>,
+    spoken: bool,
+) {
     let held = &state.connections.photos;
-    let run = |text: String, photos: Vec<Upload>| {
+    let run = |text: String, photos: Vec<Upload>, spoken: bool| {
         let (state, channel) = (state.clone(), channel.clone());
         tokio::spawn(async move {
-            super::converse(&state, &*channel, conversation, text, photos).await;
+            super::converse(&state, &*channel, conversation, text, photos, spoken).await;
         });
     };
     if photos.is_empty() {
         match held.take(conversation) {
-            Some(p) => run(join(p.text, text), p.photos),
-            None => run(text, Vec::new()),
+            Some(p) => run(join(p.text, text), p.photos, p.spoken || spoken),
+            None => run(text, Vec::new(), spoken),
         }
         return;
     }
-    let (now, generation, wait) = held.add(conversation, text, photos);
+    let (now, generation, wait) = held.add(conversation, text, photos, spoken);
     if let Some(p) = now {
-        run(p.text, p.photos);
+        run(p.text, p.photos, p.spoken);
     }
     let state = state.clone();
     tokio::spawn(async move {
         tokio::time::sleep(wait).await;
         if let Some(p) = state.connections.photos.take_if(conversation, generation) {
-            super::converse(&state, &*channel, conversation, p.text, p.photos).await;
+            super::converse(&state, &*channel, conversation, p.text, p.photos, p.spoken).await;
         }
     });
 }
@@ -171,15 +197,17 @@ mod tests {
     fn photos_wait_for_words_and_captions_settle() {
         let held = Held::default();
         let conv = Uuid::now_v7();
-        let (now, g1, wait) = held.add(conv, String::new(), vec![photo(1)]);
+        let (now, g1, wait) = held.add(conv, String::new(), vec![photo(1)], false);
         assert!(now.is_none());
         assert_eq!(wait, WAIT_FOR_WORDS);
-        let (_, g2, wait) = held.add(conv, "Add these dates".into(), vec![photo(2)]);
+        let (_, g2, wait) = held.add(conv, "Add these dates".into(), vec![photo(2)], true);
         assert_eq!(wait, SETTLE);
         // The first timer finds a newer batch and leaves it.
         assert!(held.take_if(conv, g1).is_none());
         let p = held.take_if(conv, g2).unwrap();
         assert_eq!(p.text, "Add these dates");
+        // Said out loud, so the turn is marked spoken.
+        assert!(p.spoken);
         assert_eq!(p.photos, vec![photo(1), photo(2)]);
         assert!(held.take(conv).is_none());
     }
@@ -188,12 +216,12 @@ mod tests {
     fn a_full_batch_goes_at_once() {
         let held = Held::default();
         let conv = Uuid::now_v7();
-        let (now, ..) = held.add(conv, String::new(), (0..8).map(photo).collect());
+        let (now, ..) = held.add(conv, String::new(), (0..8).map(photo).collect(), false);
         assert!(now.is_none());
         // 8 + 3 is more than a message takes: the 8 go now, the 3 wait.
-        let (now, ..) = held.add(conv, String::new(), (8..11).map(photo).collect());
+        let (now, ..) = held.add(conv, String::new(), (8..11).map(photo).collect(), false);
         assert_eq!(now.unwrap().photos.len(), 8);
-        let (now, ..) = held.add(conv, String::new(), (11..18).map(photo).collect());
+        let (now, ..) = held.add(conv, String::new(), (11..18).map(photo).collect(), false);
         assert_eq!(now.unwrap().photos.len(), 10);
         assert!(held.take(conv).is_none());
     }

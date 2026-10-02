@@ -93,29 +93,43 @@ pub async fn send_with_context(
     mentions: Vec<Mention>,
     hidden_context: Option<String>,
 ) -> Result<SendMessageResult, AppError> {
-    send_with_attachments(
+    send_with_extras(
         state,
         conversation_id,
         content,
         model,
         mentions,
         hidden_context,
-        Vec::new(),
+        Extras::default(),
     )
     .await
 }
 
-/// Like [`send_with_context`], with the photos the user sent along. They're checked and
-/// normalised here (see [`crate::attachments`]); with photos the text may be empty.
-pub async fn send_with_attachments(
+/// What came with a message besides its words.
+#[derive(Debug, Default)]
+pub struct Extras {
+    /// Photos the user sent along.
+    pub attachments: Vec<crate::attachments::Upload>,
+    /// The words were said out loud and transcribed (`crate::voice`).
+    pub spoken: bool,
+}
+
+/// Like [`send_with_context`], with the photos the user sent along and whether they
+/// spoke. Photos are checked and normalised here (see [`crate::attachments`]); with
+/// photos the text may be empty.
+pub async fn send_with_extras(
     state: Arc<AppState>,
     conversation_id: Uuid,
     content: String,
     model: Option<ModelRef>,
     mentions: Vec<Mention>,
     hidden_context: Option<String>,
-    attachments: Vec<crate::attachments::Upload>,
+    extras: Extras,
 ) -> Result<SendMessageResult, AppError> {
+    let Extras {
+        attachments,
+        spoken,
+    } = extras;
     let content = content.trim().to_owned();
     if content.is_empty() && attachments.is_empty() {
         return Err(AppError::bad_request("The message is empty."));
@@ -234,7 +248,7 @@ pub async fn send_with_attachments(
                 },
                 &history,
                 &contexts,
-                &with_context(&content, mention_context.as_deref()),
+                &said(with_context(&content, mention_context.as_deref()), spoken),
                 &photos,
             )
         }
@@ -267,7 +281,7 @@ pub async fn send_with_attachments(
                 &persona,
                 &history,
                 &contexts,
-                &with_context(&content, mention_context.as_deref()),
+                &said(with_context(&content, mention_context.as_deref()), spoken),
                 &memory,
                 &photos,
             )
@@ -296,6 +310,7 @@ pub async fn send_with_attachments(
         mentions,
         attachments: attachments.iter().map(|a| a.meta.clone()).collect(),
         attachments_unseen: !attachments.is_empty() && !photos.sees,
+        spoken,
     };
     let assistant_message = Message {
         id: Uuid::now_v7(),
@@ -307,6 +322,7 @@ pub async fn send_with_attachments(
         mentions: Vec::new(),
         attachments: Vec::new(),
         attachments_unseen: false,
+        spoken: false,
         ..user_message.clone()
     };
     if conversation.title == DEFAULT_TITLE && history.is_empty() {
@@ -820,6 +836,7 @@ fn replay(
             };
             text = join_note(&text, &note);
         }
+        let text = said(text, m.spoken);
         return vec![ChatMessage::text(Role::User, text).with_images(images)];
     }
     let mut rounds: std::collections::BTreeMap<u32, Vec<&Action>> = Default::default();
@@ -978,6 +995,18 @@ async fn photo_model(
 }
 
 /// Text with a note after it (or only the note).
+/// Told to the model about what the user said out loud: speech recognition mishears a
+/// name or a word now and then.
+const SPOKEN_NOTE: &str = "(Said aloud and transcribed automatically: a word may be misheard.)";
+
+fn said(text: String, spoken: bool) -> String {
+    if spoken {
+        join_note(&text, SPOKEN_NOTE)
+    } else {
+        text
+    }
+}
+
 fn join_note(text: &str, note: &str) -> String {
     if text.trim().is_empty() {
         note.to_owned()
@@ -1384,6 +1413,7 @@ mod tests {
             mentions: Vec::new(),
             attachments: Vec::new(),
             attachments_unseen: false,
+            spoken: false,
         };
         let history: Vec<Message> = (0..40).map(old).collect();
         let (_, plain) = system_text(&Persona::default(), &history, "Hi");

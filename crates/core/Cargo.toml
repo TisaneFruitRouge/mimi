@@ -20,7 +20,7 @@ icalendar = { version = "0.17.13", features = ["recurrence", "chrono-tz"] }
 jiff = "0.2.37"
 keyring = "4.2.0"
 quick-xml = "0.42.0"
-reqwest = { version = "0.13.5", default-features = false, features = ["json", "stream", "rustls", "http2"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "stream", "rustls", "http2", "multipart"] }
 rusqlite = { version = "0.40.2", features = ["bundled-sqlcipher-vendored-openssl"] }
 rust-embed = { version = "8.12.0", features = ["mime-guess"] }
 serde = { version = "1.0.229", features = ["derive"] }
@@ -54,13 +54,26 @@ matrix-sdk = { version = "0.19.1", default-features = false, features = ["e2e-en
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 # Photos sent to the assistant: decoded, shrunk and saved again without metadata.
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+# Voice: speech recognition and speech on this computer (sherpa-onnx links its prebuilt
+# static libraries: onnxruntime, espeak-ng (GPL-3.0), kaldi). Voice notes are decoded with
+# symphonia (MPL-2.0) plus libopus, and replies encoded as Ogg/Opus.
+sherpa-onnx = { version = "=1.13.8", default-features = false, features = ["static"] }
+symphonia = { version = "0.6.1", default-features = false, features = ["ogg", "wav", "mkv", "isomp4", "aac", "mp3", "vorbis", "flac", "pcm", "caf"] }
+symphonia-adapter-libopus = "0.3.0"
+opus = "0.4.0"
+ogg = "0.9.2"
+bzip2 = "0.6.1"
+tar = { version = "0.4.46", default-features = false }
+whatlang = "0.18.0"
+mime = "0.3.17"
+sys-locale = "0.3.2"
 
 [lints]
 workspace = true
 
 [dev-dependencies]
+axum = { version = "0.8.9", features = ["multipart"] }
 http-body-util = "0.1.5"
-mime = "0.3.17"
 rand = "0.9"
 reqwest = { version = "0.13.5", default-features = false, features = ["json"] }
 tempfile = "3.27.0"

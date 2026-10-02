@@ -22,6 +22,7 @@ use crate::attachments::Upload;
 pub mod photos;
 pub mod replies;
 pub mod tools;
+pub mod voice;
 
 /// Said on the app when the model couldn't see the photos the user sent.
 pub const UNSEEN_NOTE: &str = "The model I'm using can't see photos. You can choose one that can, or one just for photos, in the app's Models settings.";
@@ -47,6 +48,16 @@ pub trait Channel: Send + Sync {
     /// Delivers a due reminder, with a way to mark it done or snooze it. `late` says
     /// when it was due, if it's late.
     async fn remind(&self, delivery: &Delivery, late: Option<&str>) -> Result<(), String>;
+
+    /// Whether the app plays the voice messages Mimi records (Ogg/Opus).
+    fn sends_voice(&self) -> bool {
+        false
+    }
+
+    /// Sends a voice message, where [`Channel::sends_voice`].
+    async fn send_voice(&self, _note: &crate::voice::audio::VoiceNote) -> Result<(), String> {
+        Err("This app can't play voice messages from Mimi.".to_owned())
+    }
 }
 
 /// Something to send: the assistant's Markdown, with an optional bold title and links
@@ -153,25 +164,30 @@ pub async fn ask_all(channels: &[Arc<dyn Channel>], action: &Action) {
 const REPLY_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 /// Sends the user's message to the assistant in `conversation` and relays the answer,
-/// asking on the same channel for any approval it needs. Spawn it: it returns only once
-/// the reply is finished.
+/// asking on the same channel for any approval it needs. `spoken`: the words came from a
+/// voice message (then, if the user wants it, the answer comes back as one too). Spawn
+/// it: it returns only once the reply is finished.
 pub async fn converse(
     state: &Arc<AppState>,
     channel: &dyn Channel,
     conversation: Uuid,
     text: String,
     attachments: Vec<Upload>,
+    spoken: bool,
 ) {
     let mut events = state.events.subscribe();
     channel.typing().await;
-    let sent = crate::chat::send_with_attachments(
+    let sent = crate::chat::send_with_extras(
         state.clone(),
         conversation,
         text,
         None,
         Vec::new(),
         None,
-        attachments,
+        crate::chat::Extras {
+            attachments,
+            spoken,
+        },
     )
     .await;
     let sent = match sent {
@@ -241,6 +257,9 @@ pub async fn converse(
     };
     if let Err(e) = channel.send(&Outgoing::reply(None, &message)).await {
         tracing::warn!("sending a reply to {} failed: {e}", channel.kind());
+    }
+    if spoken && message.status == MessageStatus::Complete {
+        voice::answer_aloud(state, channel, &message.content).await;
     }
 }
 

@@ -28,6 +28,7 @@ pub mod schedule;
 pub mod settings;
 pub mod tools;
 pub mod updates;
+pub mod voice;
 pub mod web;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -70,6 +71,8 @@ pub struct AppState {
     pub updates: updates::Updates,
     /// Which conversations belong to people the user trusts, kept from their clients.
     pub access: access::Access,
+    /// Listening and speaking: loaded voice models and their downloads.
+    pub voice: voice::Voice,
 }
 
 impl AppState {
@@ -107,6 +110,7 @@ impl AppState {
             mail: Default::default(),
             updates: Default::default(),
             access: Default::default(),
+            voice: Default::default(),
         }
     }
 }

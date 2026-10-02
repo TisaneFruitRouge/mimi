@@ -106,14 +106,17 @@ pub async fn send(
         .collect::<Result<Vec<_>, _>>()
         .map_err(AppError::bad_request)?;
     Ok(Json(
-        chat::send_with_attachments(
+        chat::send_with_extras(
             state,
             id,
             req.content,
             req.model,
             req.mentions,
             None,
-            attachments,
+            chat::Extras {
+                attachments,
+                spoken: req.spoken,
+            },
         )
         .await?,
     ))

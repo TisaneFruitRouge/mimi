@@ -27,6 +27,11 @@ tauri-plugin-opener = "2.5.5"
 tauri-plugin-single-instance = "2.4.5"
 mimi-service = { version = "0.1.0", path = "../../../crates/service" }
 
+# The microphone, for talking to the assistant: WebKitGTK only lets pages use it when
+# told to (the same version and features as Tauri's).
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = { version = "=2.0", features = ["v2_40"] }
+
 [lints]
 workspace = true
 

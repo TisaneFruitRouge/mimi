@@ -1,4 +1,5 @@
 import {
+  AudioLines,
   Bell,
   BellRing,
   Blocks,
@@ -111,6 +112,12 @@ export function ConversationPalette({
           </CommandItem>
           <CommandItem onSelect={run(() => onSection("models"))}>
             <Sparkles /> Models
+          </CommandItem>
+          <CommandItem
+            keywords={["talk", "microphone", "dictation", "speak", "read aloud", "voice messages", "listen"]}
+            onSelect={run(() => onSection("voice"))}
+          >
+            <AudioLines /> Voice
           </CommandItem>
           <CommandItem onSelect={run(() => onSection("memory"))}>
             <BookOpen /> Memory

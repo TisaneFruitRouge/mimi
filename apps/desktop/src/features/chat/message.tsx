@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, CircleAlert, Copy, ExternalLink, Link } from "lucide-react";
+import { Check, CircleAlert, Copy, ExternalLink, Link, Mic, Volume2 } from "lucide-react";
 import { cn } from "cn";
 
 import type { Action } from "@/bindings/Action";
@@ -7,6 +7,7 @@ import type { Message } from "@/bindings/Message";
 import { Actions } from "@/features/chat/actions";
 import { MentionText } from "@/features/chat/mentions/mention-text";
 import { MessagePhotos, ModelsLink } from "@/features/chat/photos";
+import { ReadAloudButton } from "@/features/chat/read-aloud";
 import { AssistantAvatar } from "@/components/assistant-avatar";
 import { LocalityIcon } from "@/components/locality-badge";
 import { Markdown } from "@/components/markdown";
@@ -18,6 +19,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { toggleSpeaking } from "@/lib/speech";
 import { openExternal } from "@/lib/transport";
 
 export function MessageView({ message, onModels }: { message: Message; onModels?: () => void }) {
@@ -28,8 +30,13 @@ export function MessageView({ message, onModels }: { message: Message; onModels?
         <div className="flex flex-col items-end gap-1.5 pl-16">
           {photos.length > 0 && <MessagePhotos attachments={photos} />}
           {message.content && (
-            <div className="rounded-[20px] rounded-br-[6px] bg-[#e9e9ee] px-4 py-2.5 type-body whitespace-pre-wrap">
-              <MentionText text={message.content} mentions={message.mentions} />
+            <div className="flex items-end gap-2">
+              {message.spoken && (
+                <Mic className="mb-3 size-3.5 shrink-0 text-faint" aria-label="Said out loud" />
+              )}
+              <div className="rounded-[20px] rounded-br-[6px] bg-[#e9e9ee] px-4 py-2.5 type-body whitespace-pre-wrap">
+                <MentionText text={message.content} mentions={message.mentions} />
+              </div>
             </div>
           )}
           {message.attachments_unseen && photos.length > 0 && (
@@ -43,7 +50,7 @@ export function MessageView({ message, onModels }: { message: Message; onModels?
     );
   }
   return (
-    <MessageMenu text={message.content}>
+    <MessageMenu text={message.content} readAloud={message.status !== "streaming" ? message.id : undefined}>
       <div>
         <AssistantMessage message={message} />
       </div>
@@ -51,8 +58,18 @@ export function MessageView({ message, onModels }: { message: Message; onModels?
   );
 }
 
-/** Right-click on a message: copy it or the selected part, open or copy a link. */
-function MessageMenu({ text, children }: { text: string; children: React.ReactElement }) {
+/** Right-click on a message: copy it or the selected part, open or copy a link, and for
+ * replies, read it aloud. */
+function MessageMenu({
+  text,
+  readAloud,
+  children,
+}: {
+  text: string;
+  /** The reply's id, to read it aloud. */
+  readAloud?: string;
+  children: React.ReactElement;
+}) {
   const [link, setLink] = useState<string | null>(null);
   const [selection, setSelection] = useState("");
   return (
@@ -87,6 +104,11 @@ function MessageMenu({ text, children }: { text: string; children: React.ReactEl
         <ContextMenuItem disabled={!text} onSelect={() => copyText(text)}>
           <Copy /> Copy message
         </ContextMenuItem>
+        {readAloud && text && (
+          <ContextMenuItem onSelect={() => toggleSpeaking(readAloud, text)}>
+            <Volume2 /> Read aloud
+          </ContextMenuItem>
+        )}
       </ContextMenuContent>
     </ContextMenu>
   );
@@ -129,6 +151,7 @@ function AssistantMessage({ message }: { message: Message }) {
           {message.status === "cancelled" && <span>Stopped</span>}
           {message.status === "interrupted" && <span>This reply was cut off</span>}
           {message.content && <CopyButton text={message.content} />}
+          {message.content && <ReadAloudButton id={message.id} text={message.content} className="-ml-2.5" />}
         </div>
       )}
     </div>

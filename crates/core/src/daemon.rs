@@ -87,6 +87,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         mail: Default::default(),
         updates: Default::default(),
         access: Default::default(),
+        voice: Default::default(),
     });
     // Before anything is served or sent: trusted people's conversations stay theirs.
     crate::access::load(&state).await;
@@ -136,6 +137,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
                 tick.tick().await;
                 state.runtime.unload_if_idle(&state).await;
                 state.semantic.unload_if_idle().await;
+                state.voice.unload_if_idle().await;
             }
         });
     }

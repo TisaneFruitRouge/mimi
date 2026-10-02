@@ -68,10 +68,14 @@ pub struct Message {
     /// the user sent some. Clients say so under the message.
     #[serde(default)]
     pub attachments_unseen: bool,
+    /// The user said it out loud: the words were transcribed from the microphone or a
+    /// voice message, so one may be misheard.
+    #[serde(default)]
+    pub spoken: bool,
 }
 
-/// What kind of file is attached to a message. Only pictures for now; voice notes and
-/// videos will be kinds of their own.
+/// What kind of file is attached to a message. Only pictures for now; videos may be a
+/// kind of their own. (Voice isn't kept: what's said is transcribed, see `spoken`.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
@@ -221,6 +225,9 @@ pub struct SendMessage {
     /// Photos sent with the message (at most 10). With photos, `content` may be empty.
     #[serde(default)]
     pub attachments: Vec<NewAttachment>,
+    /// The words came from the microphone (`POST /v1/voice/transcribe`).
+    #[serde(default)]
+    pub spoken: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

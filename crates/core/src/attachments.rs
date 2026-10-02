@@ -1,5 +1,5 @@
-//! Files the user sends with a message: only pictures for now (voice notes and videos
-//! will be kinds of their own).
+//! Files the user sends with a message: only pictures for now (videos may follow; voice
+//! is transcribed instead, see `crate::voice`).
 //!
 //! Every picture is normalised on arrival, whichever way it came (the app, a browser,
 //! Telegram, Signal, Matrix): decoded (refusing what isn't a picture), turned upright

@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::{
     Connection, Conversation, Delivery, GuestApproval, Message, ModelPull, Provider, RuntimeStatus,
-    Settings, UpdateStatus,
+    Settings, UpdateStatus, VoiceStatus,
 };
 
 /// Pushed by the daemon to every client connected to `GET /v1/events` (WebSocket, one
@@ -73,6 +73,10 @@ pub enum Event {
     /// (then `action.status` isn't `pending_approval` anymore). Never their conversation.
     GuestApproval {
         approval: GuestApproval,
+    },
+    /// A voice download started, progressed or finished, or voice settings changed.
+    VoiceChanged {
+        voice: VoiceStatus,
     },
     /// This client fell behind and missed events. Refetch any state you display.
     Resync,

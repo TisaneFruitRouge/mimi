@@ -261,7 +261,7 @@ fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
         return Ok(());
     };
     let handle = app.clone();
-    tauri::WebviewWindowBuilder::from_config(app, &config)?
+    let _window = tauri::WebviewWindowBuilder::from_config(app, &config)?
         .on_new_window(move |url, _| {
             if matches!(url.scheme(), "http" | "https" | "mailto") {
                 let _ = handle.opener().open_url(url.as_str(), None::<&str>);
@@ -269,7 +269,36 @@ fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
             tauri::webview::NewWindowResponse::Deny
         })
         .build()?;
+    #[cfg(target_os = "linux")]
+    allow_microphone(&_window);
     Ok(())
+}
+
+/// Lets the app's own page use the microphone (to talk to the assistant), and nothing
+/// else: no camera, no location, no notifications from the page. On macOS WebKit asks
+/// the system, which asks the user once (`NSMicrophoneUsageDescription`).
+#[cfg(target_os = "linux")]
+fn allow_microphone(window: &tauri::WebviewWindow) {
+    let _ = window.with_webview(|webview| {
+        use webkit2gtk::glib::prelude::Cast;
+        use webkit2gtk::{
+            PermissionRequestExt, SettingsExt, UserMediaPermissionRequest,
+            UserMediaPermissionRequestExt, WebViewExt,
+        };
+        let view = webview.inner();
+        if let Some(settings) = WebViewExt::settings(&view) {
+            settings.set_enable_media_stream(true);
+        }
+        view.connect_permission_request(|_, request| {
+            match request.downcast_ref::<UserMediaPermissionRequest>() {
+                Some(media) if media.is_for_audio_device() && !media.is_for_video_device() => {
+                    request.allow()
+                }
+                _ => request.deny(),
+            }
+            true
+        });
+    });
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

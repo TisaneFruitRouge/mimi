@@ -2,6 +2,7 @@
 import type { MailSorter } from "./MailSorter";
 import type { ModelRef } from "./ModelRef";
 import type { Permissions } from "./Permissions";
+import type { VoiceSettings } from "./VoiceSettings";
 
 /**
  * User-editable settings. Every field has a default so settings saved by an older
@@ -76,4 +77,8 @@ permissions: Permissions,
  * Whether this computer asks GitHub, about once a day, if a newer version of Mimi
  * has been published. Off unless the user turns it on.
  */
-update_check: boolean, };
+update_check: boolean, 
+/**
+ * Talking to the assistant and hearing it (Settings › Voice).
+ */
+voice: VoiceSettings, };

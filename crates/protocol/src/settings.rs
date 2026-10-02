@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
 
-use crate::Permissions;
+use crate::{Permissions, VoiceSettings};
 
 /// User-editable settings. Every field has a default so settings saved by an older
 /// version keep loading after new fields are added.
@@ -49,6 +49,8 @@ pub struct Settings {
     /// Whether this computer asks GitHub, about once a day, if a newer version of Mimi
     /// has been published. Off unless the user turns it on.
     pub update_check: bool,
+    /// Talking to the assistant and hearing it (Settings › Voice).
+    pub voice: VoiceSettings,
 }
 
 /// Longest personality, in characters. It goes into every prompt, next to the memory
@@ -89,6 +91,7 @@ impl Default for Settings {
             mail_sorter: MailSorter::Model,
             permissions: Permissions::default(),
             update_check: false,
+            voice: VoiceSettings::default(),
         }
     }
 }

@@ -22,7 +22,7 @@ use presage::store::StateStore;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-use super::classify::{Incoming, classify, pictures};
+use super::classify::{Incoming, classify, pictures, recording};
 use super::store::{SignalStore, SignalStoreError};
 use crate::db::Db;
 
@@ -354,9 +354,16 @@ impl Client {
                             let sent = &self.sent;
                             match classify(&content, account, device, |ts| sent.contains(&ts)) {
                                 Incoming::Note { text, quote, timestamp, .. } => {
-                                    // Only a note's pictures are ever downloaded.
+                                    // Only a note's pictures and recording are ever downloaded.
                                     let photos = download(&manager, &pictures(&content, account)).await;
-                                    self.report(Report::Message(Incoming::Note { text, quote, timestamp, photos }));
+                                    let voice = match recording(&content, account) {
+                                        Some(pointer) => download_recording(&manager, &pointer).await,
+                                        None => None,
+                                    };
+                                    if text.is_empty() && photos.is_empty() && voice.is_none() {
+                                        continue;
+                                    }
+                                    self.report(Report::Message(Incoming::Note { text, quote, timestamp, photos, voice }));
                                 }
                                 incoming @ Incoming::Reaction { .. } => {
                                     self.report(Report::Message(incoming));
@@ -475,6 +482,25 @@ async fn download(
         }
     }
     out
+}
+
+/// Downloads (and decrypts) a note's voice recording.
+async fn download_recording(
+    manager: &SignalManager,
+    pointer: &presage::libsignal_service::proto::AttachmentPointer,
+) -> Option<Vec<u8>> {
+    match tokio::time::timeout(Duration::from_secs(90), manager.get_attachment(pointer)).await {
+        Ok(Ok(data)) if data.len() <= crate::attachments::MAX_UPLOAD_BYTES => Some(data),
+        Ok(Ok(_)) => None,
+        Ok(Err(e)) => {
+            tracing::warn!("downloading a Signal voice note failed: {}", brief(&e));
+            None
+        }
+        Err(_) => {
+            tracing::warn!("downloading a Signal voice note timed out");
+            None
+        }
+    }
 }
 
 /// Whether Signal refused the device's credentials: it was unlinked.

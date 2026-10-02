@@ -27,6 +27,7 @@ mod providers;
 mod schedule;
 mod settings;
 mod updates;
+mod voice;
 mod web;
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -203,6 +204,19 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/mail/messages/{id}/content", get(mail::content))
         .route("/mail/messages/{id}/images", post(mail::images))
+        .route("/voice", get(voice::status))
+        .route(
+            "/voice/transcribe",
+            // Recordings come base64-encoded.
+            post(voice::transcribe).layer(axum::extract::DefaultBodyLimit::max(
+                crate::voice::audio::MAX_BYTES * 4 / 3 + 1024,
+            )),
+        )
+        .route("/voice/prepare", post(voice::prepare))
+        .route("/voice/speak", post(voice::speak))
+        .route("/voice/packs/{id}", axum::routing::delete(voice::remove))
+        .route("/voice/packs/{id}/download", post(voice::download))
+        .route("/voice/packs/{id}/cancel", post(voice::cancel))
         .route("/web/login-link", post(web::login_link))
         .route("/web/logout", post(web::logout))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));

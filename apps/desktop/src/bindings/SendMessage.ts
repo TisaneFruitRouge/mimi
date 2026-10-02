@@ -16,4 +16,8 @@ mentions: Array<Mention>,
 /**
  * Photos sent with the message (at most 10). With photos, `content` may be empty.
  */
-attachments: Array<NewAttachment>, };
+attachments: Array<NewAttachment>, 
+/**
+ * The words came from the microphone (`POST /v1/voice/transcribe`).
+ */
+spoken: boolean, };

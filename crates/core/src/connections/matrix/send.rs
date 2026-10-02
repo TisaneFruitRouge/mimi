@@ -25,7 +25,7 @@ use crate::tools::{CallTarget, Governs, Tool, ToolContext, ToolSource};
 /// Most people and groups one message goes to.
 pub const MAX_RECIPIENTS: usize = 20;
 
-/// Offers `matrix_send` and `matrix_rooms` while a Matrix account is paired and running.
+/// Offers `matrix_send`, `matrix_rooms` and `matrix_read` while a Matrix account is paired and running.
 pub struct MatrixTools;
 
 impl ToolSource for MatrixTools {
@@ -43,7 +43,10 @@ impl ToolSource for MatrixTools {
                 Arc::new(SendMessage {
                     accounts: accounts.clone(),
                 }) as Arc<dyn Tool>,
-                Arc::new(Groups { accounts }),
+                Arc::new(Groups {
+                    accounts: accounts.clone(),
+                }),
+                Arc::new(super::read::ReadGroup { accounts }),
             ]
         }
         .boxed()
@@ -151,7 +154,7 @@ pub async fn groups_of(state: &AppState, paired: &Paired) -> Vec<RoomInfo> {
 }
 
 /// The account a call sends from: the one named, else the only (or first) one.
-fn pick<'a>(accounts: &'a [Paired], from: Option<&str>) -> Result<&'a Paired, String> {
+pub(super) fn pick<'a>(accounts: &'a [Paired], from: Option<&str>) -> Result<&'a Paired, String> {
     match from.map(str::trim).filter(|f| !f.is_empty()) {
         Some(from) => accounts
             .iter()
@@ -241,6 +244,10 @@ async fn resolve_one(s: &Scene<'_>, raw: &str) -> Result<Recipient, String> {
     if raw.starts_with('@') {
         let user = UserId::parse(raw).map_err(|_| format!("“{raw}” isn't a Matrix address."))?;
         return person(s, user.as_str(), None).await;
+    }
+    if let Some(local) = raw.strip_prefix('#').filter(|r| !r.contains(':')) {
+        // "#accueil": an address without its server, so the name of a group it's in.
+        return by_name(s, local).await;
     }
     if raw.starts_with('#') {
         let alias =
@@ -804,7 +811,7 @@ impl Tool for Groups {
     fn description(&self) -> &str {
         "List the Matrix groups you're in and the public groups on your Matrix server (name, \
          address, how many members), to find the group the user means before sending a message \
-         there with matrix_send."
+         there with matrix_send or reading it with matrix_read."
     }
 
     fn parameters(&self) -> Value {

@@ -159,8 +159,25 @@ async fn on_guest_text(
         return;
     };
     tracing::info!(connection = %connection, room = %msg.room, "a message from someone the owner trusts");
+    let mut photo = msg.photo;
+    if let Some(recording) = photo.take_if(|p| p.voice) {
+        match channel.messenger.download(recording).await {
+            Ok(upload) => {
+                channels::voice::hear(state, Arc::new(channel), conversation, upload.data, text)
+            }
+            Err(e) => {
+                tracing::warn!(connection = %connection, room = %msg.room, "downloading a Matrix voice message failed: {e}");
+                let _ = channel
+                    .send(&Outgoing::text(
+                        "I couldn't get that voice message from the server. Try sending it again.",
+                    ))
+                    .await;
+            }
+        }
+        return;
+    }
     let mut photos = Vec::new();
-    if let Some(photo) = msg.photo {
+    if let Some(photo) = photo {
         match channel.messenger.download(photo).await {
             Ok(upload) => photos.push(upload),
             Err(e) => {

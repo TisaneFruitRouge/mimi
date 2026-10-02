@@ -25,6 +25,7 @@ pub mod providers;
 pub mod schedule;
 pub mod settings;
 pub mod updates;
+pub mod voice;
 
 pub use access::*;
 pub use calendar::*;
@@ -42,6 +43,7 @@ pub use providers::*;
 pub use schedule::*;
 pub use settings::*;
 pub use updates::*;
+pub use voice::*;
 
 /// Prefix for all versioned API routes.
 pub const API_PREFIX: &str = "/v1";

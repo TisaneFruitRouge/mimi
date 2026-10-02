@@ -208,35 +208,78 @@ async fn download(
     cancel: &CancellationToken,
 ) -> Result<(), String> {
     let dir = models_dir(&state.paths);
-    tokio::fs::create_dir_all(&dir)
-        .await
-        .map_err(|e| format!("Couldn't create the models folder: {e}"))?;
-    let part = part_path(&dir, source);
-    let mut have = tokio::fs::metadata(&part)
+    let base = state.downloads.base();
+    let file = Fetch {
+        url: format!(
+            "{}/{}/resolve/main/{}",
+            base.trim_end_matches('/'),
+            source.repo,
+            source.file
+        ),
+        part: part_path(&dir, source),
+        dest: dir.join(&source.file),
+        bytes: source.bytes,
+        sha256: &source.sha256,
+        host: "Hugging Face",
+        what: "model",
+    };
+    fetch(&state.http, &file, cancel, |status, done| {
+        publish(state, pull, status, Some(done))
+    })
+    .await
+}
+
+/// A file to download: resumable through `part`, and moved to `dest` only once its
+/// SHA-256 matches.
+pub(crate) struct Fetch<'a> {
+    pub url: String,
+    pub part: PathBuf,
+    pub dest: PathBuf,
+    pub bytes: u64,
+    pub sha256: &'a str,
+    /// Who serves it, for messages: "Hugging Face", "GitHub".
+    pub host: &'a str,
+    /// What it is, for messages: "model", "voice".
+    pub what: &'a str,
+}
+
+/// Downloads a file, resuming a partial download, and checks it. `progress` gets a
+/// status line and the bytes so far, at most four times a second.
+pub(crate) async fn fetch(
+    http: &reqwest::Client,
+    file: &Fetch<'_>,
+    cancel: &CancellationToken,
+    mut progress: impl FnMut(&str, u64),
+) -> Result<(), String> {
+    let what = file.what;
+    if let Some(dir) = file.part.parent() {
+        tokio::fs::create_dir_all(dir)
+            .await
+            .map_err(|e| format!("Couldn't create the folder for the {what}: {e}"))?;
+    }
+    let part = &file.part;
+    let mut have = tokio::fs::metadata(part)
         .await
         .map(|m| m.len())
         .unwrap_or(0);
-    if have > source.bytes {
-        let _ = tokio::fs::remove_file(&part).await;
+    if have > file.bytes {
+        let _ = tokio::fs::remove_file(part).await;
         have = 0;
     }
-    check_space(&dir, source.bytes - have)?;
+    if let Some(dir) = part.parent() {
+        check_space(dir, file.bytes - have, what)?;
+    }
 
     // Resuming: the hash has to cover what's already there.
     let mut hasher = Sha256::new();
     if have > 0 {
-        publish(
-            state,
-            pull,
-            "Checking what's already downloaded",
-            Some(have),
-        );
-        let mut file = tokio::fs::File::open(&part)
+        progress("Checking what's already downloaded", have);
+        let mut existing = tokio::fs::File::open(part)
             .await
             .map_err(|e| e.to_string())?;
         let mut buf = vec![0u8; 1 << 20];
         loop {
-            let n = file.read(&mut buf).await.map_err(|e| e.to_string())?;
+            let n = existing.read(&mut buf).await.map_err(|e| e.to_string())?;
             if n == 0 {
                 break;
             }
@@ -244,19 +287,13 @@ async fn download(
         }
     }
 
-    let base = state.downloads.base();
-    let url = format!(
-        "{}/{}/resolve/main/{}",
-        base.trim_end_matches('/'),
-        source.repo,
-        source.file
-    );
-    let mut request = state.http.get(&url);
+    let mut request = http.get(&file.url);
     if have > 0 {
         request = request.header(RANGE, format!("bytes={have}-"));
     }
+    let host = file.host;
     let res = tokio::select! {
-        r = request.send() => r.map_err(|_| "Couldn't reach Hugging Face. Check your internet connection.".to_owned())?,
+        r = request.send() => r.map_err(|_| format!("Couldn't reach {host}. Check your internet connection."))?,
         _ = cancel.cancelled() => return Err("cancelled".to_owned()),
     };
     let append = match res.status() {
@@ -267,33 +304,33 @@ async fn download(
             hasher = Sha256::new();
             false
         }
-        StatusCode::RANGE_NOT_SATISFIABLE if have == source.bytes => true,
+        StatusCode::RANGE_NOT_SATISFIABLE if have == file.bytes => true,
         StatusCode::NOT_FOUND => {
-            return Err("This model isn't available for download anymore.".to_owned());
+            return Err(format!("This {what} isn't available for download anymore."));
         }
         s => {
             return Err(format!(
-                "The download didn't start (Hugging Face answered {s}). Try again later."
+                "The download didn't start ({host} answered {s}). Try again later."
             ));
         }
     };
-    let mut file = tokio::fs::OpenOptions::new()
+    let mut out = tokio::fs::OpenOptions::new()
         .create(true)
         .write(true)
         .append(append)
         .truncate(!append)
-        .open(&part)
+        .open(part)
         .await
-        .map_err(|e| format!("Couldn't write the model file: {e}"))?;
+        .map_err(|e| format!("Couldn't write the {what} file: {e}"))?;
 
     let mut stream = res.bytes_stream();
     let mut last_sent = Instant::now() - Duration::from_secs(1);
-    publish(state, pull, "Downloading", Some(have));
+    progress("Downloading", have);
     loop {
         let chunk = tokio::select! {
             c = stream.next() => c,
             _ = cancel.cancelled() => {
-                let _ = file.flush().await;
+                let _ = out.flush().await;
                 return Err("cancelled".to_owned());
             }
         };
@@ -301,36 +338,36 @@ async fn download(
         let chunk = chunk.map_err(|_| {
             "The download was interrupted. Start it again to continue where it stopped.".to_owned()
         })?;
-        file.write_all(&chunk)
+        out.write_all(&chunk)
             .await
-            .map_err(|e| format!("Couldn't write the model file: {e}"))?;
+            .map_err(|e| format!("Couldn't write the {what} file: {e}"))?;
         hasher.update(&chunk);
         have += chunk.len() as u64;
         if last_sent.elapsed() >= Duration::from_millis(250) {
             last_sent = Instant::now();
-            publish(state, pull, "Downloading", Some(have));
+            progress("Downloading", have);
         }
     }
-    file.flush().await.map_err(|e| e.to_string())?;
-    file.sync_all().await.map_err(|e| e.to_string())?;
-    drop(file);
+    out.flush().await.map_err(|e| e.to_string())?;
+    out.sync_all().await.map_err(|e| e.to_string())?;
+    drop(out);
 
-    if have != source.bytes {
+    if have != file.bytes {
         return Err(
             "The download was interrupted. Start it again to continue where it stopped.".to_owned(),
         );
     }
-    publish(state, pull, "Checking the download", Some(have));
+    progress("Checking the download", have);
     let digest: String = hasher
         .finalize()
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect();
-    if !digest.eq_ignore_ascii_case(&source.sha256) {
-        let _ = tokio::fs::remove_file(&part).await;
+    if !digest.eq_ignore_ascii_case(file.sha256) {
+        let _ = tokio::fs::remove_file(part).await;
         return Err("The downloaded file was damaged, so it was deleted. Try again.".to_owned());
     }
-    tokio::fs::rename(&part, dir.join(&source.file))
+    tokio::fs::rename(part, &file.dest)
         .await
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -348,13 +385,13 @@ fn publish(state: &AppState, pull: &mut ModelPull, status: &str, completed: Opti
 }
 
 /// Refuses to start a download that can't fit on the disk.
-fn check_space(dir: &Path, needed: u64) -> Result<(), String> {
+pub(crate) fn check_space(dir: &Path, needed: u64, what: &str) -> Result<(), String> {
     let Some(free) = free_space(dir) else {
         return Ok(());
     };
     if free < needed + SPACE_MARGIN {
         return Err(format!(
-            "There isn't enough free space: this model needs {:.1} GB and {:.1} GB is free.",
+            "There isn't enough free space: this {what} needs {:.1} GB and {:.1} GB is free.",
             needed as f64 / 1e9,
             free as f64 / 1e9
         ));

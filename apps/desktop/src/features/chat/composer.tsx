@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowUp, AtSign, Blocks, Hash, ImagePlus, MessageSquarePlus, Plus, Sparkles } from "lucide-react";
 import { cn } from "cn";
@@ -25,7 +25,8 @@ import {
   encodePhoto,
   imageFiles,
 } from "@/features/chat/photos";
-import { useActiveModel, useSeesImages } from "@/lib/queries";
+import { FinishButton, MicButton, RecordingBar, useDictation } from "@/features/chat/voice";
+import { useActiveModel, useSeesImages, useSettings, useVoice } from "@/lib/queries";
 
 export interface ComposerHandle {
   setText: (text: string) => void;
@@ -38,13 +39,14 @@ export interface ComposerHandle {
 /**
  * The message box: a floating card with the text field on top and a quiet toolbar
  * below. Entry points on the left (`@` and `#` mentions, `/` actions), privacy and send on the
- * right.
+ * right; with nothing to send, the microphone takes Send's place.
  */
 export const Composer = forwardRef<
   ComposerHandle,
   {
     replying: boolean;
-    onSend: (text: string, mentions: Mention[], photos: NewAttachment[]) => Promise<boolean>;
+    /** `spoken`: some of the words were said out loud. */
+    onSend: (text: string, mentions: Mention[], photos: NewAttachment[], spoken: boolean) => Promise<boolean>;
     onStop: () => void;
     onNewConversation: () => void;
     onSection: (s: Section) => void;
@@ -60,6 +62,47 @@ export const Composer = forwardRef<
   const [sending, setSending] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
   const seesImages = useSeesImages();
+  const sendsAtOnce = !!useSettings().data?.voice.send_when_done;
+  // Some of what's in the box was said out loud.
+  const spoken = useRef(false);
+  const dictation = useDictation((words) => {
+    if (sendsAtOnce) {
+      void submit({ text: [text.trim(), words].filter(Boolean).join(" "), spoken: true });
+      return;
+    }
+    const next = text.trim() ? `${text.trimEnd()} ${words}` : words;
+    spoken.current = true;
+    setText(next);
+    mention.refresh(next);
+    requestAnimationFrame(() => {
+      area.current?.focus();
+      area.current?.setSelectionRange(next.length, next.length);
+    });
+  });
+  const talking = dictation.phase !== "idle";
+  const canListen = useVoice().data?.listening.state === "ready";
+
+  // ⌘/Ctrl ⇧ Space talks from anywhere in the chat, and again finishes.
+  const talk = useRef(() => {});
+  talk.current = () => {
+    if (dictation.phase === "recording") void dictation.finish();
+    else if (talking || replying) return;
+    else if (canListen) void dictation.start();
+    else
+      toast("Talking needs a one-time download first.", {
+        action: { label: "Set up", onClick: () => onSection("voice") },
+      });
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code === "Space" && e.shiftKey && (e.metaKey || e.ctrlKey) && !e.altKey) {
+        e.preventDefault();
+        talk.current();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const addPhotos = (files: File[]) => {
     const images = imageFiles(files);
@@ -93,9 +136,17 @@ export const Composer = forwardRef<
     el.style.height = `${Math.min(el.scrollHeight, 240)}px`;
   }, [text]);
 
-  const submit = async () => {
-    const value = text.trim();
-    if ((!value && !photos.length) || replying || sending || !active) return;
+  const submit = async (said?: { text: string; spoken: boolean }) => {
+    const value = (said?.text ?? text).trim();
+    const wasSpoken = said?.spoken ?? spoken.current;
+    if ((!value && !photos.length) || replying || sending || !active) {
+      // Said with nowhere to send it yet: keep the words.
+      if (said && value) {
+        setText(value);
+        spoken.current = true;
+      }
+      return;
+    }
     const mentions = mention.mentions;
     const attached = photos;
     let encoded: NewAttachment[];
@@ -110,12 +161,14 @@ export const Composer = forwardRef<
     setText("");
     setPhotos([]);
     mention.reset();
-    const sent = await onSend(value, mentions, encoded);
+    spoken.current = false;
+    const sent = await onSend(value, mentions, encoded, wasSpoken);
     setSending(false);
     if (!sent) {
       setText(value);
       setPhotos(attached);
       mention.restore(mentions);
+      spoken.current = wasSpoken;
     }
   };
 
@@ -147,7 +200,15 @@ export const Composer = forwardRef<
             <ModelsLink onModels={() => onSection("models")} />.
           </p>
         )}
-        <div className="relative">
+        {talking && (
+          <RecordingBar
+            phase={dictation.phase}
+            levels={dictation.levels}
+            seconds={dictation.seconds}
+            onCancel={dictation.cancel}
+          />
+        )}
+        <div className={cn("relative", talking && "hidden")}>
           <MentionHighlights ref={highlights} text={text} mentions={mention.mentions} className={fieldText} />
           <textarea
             ref={area}
@@ -159,13 +220,14 @@ export const Composer = forwardRef<
                 return;
               }
               setText(e.target.value);
+              if (!e.target.value.trim()) spoken.current = false;
               mention.refresh(e.target.value);
             }}
             onKeyDown={(e) => {
               if (mention.onKeyDown(e)) return;
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
-                submit();
+                void submit();
               }
             }}
             onPaste={(e) => {
@@ -247,7 +309,9 @@ export const Composer = forwardRef<
           <PrivacyChip onManage={() => onSection("models")} />
 
           <AnimatePresence mode="popLayout" initial={false}>
-            {replying ? (
+            {talking ? (
+              <FinishButton phase={dictation.phase} sendsAtOnce={sendsAtOnce} onFinish={() => void dictation.finish()} />
+            ) : replying ? (
               <motion.button
                 key="stop"
                 initial={{ scale: 0.6, opacity: 0 }}
@@ -260,6 +324,8 @@ export const Composer = forwardRef<
               >
                 <span className="size-2.5 rounded-[2.5px] bg-current" />
               </motion.button>
+            ) : !canSend && !sending ? (
+              <MicButton onStart={() => void dictation.start()} />
             ) : (
               <motion.button
                 key="send"
@@ -267,7 +333,7 @@ export const Composer = forwardRef<
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0.6, opacity: 0 }}
                 transition={{ type: "spring", stiffness: 600, damping: 30 }}
-                onClick={submit}
+                onClick={() => void submit()}
                 disabled={!canSend}
                 aria-label="Send"
                 className={cn(

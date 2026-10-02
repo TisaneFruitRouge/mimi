@@ -1,0 +1,801 @@
+{
+  "_comment": "What Mimi downloads to listen and speak, all run on this computer by sherpa-onnx. Each archive is pinned by size and SHA-256 (GitHub shows asset digests; older assets were hashed by hand) and unpacked into <data>/voice/<id>/ without its top folder. `files` are paths inside it. Recognizers: `languages` are ISO 639-1 codes, or * for all. Voices: `language` is a BCP-47 tag (a bare language matches any region), `lang` and `lexicon` are Kokoro's per-voice settings. Light voices use only datasets in the public domain, CC0 or CC-BY.",
+  "recognizers": [
+    {
+      "id": "parakeet-v3",
+      "engine": "nemo_transducer",
+      "label": "Understands 25 European languages",
+      "detail": "English, French, German, Spanish, Italian, Portuguese, Dutch, Polish, Russian, Ukrainian and 15 more. Quick on any computer.",
+      "languages": [
+        "bg",
+        "hr",
+        "cs",
+        "da",
+        "nl",
+        "en",
+        "et",
+        "fi",
+        "fr",
+        "de",
+        "el",
+        "hu",
+        "it",
+        "lv",
+        "lt",
+        "mt",
+        "pl",
+        "pt",
+        "ro",
+        "sk",
+        "sl",
+        "es",
+        "sv",
+        "ru",
+        "uk"
+      ],
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
+        "bytes": 487170055,
+        "sha256": "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf"
+      },
+      "files": {
+        "encoder": "encoder.int8.onnx",
+        "decoder": "decoder.int8.onnx",
+        "joiner": "joiner.int8.onnx",
+        "tokens": "tokens.txt"
+      },
+      "license": "NVIDIA Parakeet TDT 0.6B v3, CC-BY-4.0"
+    },
+    {
+      "id": "whisper-turbo",
+      "engine": "whisper",
+      "label": "Understands almost every language",
+      "detail": "Close to a hundred languages, from Arabic to Japanese. Slower, best on a recent computer.",
+      "languages": [
+        "*"
+      ],
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-turbo.tar.bz2",
+        "bytes": 563790207,
+        "sha256": "b11acbbcd660b44a8e0df33724feb5aaa709cf65668f2823d59f656312544f22"
+      },
+      "files": {
+        "encoder": "turbo-encoder.int8.onnx",
+        "decoder": "turbo-decoder.int8.onnx",
+        "tokens": "turbo-tokens.txt"
+      },
+      "license": "OpenAI Whisper large-v3-turbo, MIT"
+    }
+  ],
+  "voice_packs": [
+    {
+      "id": "kokoro",
+      "style": "natural",
+      "engine": "kokoro",
+      "label": "Natural voices",
+      "detail": "English, French, Spanish, Italian, Portuguese and Chinese. Best on a recent computer.",
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2",
+        "bytes": 349906910,
+        "sha256": "c5f7e2d2caf082bc1d20fb70334a61d99d20b484500aad32e7cf84c128ea3298"
+      },
+      "files": {
+        "model": "model.onnx",
+        "voices": "voices.bin",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data",
+        "dict_dir": "dict"
+      },
+      "license": "Kokoro-82M, Apache-2.0",
+      "voices": [
+        {
+          "id": "kokoro-heart",
+          "name": "Heart",
+          "language": "en-US",
+          "language_name": "English (US)",
+          "speaker": 3,
+          "lang": "en-us",
+          "lexicon": [
+            "lexicon-us-en.txt",
+            "lexicon-zh.txt"
+          ]
+        },
+        {
+          "id": "kokoro-michael",
+          "name": "Michael",
+          "language": "en-US",
+          "language_name": "English (US)",
+          "speaker": 16,
+          "lang": "en-us",
+          "lexicon": [
+            "lexicon-us-en.txt",
+            "lexicon-zh.txt"
+          ]
+        },
+        {
+          "id": "kokoro-emma",
+          "name": "Emma",
+          "language": "en-GB",
+          "language_name": "English (UK)",
+          "speaker": 21,
+          "lang": "en-gb",
+          "lexicon": [
+            "lexicon-gb-en.txt",
+            "lexicon-zh.txt"
+          ]
+        },
+        {
+          "id": "kokoro-george",
+          "name": "George",
+          "language": "en-GB",
+          "language_name": "English (UK)",
+          "speaker": 26,
+          "lang": "en-gb",
+          "lexicon": [
+            "lexicon-gb-en.txt",
+            "lexicon-zh.txt"
+          ]
+        },
+        {
+          "id": "kokoro-siwis",
+          "name": "Siwis",
+          "language": "fr",
+          "language_name": "French",
+          "speaker": 30,
+          "lang": "fr"
+        },
+        {
+          "id": "kokoro-dora-es",
+          "name": "Dora",
+          "language": "es",
+          "language_name": "Spanish",
+          "speaker": 28,
+          "lang": "es"
+        },
+        {
+          "id": "kokoro-alex-es",
+          "name": "Alex",
+          "language": "es",
+          "language_name": "Spanish",
+          "speaker": 29,
+          "lang": "es"
+        },
+        {
+          "id": "kokoro-sara",
+          "name": "Sara",
+          "language": "it",
+          "language_name": "Italian",
+          "speaker": 35,
+          "lang": "it"
+        },
+        {
+          "id": "kokoro-nicola",
+          "name": "Nicola",
+          "language": "it",
+          "language_name": "Italian",
+          "speaker": 36,
+          "lang": "it"
+        },
+        {
+          "id": "kokoro-dora-pt",
+          "name": "Dora",
+          "language": "pt-BR",
+          "language_name": "Portuguese (Brazil)",
+          "speaker": 42,
+          "lang": "pt-br"
+        },
+        {
+          "id": "kokoro-alex-pt",
+          "name": "Alex",
+          "language": "pt-BR",
+          "language_name": "Portuguese (Brazil)",
+          "speaker": 43,
+          "lang": "pt-br"
+        },
+        {
+          "id": "kokoro-xiaoxiao",
+          "name": "Xiaoxiao",
+          "language": "zh",
+          "language_name": "Chinese",
+          "speaker": 47,
+          "lang": "zh",
+          "lexicon": [
+            "lexicon-us-en.txt",
+            "lexicon-zh.txt"
+          ]
+        },
+        {
+          "id": "kokoro-yunxi",
+          "name": "Yunxi",
+          "language": "zh",
+          "language_name": "Chinese",
+          "speaker": 50,
+          "lang": "zh",
+          "lexicon": [
+            "lexicon-us-en.txt",
+            "lexicon-zh.txt"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "piper-en_US-ljspeech-medium",
+      "style": "light",
+      "engine": "vits",
+      "label": "English (US) voice",
+      "detail": "Light: quick on any computer.",
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-ljspeech-medium.tar.bz2",
+        "bytes": 67169893,
+        "sha256": "3dfb4b759d8be032a4903a9538d128b0fda2a06ab1de6cbc2d93a97e2dd83dba"
+      },
+      "files": {
+        "model": "en_US-ljspeech-medium.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data"
+      },
+      "voices": [
+        {
+          "id": "piper-en_US-ljspeech-medium",
+          "name": "Linda",
+          "language": "en-US",
+          "language_name": "English (US)",
+          "speaker": 0
+        }
+      ]
+    },
+    {
+      "id": "piper-en_GB-cori-medium",
+      "style": "light",
+      "engine": "vits",
+      "label": "English (UK) voice",
+      "detail": "Light: quick on any computer.",
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_GB-cori-medium.tar.bz2",
+        "bytes": 67257412,
+        "sha256": "49c9a5361bbdd95d7ca9687c4de11e5908481f65e7c7c368960df79949fdac2b"
+      },
+      "files": {
+        "model": "en_GB-cori-medium.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data"
+      },
+      "voices": [
+        {
+          "id": "piper-en_GB-cori-medium",
+          "name": "Cori",
+          "language": "en-GB",
+          "language_name": "English (UK)",
+          "speaker": 0
+        }
+      ]
+    },
+    {
+      "id": "piper-fr_FR-siwis-medium",
+      "style": "light",
+      "engine": "vits",
+      "label": "French voice",
+      "detail": "Light: quick on any computer.",
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-fr_FR-siwis-medium.tar.bz2",
+        "bytes": 67207459,
+        "sha256": "375909aa30842b3a4efa10b1beb1d761af792960ae6873b4d53889f96c66195b"
+      },
+      "files": {
+        "model": "fr_FR-siwis-medium.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data"
+      },
+      "voices": [
+        {
+          "id": "piper-fr_FR-siwis-medium",
+          "name": "Siwis",
+          "language": "fr",
+          "language_name": "French",
+          "speaker": 0
+        }
+      ]
+    },
+    {
+      "id": "piper-de_DE-thorsten-medium",
+      "style": "light",
+      "engine": "vits",
+      "label": "German voice",
+      "detail": "Light: quick on any computer.",
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-de_DE-thorsten-medium.tar.bz2",
+        "bytes": 67214254,
+        "sha256": "50487d9c95fdf2191f31d2588569381063ba1591dcd4c7d4bdd30f12b2191714"
+      },
+      "files": {
+        "model": "de_DE-thorsten-medium.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data"
+      },
+      "voices": [
+        {
+          "id": "piper-de_DE-thorsten-medium",
+          "name": "Thorsten",
+          "language": "de",
+          "language_name": "German",
+          "speaker": 0
+        }
+      ]
+    },
+    {
+      "id": "piper-es_ES-davefx-medium",
+      "style": "light",
+      "engine": "vits",
+      "label": "Spanish voice",
+      "detail": "Light: quick on any computer.",
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-es_ES-davefx-medium.tar.bz2",
+        "bytes": 67184952,
+        "sha256": "a3f6beb54a9cb893279f72978a22f807a4d9fc9c7848157b524d5cc7b7f58b22"
+      },
+      "files": {
+        "model": "es_ES-davefx-medium.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data"
+      },
+      "voices": [
+        {
+          "id": "piper-es_ES-davefx-medium",
+          "name": "Dave",
+          "language": "es",
+          "language_name": "Spanish",
+          "speaker": 0
+        }
+      ]
+    },
+    {
+      "id": "piper-pt_BR-faber-medium",
+      "style": "light",
+      "engine": "vits",
+      "label": "Portuguese (Brazil) voice",
+      "detail": "Light: quick on any computer.",
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-pt_BR-faber-medium.tar.bz2",
+        "bytes": 67183065,
+        "sha256": "7add3f923ad6bc25ca8a192805fd1a64d1b3893e4611c4a9719545a825039a83"
+      },
+      "files": {
+        "model": "pt_BR-faber-medium.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data"
+      },
+      "voices": [
+        {
+          "id": "piper-pt_BR-faber-medium",
+          "name": "Faber",
+          "language": "pt-BR",
+          "language_name": "Portuguese (Brazil)",
+          "speaker": 0
+        }
+      ]
+    },
+    {
+      "id": "piper-nl_NL-pim-medium",
+      "style": "light",
+      "engine": "vits",
+      "label": "Dutch voice",
+      "detail": "Light: quick on any computer.",
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-nl_NL-pim-medium.tar.bz2",
+        "bytes": 67240538,
+        "sha256": "e78ed301bf6fc66561a04c110754cd6928d772630a3b80b09a83f89410130171"
+      },
+      "files": {
+        "model": "nl_NL-pim-medium.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data"
+      },
+      "voices": [
+        {
+          "id": "piper-nl_NL-pim-medium",
+          "name": "Pim",
+          "language": "nl",
+          "language_name": "Dutch",
+          "speaker": 0
+        }
+      ]
+    },
+    {
+      "id": "piper-pl_PL-gosia-medium",
+      "style": "light",
+      "engine": "vits",
+      "label": "Polish voice",
+      "detail": "Light: quick on any computer.",
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-pl_PL-gosia-medium.tar.bz2",
+        "bytes": 67211182,
+        "sha256": "75bd34dcbdc4dd98d763954756b4b34b4208100497c836381542e4d73dcefa9c"
+      },
+      "files": {
+        "model": "pl_PL-gosia-medium.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data"
+      },
+      "voices": [
+        {
+          "id": "piper-pl_PL-gosia-medium",
+          "name": "Gosia",
+          "language": "pl",
+          "language_name": "Polish",
+          "speaker": 0
+        }
+      ]
+    },
+    {
+      "id": "piper-ru_RU-denis-medium",
+      "style": "light",
+      "engine": "vits",
+      "label": "Russian voice",
+      "detail": "Light: quick on any computer.",
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-ru_RU-denis-medium.tar.bz2",
+        "bytes": 67190991,
+        "sha256": "efa4c18e0b5e32b81d1b6df36b9d312831e5d545200e27848ef926a4cd930300"
+      },
+      "files": {
+        "model": "ru_RU-denis-medium.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data"
+      },
+      "voices": [
+        {
+          "id": "piper-ru_RU-denis-medium",
+          "name": "Denis",
+          "language": "ru",
+          "language_name": "Russian",
+          "speaker": 0
+        }
+      ]
+    },
+    {
+      "id": "piper-uk_UA-ukrainian_tts-medium",
+      "style": "light",
+      "engine": "vits",
+      "label": "Ukrainian voice",
+      "detail": "Light: quick on any computer.",
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-uk_UA-ukrainian_tts-medium.tar.bz2",
+        "bytes": 80355083,
+        "sha256": "92be6ff21ebb1cbcc0c71121a6437db8d060cee5785287aaa6a19a2548f59c03"
+      },
+      "files": {
+        "model": "uk_UA-ukrainian_tts-medium.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data"
+      },
+      "voices": [
+        {
+          "id": "piper-uk_UA-ukrainian_tts-medium-lada",
+          "name": "Lada",
+          "language": "uk",
+          "language_name": "Ukrainian",
+          "speaker": 0
+        },
+        {
+          "id": "piper-uk_UA-ukrainian_tts-medium-mykyta",
+          "name": "Mykyta",
+          "language": "uk",
+          "language_name": "Ukrainian",
+          "speaker": 1
+        }
+      ]
+    },
+    {
+      "id": "piper-sv_SE-nst-medium",
+      "style": "light",
+      "engine": "vits",
+      "label": "Swedish voice",
+      "detail": "Light: quick on any computer.",
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-sv_SE-nst-medium.tar.bz2",
+        "bytes": 67144884,
+        "sha256": "5aed0f5ab75135fc3ba6a4f3567e171d72df753305b08a01ca42f79411587f67"
+      },
+      "files": {
+        "model": "sv_SE-nst-medium.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data"
+      },
+      "voices": [
+        {
+          "id": "piper-sv_SE-nst-medium",
+          "name": "Nst",
+          "language": "sv",
+          "language_name": "Swedish",
+          "speaker": 0
+        }
+      ]
+    },
+    {
+      "id": "piper-da_DK-talesyntese-medium",
+      "style": "light",
+      "engine": "vits",
+      "label": "Danish voice",
+      "detail": "Light: quick on any computer.",
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-da_DK-talesyntese-medium.tar.bz2",
+        "bytes": 67185257,
+        "sha256": "f2e2cbcdb2b21e76f93635b35105d07b37997ace434d7289d04b689a97c19bd0"
+      },
+      "files": {
+        "model": "da_DK-talesyntese-medium.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data"
+      },
+      "voices": [
+        {
+          "id": "piper-da_DK-talesyntese-medium",
+          "name": "Talesyntese",
+          "language": "da",
+          "language_name": "Danish",
+          "speaker": 0
+        }
+      ]
+    },
+    {
+      "id": "piper-no_NO-talesyntese-medium",
+      "style": "light",
+      "engine": "vits",
+      "label": "Norwegian voice",
+      "detail": "Light: quick on any computer.",
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-no_NO-talesyntese-medium.tar.bz2",
+        "bytes": 67194829,
+        "sha256": "dcb7c36b7222e290cca1fd4cdecb474e7fd651dc5b0d3d42c33d416a8e62018b"
+      },
+      "files": {
+        "model": "no_NO-talesyntese-medium.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data"
+      },
+      "voices": [
+        {
+          "id": "piper-no_NO-talesyntese-medium",
+          "name": "Talesyntese",
+          "language": "nb",
+          "language_name": "Norwegian",
+          "speaker": 0
+        }
+      ]
+    },
+    {
+      "id": "piper-fi_FI-harri-medium",
+      "style": "light",
+      "engine": "vits",
+      "label": "Finnish voice",
+      "detail": "Light: quick on any computer.",
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-fi_FI-harri-medium.tar.bz2",
+        "bytes": 67205198,
+        "sha256": "a7fd608e73983c366a5e0bcd13382e6529a6749f67efc406b5a7f9021e3a8b1d"
+      },
+      "files": {
+        "model": "fi_FI-harri-medium.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data"
+      },
+      "voices": [
+        {
+          "id": "piper-fi_FI-harri-medium",
+          "name": "Harri",
+          "language": "fi",
+          "language_name": "Finnish",
+          "speaker": 0
+        }
+      ]
+    },
+    {
+      "id": "piper-cs_CZ-jirka-medium",
+      "style": "light",
+      "engine": "vits",
+      "label": "Czech voice",
+      "detail": "Light: quick on any computer.",
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-cs_CZ-jirka-medium.tar.bz2",
+        "bytes": 67212775,
+        "sha256": "321aafd83dd89b3d5b2c36c5898e0710d4f472f3c191cb7f73901a89b7f8539f"
+      },
+      "files": {
+        "model": "cs_CZ-jirka-medium.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data"
+      },
+      "voices": [
+        {
+          "id": "piper-cs_CZ-jirka-medium",
+          "name": "Jirka",
+          "language": "cs",
+          "language_name": "Czech",
+          "speaker": 0
+        }
+      ]
+    },
+    {
+      "id": "piper-sk_SK-lili-medium",
+      "style": "light",
+      "engine": "vits",
+      "label": "Slovak voice",
+      "detail": "Light: quick on any computer.",
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-sk_SK-lili-medium.tar.bz2",
+        "bytes": 67183092,
+        "sha256": "a00dfbca5d34733862a59d9e309f4e94a92fccc9337c2b124de9a241b604fc0d"
+      },
+      "files": {
+        "model": "sk_SK-lili-medium.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data"
+      },
+      "voices": [
+        {
+          "id": "piper-sk_SK-lili-medium",
+          "name": "Lili",
+          "language": "sk",
+          "language_name": "Slovak",
+          "speaker": 0
+        }
+      ]
+    },
+    {
+      "id": "piper-sl_SI-artur-medium",
+      "style": "light",
+      "engine": "vits",
+      "label": "Slovenian voice",
+      "detail": "Light: quick on any computer.",
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-sl_SI-artur-medium.tar.bz2",
+        "bytes": 67025668,
+        "sha256": "df805f31c4513864edebf7e287cf0b54d72788fc661ed73f88dc4e5aabc5efd5"
+      },
+      "files": {
+        "model": "sl_SI-artur-medium.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data"
+      },
+      "voices": [
+        {
+          "id": "piper-sl_SI-artur-medium",
+          "name": "Artur",
+          "language": "sl",
+          "language_name": "Slovenian",
+          "speaker": 0
+        }
+      ]
+    },
+    {
+      "id": "piper-hu_HU-anna-medium",
+      "style": "light",
+      "engine": "vits",
+      "label": "Hungarian voice",
+      "detail": "Light: quick on any computer.",
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-hu_HU-anna-medium.tar.bz2",
+        "bytes": 67167701,
+        "sha256": "c67b13e57b71eca19098fe499afc35ebce8f63a0b524017c786af2025821216a"
+      },
+      "files": {
+        "model": "hu_HU-anna-medium.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data"
+      },
+      "voices": [
+        {
+          "id": "piper-hu_HU-anna-medium",
+          "name": "Anna",
+          "language": "hu",
+          "language_name": "Hungarian",
+          "speaker": 0
+        }
+      ]
+    },
+    {
+      "id": "piper-ro_RO-mihai-medium",
+      "style": "light",
+      "engine": "vits",
+      "label": "Romanian voice",
+      "detail": "Light: quick on any computer.",
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-ro_RO-mihai-medium.tar.bz2",
+        "bytes": 67182137,
+        "sha256": "cfbee3cdc25cf063339f69e189f4d93cc3be6610d267567537323ced3cf87f4d"
+      },
+      "files": {
+        "model": "ro_RO-mihai-medium.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data"
+      },
+      "voices": [
+        {
+          "id": "piper-ro_RO-mihai-medium",
+          "name": "Mihai",
+          "language": "ro",
+          "language_name": "Romanian",
+          "speaker": 0
+        }
+      ]
+    },
+    {
+      "id": "piper-lv_LV-aivars-medium",
+      "style": "light",
+      "engine": "vits",
+      "label": "Latvian voice",
+      "detail": "Light: quick on any computer.",
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-lv_LV-aivars-medium.tar.bz2",
+        "bytes": 67196173,
+        "sha256": "a0df58c9924761e201ef75d82473b90bde32c5372267e9b4c628fdd267cf2508"
+      },
+      "files": {
+        "model": "lv_LV-aivars-medium.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data"
+      },
+      "voices": [
+        {
+          "id": "piper-lv_LV-aivars-medium",
+          "name": "Aivars",
+          "language": "lv",
+          "language_name": "Latvian",
+          "speaker": 0
+        }
+      ]
+    },
+    {
+      "id": "piper-el_GR-rapunzelina-low",
+      "style": "light",
+      "engine": "vits",
+      "label": "Greek voice",
+      "detail": "Light: quick on any computer.",
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-el_GR-rapunzelina-low.tar.bz2",
+        "bytes": 67105521,
+        "sha256": "bb868070a9ba0d7220b3d7c9291a998c2f60accdb73525bd63b8751b86dd4839"
+      },
+      "files": {
+        "model": "el_GR-rapunzelina-low.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data"
+      },
+      "voices": [
+        {
+          "id": "piper-el_GR-rapunzelina-low",
+          "name": "Rapunzelina",
+          "language": "el",
+          "language_name": "Greek",
+          "speaker": 0
+        }
+      ]
+    },
+    {
+      "id": "piper-vi_VN-vais1000-medium",
+      "style": "light",
+      "engine": "vits",
+      "label": "Vietnamese voice",
+      "detail": "Light: quick on any computer.",
+      "archive": {
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-vi_VN-vais1000-medium.tar.bz2",
+        "bytes": 67154040,
+        "sha256": "fa1367710767d36ed5cf13b4a449e20c35ffd12791c2e47c2e64142bfa55551a"
+      },
+      "files": {
+        "model": "vi_VN-vais1000-medium.onnx",
+        "tokens": "tokens.txt",
+        "data_dir": "espeak-ng-data"
+      },
+      "voices": [
+        {
+          "id": "piper-vi_VN-vais1000-medium",
+          "name": "Vais",
+          "language": "vi",
+          "language_name": "Vietnamese",
+          "speaker": 0
+        }
+      ]
+    }
+  ]
+}

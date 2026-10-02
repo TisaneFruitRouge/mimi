@@ -5,6 +5,7 @@
 //! own account pairs it with its owner. Only the owner gives it instructions, in their
 //! direct chat; it also stays in groups the owner invites it into and in chats it opens
 //! to message people for the user (`send.rs`, `rooms.rs`), and leaves everything else.
+//! What's said in its groups reaches the model only when the owner asks (`read.rs`).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -21,7 +22,8 @@ use matrix_sdk::ruma::events::relation::Thread;
 use matrix_sdk::ruma::events::room::MediaSource;
 use matrix_sdk::ruma::events::room::member::MembershipState;
 use matrix_sdk::ruma::events::room::message::{
-    ImageMessageEventContent, MessageType, Relation, RoomMessageEventContent,
+    AudioMessageEventContent, ImageMessageEventContent, MessageType, Relation,
+    RoomMessageEventContent,
 };
 use matrix_sdk::ruma::events::{
     AnySyncMessageLikeEvent, AnySyncStateEvent, AnySyncTimelineEvent, SyncMessageLikeEvent,
@@ -46,6 +48,7 @@ pub mod fake;
 pub mod format;
 pub mod guests;
 pub mod messenger;
+pub mod read;
 pub mod rooms;
 pub mod send;
 
@@ -603,14 +606,16 @@ enum Incoming {
     },
 }
 
-/// A picture in an `m.image` message: where to fetch it (the media API decrypts it), and
-/// what the sender says it is.
+/// A picture in an `m.image` message, or the recording in an `m.audio` one: where to
+/// fetch it (the media API decrypts it), and what the sender says it is.
 #[derive(Debug, Clone)]
 pub struct Photo {
     source: MediaSource,
     name: Option<String>,
     mime: Option<String>,
     size: Option<u64>,
+    /// A voice message, not a picture: it's listened to, not looked at.
+    pub(crate) voice: bool,
 }
 
 /// An `m.image` message: its caption (empty without one), and its picture.
@@ -623,8 +628,64 @@ pub(crate) fn photo_of(image: ImageMessageEventContent) -> (String, Photo) {
         size: info.and_then(|i| i.size).map(u64::from),
         name,
         source: image.source,
+        voice: false,
     };
     (caption, photo)
+}
+
+/// An `m.audio` message (a voice message, or a sound file): its caption, and its
+/// recording.
+pub(crate) fn recording_of(audio: AudioMessageEventContent) -> (String, Photo) {
+    let caption = audio.caption().map(str::to_owned).unwrap_or_default();
+    let info = audio.info.as_deref();
+    let recording = Photo {
+        mime: info.and_then(|i| i.mimetype.clone()),
+        size: info.and_then(|i| i.size).map(u64::from),
+        name: None,
+        source: audio.source,
+        voice: true,
+    };
+    (caption, recording)
+}
+
+/// What a timeline event says, for reading a room's history: `Some(Some(words))` for a
+/// message (pictures and files described in brackets), `Some(None)` for one that couldn't
+/// be decrypted, `None` for anything else (edits, redactions, state, reactions).
+pub(crate) fn words_of(event: AnySyncTimelineEvent) -> Option<Option<String>> {
+    let message = match event {
+        AnySyncTimelineEvent::MessageLike(AnySyncMessageLikeEvent::RoomMessage(
+            SyncMessageLikeEvent::Original(message),
+        )) => message,
+        AnySyncTimelineEvent::MessageLike(AnySyncMessageLikeEvent::RoomEncrypted(_)) => {
+            return Some(None);
+        }
+        _ => return None,
+    };
+    let content = message.content;
+    let reply = match content.relates_to {
+        Some(Relation::Replacement(_)) => return None,
+        Some(Relation::Reply(_)) => true,
+        _ => false,
+    };
+    let with = |what: &str, caption: Option<&str>| match caption.filter(|c| !c.trim().is_empty()) {
+        Some(c) => format!("[{what}] {c}"),
+        None => format!("[{what}]"),
+    };
+    let text = match content.msgtype {
+        MessageType::Text(t) => t.body,
+        MessageType::Emote(t) => t.body,
+        MessageType::Notice(t) => t.body,
+        MessageType::Image(i) => with("a photo", i.caption()),
+        MessageType::Video(v) => with("a video", v.caption()),
+        MessageType::Audio(a) => with("a voice message or audio", a.caption()),
+        MessageType::File(f) => with(&format!("a file: {}", f.filename()), f.caption()),
+        _ => return None,
+    };
+    Some(Some(if reply {
+        format::strip_reply_fallback(&text).to_owned()
+    } else {
+        text
+    }))
 }
 
 /// Downloads (and decrypts) a picture the owner or a trusted person sent, within the
@@ -889,6 +950,10 @@ fn incoming(
                             let (caption, photo) = photo_of(image);
                             (caption, Some(photo))
                         }
+                        MessageType::Audio(audio) => {
+                            let (caption, recording) = recording_of(audio);
+                            (caption, Some(recording))
+                        }
                         _ => continue,
                     };
                     let text = if quoted.is_some() {
@@ -981,12 +1046,13 @@ async fn handle(
             let Some(room) = client.get_room(&room) else {
                 return;
             };
+            // The sender of the invitation itself: the inviter's own membership often
+            // isn't among the few events servers send with an invitation.
             let inviter = room
                 .invite_details()
                 .await
                 .ok()
-                .and_then(|i| i.inviter)
-                .map(|m| m.user_id().to_string());
+                .map(|i| i.inviter_id.to_string());
             let direct = room.is_direct().await.unwrap_or(false);
             // Someone trusted opening a chat of two: marked direct, or just them and it.
             let trusted_direct = match inviter.as_deref() {
@@ -1368,7 +1434,7 @@ async fn on_owner_text(
     room: &Room,
     text: String,
     quoted: Option<OwnedEventId>,
-    photo: Option<Photo>,
+    mut photo: Option<Photo>,
 ) {
     let text = text.trim().to_owned();
     if text.is_empty() && photo.is_none() {
@@ -1397,7 +1463,25 @@ async fn on_owner_text(
         let _ = send_plain(room, "Sorry, I couldn't open our conversation.").await;
         return;
     };
-    // Only now that it's known to be the owner's is the picture downloaded.
+    let channel = Arc::new(MatrixChannel {
+        live: live.clone(),
+        room: room.clone(),
+    });
+    // Only now that it's known to be the owner's is anything downloaded.
+    if let Some(recording) = photo.take_if(|p| p.voice) {
+        match download(&live.client, recording).await {
+            Ok(upload) => channels::voice::hear(state, channel, conversation, upload.data, text),
+            Err(e) => {
+                tracing::warn!(connection = %live.connection, "downloading a Matrix voice message failed: {e}");
+                let _ = send_plain(
+                    room,
+                    "I couldn't get that voice message from the server. Try sending it again.",
+                )
+                .await;
+            }
+        }
+        return;
+    }
     let mut photos = Vec::new();
     if let Some(photo) = photo {
         match download(&live.client, photo).await {
@@ -1415,10 +1499,6 @@ async fn on_owner_text(
             }
         }
     }
-    let channel = Arc::new(MatrixChannel {
-        live: live.clone(),
-        room: room.clone(),
-    });
     // Replies can take a while; this returns at once.
     channels::photos::deliver(state, channel, conversation, text, photos);
 }
@@ -1593,6 +1673,36 @@ impl Channel for MatrixChannel {
 
     async fn typing(&self) {
         let _ = self.room.typing_notice(true).await;
+    }
+
+    fn sends_voice(&self) -> bool {
+        true
+    }
+
+    async fn send_voice(&self, note: &crate::voice::audio::VoiceNote) -> Result<(), String> {
+        use matrix_sdk::attachment::{AttachmentConfig, AttachmentInfo, BaseAudioInfo};
+        let info = AttachmentInfo::Voice(BaseAudioInfo {
+            duration: Some(Duration::from_millis(u64::from(note.duration_ms))),
+            size: matrix_sdk::ruma::UInt::new(note.ogg.len() as u64),
+            waveform: Some(
+                note.waveform
+                    .iter()
+                    .map(|w| f32::from(*w) / 1023.0)
+                    .collect(),
+            ),
+        });
+        let ogg: mime::Mime = "audio/ogg".parse().expect("a valid type");
+        // Encrypted like everything else in an encrypted room.
+        self.room
+            .send_attachment(
+                "voice.ogg",
+                &ogg,
+                note.ogg.clone(),
+                AttachmentConfig::new().info(info),
+            )
+            .await
+            .map(drop)
+            .map_err(|e| plain_error(&e))
     }
 
     async fn ask_approval(&self, action: &Action) -> Result<(), String> {

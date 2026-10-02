@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use super::messenger::{Lookup, Messenger, RoomInfo};
+use super::messenger::{Lookup, Messenger, RoomInfo, Said};
 use super::{MATRIX, MatrixConfig};
 use crate::AppState;
 use crate::connections::store::{self, ConnectionRow};
@@ -30,6 +30,8 @@ pub struct World {
     pub opened: Vec<(String, String)>,
     /// Rooms that are end-to-end encrypted.
     pub encrypted: Vec<String>,
+    /// What's been said in each room, oldest first.
+    pub history: HashMap<String, Vec<Said>>,
     next: u32,
 }
 
@@ -87,6 +89,19 @@ impl FakeMessenger {
             members: 3,
             public: true,
             ..Default::default()
+        });
+    }
+
+    /// A message someone wrote in a room; `None` for one that couldn't be decrypted.
+    pub fn say(&self, room: &str, sender: &str, name: Option<&str>, text: Option<&str>) {
+        let mut w = self.world();
+        let history = w.history.entry(room.to_owned()).or_default();
+        let at_ms = 1_790_000_000_000 + history.len() as i64 * 60_000;
+        history.push(Said {
+            sender: sender.to_owned(),
+            name: name.map(str::to_owned),
+            at_ms,
+            text: text.map(str::to_owned),
         });
     }
 
@@ -158,6 +173,15 @@ impl Messenger for FakeMessenger {
             .iter()
             .any(|r| r.id == room)
             .then(|| w.members.get(room).cloned().unwrap_or_default())
+    }
+
+    async fn history(&self, room: &str, limit: usize) -> Result<Vec<Said>, String> {
+        let w = self.world();
+        if !w.joined.iter().any(|r| r.id == room) {
+            return Err("Your assistant isn't in that chat.".to_owned());
+        }
+        let all = w.history.get(room).cloned().unwrap_or_default();
+        Ok(all[all.len().saturating_sub(limit)..].to_vec())
     }
 
     async fn create_dm(&self, user: &str) -> Result<String, String> {

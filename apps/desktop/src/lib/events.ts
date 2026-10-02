@@ -142,6 +142,9 @@ function apply(qc: QueryClient, event: Event) {
     case "update_changed":
       qc.setQueryData(keys.updates, event.update);
       break;
+    case "voice_changed":
+      qc.setQueryData(keys.voice, event.voice);
+      break;
     case "runtime_changed":
       qc.setQueryData(keys.runtime, event.runtime);
       break;
