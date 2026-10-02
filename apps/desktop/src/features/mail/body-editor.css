@@ -1,0 +1,54 @@
+/* The text of an email being written (body-editor.tsx). Lines sit close together as in a
+   mail app; links and quotes look as they do in the reader (message-body.tsx). */
+
+.mail-body .ProseMirror p {
+  margin: 0;
+}
+
+.mail-body .ProseMirror ul,
+.mail-body .ProseMirror ol {
+  margin: 0;
+  padding-left: 1.6em;
+}
+
+.mail-body .ProseMirror ul {
+  list-style: disc;
+}
+
+.mail-body .ProseMirror ol {
+  list-style: decimal;
+}
+
+.mail-body .ProseMirror blockquote {
+  margin: 0 0 0 0.6em;
+  padding-left: 0.8em;
+  border-left: 2px solid #e3e3e8;
+  color: #6e6e73;
+}
+
+.mail-body .ProseMirror a {
+  color: #0b63ce;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.mail-body .ProseMirror img {
+  display: inline;
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  vertical-align: bottom;
+}
+
+.mail-body .ProseMirror img.ProseMirror-selectednode {
+  outline: 2px solid var(--lime);
+  outline-offset: 1px;
+}
+
+.mail-body .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: #a1a1a6;
+}

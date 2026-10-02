@@ -1140,6 +1140,7 @@ async fn sending_threads_the_reply_and_files_it_in_sent() {
             forward_of: None,
             bcc: Vec::new(),
             attachments: Vec::new(),
+            html: None,
         },
     )
     .await
@@ -1161,6 +1162,7 @@ async fn sending_threads_the_reply_and_files_it_in_sent() {
             forward_of: None,
             bcc: Vec::new(),
             attachments: Vec::new(),
+            html: None,
         },
     )
     .await
@@ -1190,7 +1192,9 @@ async fn blind_copies_stay_blind_and_attached_files_go_as_they_are() {
             mime: Some("application/pdf".to_owned()),
             data: base64::engine::general_purpose::STANDARD.encode(&pdf),
             source: None,
+            content_id: None,
         }],
+        html: None,
     };
     send(&state, draft.clone()).await.unwrap();
 
@@ -1218,6 +1222,7 @@ async fn blind_copies_stay_blind_and_attached_files_go_as_they_are() {
             data: base64::engine::general_purpose::STANDARD
                 .encode(vec![0u8; smtp::MAX_ATTACHMENTS + 1]),
             source: None,
+            content_id: None,
         }],
         ..draft.clone()
     };
@@ -1229,6 +1234,7 @@ async fn blind_copies_stay_blind_and_attached_files_go_as_they_are() {
             mime: None,
             data: "not base64!".to_owned(),
             source: None,
+            content_id: None,
         }],
         ..draft
     };
@@ -1641,6 +1647,7 @@ async fn forwarding_carries_attachments_and_deleting_moves_to_trash() {
             forward_of: Some(detail.messages[0].id),
             bcc: Vec::new(),
             attachments: Vec::new(),
+            html: None,
         },
     )
     .await
@@ -2779,4 +2786,54 @@ async fn an_error_clears_once_mail_syncs_again() {
     .await;
     assert_eq!(all_threads(&state).await.len(), 1);
     token.cancel();
+}
+
+#[tokio::test]
+async fn formatted_mail_goes_with_its_pictures_in_the_text() {
+    use base64::Engine;
+    let fake = FakeMail::start(ME, PASSWORD).await;
+    let (state, _account) = account_without_loop(&fake).await;
+    let png = b"\x89PNG not really".to_vec();
+    let picture = |id: Option<&str>| mimi_protocol::NewMailAttachment {
+        name: "Pasted image.png".to_owned(),
+        mime: Some("image/png".to_owned()),
+        data: base64::engine::general_purpose::STANDARD.encode(&png),
+        content_id: id.map(str::to_owned),
+        source: None,
+    };
+    let draft = MailDraft {
+        connection_id: None,
+        from: None,
+        to: vec!["sam@example.com".to_owned()],
+        cc: vec![],
+        bcc: vec![],
+        subject: "The garden".to_owned(),
+        body: "It *grew*:\n[image: Pasted image.png]".to_owned(),
+        reply_to: None,
+        forward_of: None,
+        attachments: vec![picture(Some("p1@inline")), picture(None)],
+        html: Some(
+            r#"<div>It <strong>grew</strong>:</div><div><img src="cid:p1@inline" onerror="x()"><img src="https://tracker.example/t.gif"></div>"#
+                .to_owned(),
+        ),
+    };
+    send(&state, draft).await.unwrap();
+
+    let sent = &fake.sent()[0].data;
+    let msg = mail_parser::MessageParser::default()
+        .parse(sent.as_bytes())
+        .unwrap();
+    let html = msg.body_html(0).unwrap();
+    assert!(html.contains("<strong>grew</strong>"), "{html}");
+    assert!(html.contains(r#"<img src="cid:p1@inline">"#), "{html}");
+    assert!(
+        !html.contains("tracker") && !html.contains("onerror"),
+        "{html}"
+    );
+    assert!(msg.body_text(0).unwrap().contains("It *grew*:"));
+    assert!(sent.contains("multipart/related"), "{sent}");
+    // Both pictures arrive: one in the text, the other attached.
+    let files = parse::attachments(sent.as_bytes());
+    assert_eq!(files.iter().filter(|f| f.data == png).count(), 2);
+    assert!(fake.raw_messages("Sent")[0].contains("multipart/related"));
 }

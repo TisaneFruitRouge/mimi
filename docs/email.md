@@ -5,7 +5,8 @@ Mail is read over IMAP and sent over SMTP with the account's app password, in
 nothing between the user's computer and their mail service. The Mail panel is
 `apps/desktop/src/features/mail/`. Crates: async-imap, mail-parser, html2text, lettre
 (all MIT/Apache), ammonia (its cssparser is MPL-2.0) and markup5ever_rcdom (MIT/Apache)
-for showing mail. Connections in general: [Connections](connections.md).
+for showing mail and cleaning what's sent; TipTap (MIT) for writing it. Connections in
+general: [Connections](connections.md).
 
 ## Rules
 
@@ -48,6 +49,10 @@ for showing mail. Connections in general: [Connections](connections.md).
     chat, never a trusted person's.
   - Bcc counts towards `MAX_RECIPIENTS`. The message sent never carries the Bcc line;
     only the copy filed in Sent does (`smtp::build`).
+- HTML the user writes is cleaned against a strict allow-list before it's sent
+  (`smtp::outgoing_html`): no styles, scripts, event handlers, forms or remote pictures;
+  pictures only `cid:` ones attached to the message. `body` stays the plain text that
+  models and checks read.
 - Anyone can write delivery headers: an address on another domain never counts as the
   user's. `my_addresses` is the accounts' own addresses only, plus whatever was filed as
   outgoing (Sent).
@@ -352,12 +357,46 @@ asked for it), newest first, one conversation at a time.
 
 - `MailDraft.bcc`: blind copies, in the envelope and in the Sent copy only.
 - `MailDraft.attachments` (`NewMailAttachment`: name, content type, base64 data): files
-  the user attached with the paperclip, pasted into the message (a pasted picture is
-  attached, as "Pasted image.png" when it has no name) or dropped on the draft. Sent as
-  they are; the name loses any folder part. Together with forwarded attachments they
-  can add up to `smtp::MAX_ATTACHMENTS` (20 MB); `/mail/send` takes requests up to
+  the user attached with the paperclip, pasted into the message or dropped on the draft
+  (outside the text). Sent as they are; the name loses any folder part. Together with
+  forwarded attachments and pictures in the text they can add up to
+  `smtp::MAX_ATTACHMENTS` (20 MB); `/mail/send` takes requests up to
   `smtp::MAX_REQUEST_BYTES`.
-- Messages are plain text, so pictures go as attachments, not inline.
+- Pictures pasted or dropped into the text stay there: see
+  [Writing with formatting](#writing-with-formatting).
+
+## Writing with formatting
+
+The text of a message is written in a rich text editor (`features/mail/body-editor.tsx`,
+TipTap on ProseMirror, MIT): bold, italic, underline, links (⌘/Ctrl K, web and email
+addresses only), bulleted and numbered lists, quotes, and pictures where they were
+pasted or dropped. Enter starts a new line, as in a mail app.
+
+- **Two versions.** `MailDraft.body` is always the plain text (one line per line, "- "
+  and "1. " for lists, "> " for quotes, "words (address)" for links, "[image: name]"
+  for pictures): models, tools, approval cards, triage and `mail::known` read only that.
+  `MailDraft.html` is set once the text has any formatting; a message without any goes
+  as plain text, exactly as before. `features/mail/mail-text.ts` turns one into the
+  other.
+- **Pictures in the text** are draft attachments with a `content_id`, shown in the HTML
+  as `cid:<content_id>`. The draft lists only the other files under the text; a picture
+  taken out of the text leaves the draft. Text pasted with pictures pastes as text, and
+  pictures in pasted HTML (from a web page) are left out: they'd load from elsewhere.
+- **Drafts the assistant writes** have a `body` and no `html`: they open as lines of
+  text. When the text is replaced without the formatting (the reply box's "Write
+  again"), the editor sees the HTML no longer says what the text does, and the text wins.
+- **Sending** (`smtp::build`): without `html`, `text/plain` (in `multipart/mixed` with
+  files), as before. With it, `multipart/alternative` (text, then HTML); the HTML inside
+  `multipart/related` with the pictures it shows; inside `multipart/mixed` when files are
+  attached. An inline picture the HTML doesn't show goes as an ordinary attachment.
+- **The HTML is cleaned before it goes** (`smtp::outgoing_html`, ammonia): only the
+  editor's tags (`div`, `p`, `br`, `strong`/`b`, `em`/`i`, `u`, `s`, `a`, `ul`, `ol`,
+  `li`, `blockquote`, `img`); links only http(s) and mailto; pictures only `cid:` ones
+  attached to this message, as png, jpeg, gif or webp, under a content id of plain
+  characters; `width` and `start` only as numbers. No styles, classes, ids, event
+  handlers, scripts, forms, frames, SVG or remote pictures. Quotes get a fixed left
+  border. Tests: `smtp::tests` (MIME shapes, hostile HTML) and
+  `tests.rs › formatted_mail_goes_with_its_pictures_in_the_text`.
 
 ## The assistant's Bcc and files
 
@@ -634,8 +673,9 @@ notification publishes `open_mail`.
 - `flag.tsx`: flagging (`useFlagThread`, the row's star); see [Flags](#flags).
 - `message-body.tsx`: how a message is shown (Text · Formatted · Original).
 - `older-mail.tsx`: "Search older mail" under search results, and what the servers found.
-- `draft-editor.tsx`: the draft editor; `draft-attachments.tsx`, its files. To, Cc and
-  Bcc are chips that suggest people from People by name, address or `@name` (see
+- `draft-editor.tsx`: the draft editor; `draft-attachments.tsx`, its files;
+  `body-editor.tsx` and `mail-text.ts`, its formatted text. To, Cc and Bcc are chips
+  that suggest people from People by name, address or `@name` (see
   [People](people.md#addresses-in-to-cc-and-guests)).
 - `draft-card.tsx`: drafts the assistant writes in chat, as editable cards with their
   own Send button, showing the Bcc and files it added (removable). `mail_send` approval

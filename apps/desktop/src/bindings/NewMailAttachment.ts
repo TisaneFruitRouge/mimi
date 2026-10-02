@@ -18,4 +18,8 @@ data: string,
  * Where the file is, when the assistant attached it: the daemon fetches it when
  * the email is sent, so the model never handles the file itself.
  */
-source: MailAttachmentSource | null, };
+source: MailAttachmentSource | null, 
+/**
+ * Set for a picture placed in the text: the `html` shows it as `cid:<content_id>`.
+ */
+content_id?: string, };

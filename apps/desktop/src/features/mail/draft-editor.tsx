@@ -8,6 +8,7 @@ import type { MailDraft } from "@/bindings/MailDraft";
 import { AddressField, addressText, parseAddresses } from "@/components/address-field";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { MailBodyEditor } from "@/features/mail/body-editor";
 import { DraftAttachments, readAttachments } from "@/features/mail/draft-attachments";
 import { api, keys } from "@/lib/api";
 
@@ -15,7 +16,9 @@ import { api, keys } from "@/lib/api";
  * A message being written, laid out like a mail app's compose sheet: To, Cc, Bcc and
  * Subject lines over the text, and the attached files under it. Everything stays
  * editable until it's sent. The address lines suggest people from People as their name
- * or address is typed; files come from the paperclip, a paste, or a drop.
+ * or address is typed; files come from the paperclip, a paste, or a drop. The text can
+ * be formatted, and pictures pasted or dropped into it stay where they were put
+ * (`body-editor.tsx`).
  */
 export function DraftEditor({
   draft,
@@ -45,6 +48,8 @@ export function DraftEditor({
     }
   };
   const carriesFiles = (e: React.DragEvent) => e.dataTransfer.types.includes("Files");
+  // Pictures in the text are shown there, not with the attached files.
+  const files = draft.attachments.filter((a) => !a.content_id);
   return (
     <div
       className={cn("flex flex-col transition-shadow", dropping && "shadow-[inset_0_0_0_2px_var(--color-lime)]", className)}
@@ -60,6 +65,8 @@ export function DraftEditor({
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropping(false);
       }}
       onDrop={(e) => {
+        // The text took it: pictures go where they were dropped.
+        if (e.nativeEvent.defaultPrevented) return setDropping(false);
         if (!carriesFiles(e)) return;
         // Taken here: the chat around a draft card sees it handled.
         e.preventDefault();
@@ -134,24 +141,15 @@ export function DraftEditor({
           e.target.value = "";
         }}
       />
-      <textarea
-        value={draft.body}
-        onChange={(e) => onChange({ ...draft, body: e.target.value })}
-        onPaste={(e) => {
-          const files = Array.from(e.clipboardData.files);
-          if (files.length === 0) return;
-          // A picture alone is attached; text that comes with it still pastes.
-          if (!e.clipboardData.types.includes("text/plain")) e.preventDefault();
-          void attach(files);
-        }}
-        aria-label="Message"
+      <MailBodyEditor
+        draft={draft}
+        onChange={onChange}
+        onFiles={(files) => void attach(files)}
         autoFocus={autoFocus === "body"}
-        placeholder="Write your message"
-        className="field-sizing-content min-h-40 w-full resize-none bg-transparent px-4 py-3 type-body leading-[1.5] outline-none placeholder:text-[#a1a1a6]"
       />
       <DraftAttachments
-        attachments={draft.attachments}
-        onRemove={(i) => onChange({ ...draft, attachments: draft.attachments.filter((_, j) => j !== i) })}
+        attachments={files}
+        onRemove={(i) => onChange({ ...draft, attachments: draft.attachments.filter((a) => a !== files[i]) })}
       />
     </div>
   );

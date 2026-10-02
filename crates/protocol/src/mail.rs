@@ -285,6 +285,14 @@ pub struct MailDraft {
     /// attached by reference (`NewMailAttachment::source`).
     #[serde(default)]
     pub attachments: Vec<NewMailAttachment>,
+    /// The message with its formatting, when the user wrote it in the editor: HTML that
+    /// the daemon cleans before sending, with pictures in the text as `cid:` addresses of
+    /// attachments that have a `content_id`. `body` is always the plain-text version, and
+    /// it's what models, tools, approval cards and checks read. Without it the message
+    /// goes as plain text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub html: Option<String>,
 }
 
 /// A file the user attaches to an email they write.
@@ -302,6 +310,10 @@ pub struct NewMailAttachment {
     /// the email is sent, so the model never handles the file itself.
     #[serde(default)]
     pub source: Option<MailAttachmentSource>,
+    /// Set for a picture placed in the text: the `html` shows it as `cid:<content_id>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub content_id: Option<String>,
 }
 
 /// Body of `POST /v1/mail/threads/{id}/draft`.

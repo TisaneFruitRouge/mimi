@@ -692,8 +692,24 @@ pub async fn send(state: &Arc<AppState>, draft: MailDraft) -> Result<(), String>
         Some(message) => parse::attachments(&source(state, message).await?),
         None => Vec::new(),
     };
-    attachments.extend(attached(state, &draft.attachments).await?);
-    if attachments.iter().map(|f| f.data.len()).sum::<usize>() > smtp::MAX_ATTACHMENTS {
+    // Pictures placed in the text (with a content id) go inside the formatted message.
+    let (pictures, files): (Vec<_>, Vec<_>) = draft
+        .attachments
+        .iter()
+        .cloned()
+        .partition(|a| a.content_id.is_some());
+    attachments.extend(attached(state, &files).await?);
+    let inline: Vec<smtp::Inline> = attached(state, &pictures)
+        .await?
+        .into_iter()
+        .zip(pictures)
+        .map(|(file, a)| smtp::Inline {
+            content_id: a.content_id.unwrap_or_default(),
+            file,
+        })
+        .collect();
+    let size = attachments.iter().chain(inline.iter().map(|i| &i.file));
+    if size.map(|f| f.data.len()).sum::<usize>() > smtp::MAX_ATTACHMENTS {
         return Err(match draft.forward_of {
             Some(_) if draft.attachments.is_empty() => {
                 "The attachments are too large to forward from here.".to_owned()
@@ -701,7 +717,7 @@ pub async fn send(state: &Arc<AppState>, draft: MailDraft) -> Result<(), String>
             _ => "Attachments can add up to 20 MB in one email.".to_owned(),
         });
     }
-    let raw = smtp::build(&from, &draft, reply.as_ref(), &attachments)?;
+    let raw = smtp::build(&from, &draft, reply.as_ref(), &attachments, &inline)?;
     smtp::send(&account.config, &raw).await.map_err(|e| {
         if from == main {
             e

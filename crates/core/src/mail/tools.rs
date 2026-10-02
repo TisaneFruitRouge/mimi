@@ -541,6 +541,7 @@ async fn find_files(
                         name: file_name,
                         mime,
                         data: String::new(),
+                        content_id: None,
                         source: Some(MailAttachmentSource::Email {
                             message,
                             index,
@@ -568,6 +569,7 @@ async fn find_files(
                         name: meta.name,
                         mime: Some(meta.mime),
                         data: String::new(),
+                        content_id: None,
                         source: Some(MailAttachmentSource::Chat {
                             attachment,
                             size: Some(size),
@@ -750,6 +752,7 @@ fn draft_from(args: &Value, reply_to: Option<i64>) -> MailDraft {
         reply_to,
         forward_of: None,
         attachments: Vec::new(),
+        html: None,
     }
 }
 

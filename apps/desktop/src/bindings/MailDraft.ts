@@ -33,4 +33,12 @@ forward_of: number | null,
  * Files the user attached (or pasted), sent as they are, and files the assistant
  * attached by reference (`NewMailAttachment::source`).
  */
-attachments: Array<NewMailAttachment>, };
+attachments: Array<NewMailAttachment>, 
+/**
+ * The message with its formatting, when the user wrote it in the editor: HTML that
+ * the daemon cleans before sending, with pictures in the text as `cid:` addresses of
+ * attachments that have a `content_id`. `body` is always the plain-text version, and
+ * it's what models, tools, approval cards and checks read. Without it the message
+ * goes as plain text.
+ */
+html?: string, };
