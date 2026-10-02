@@ -677,16 +677,19 @@ pub async fn send(state: &Arc<AppState>, draft: MailDraft) -> Result<(), String>
             .unwrap_or_else(|| main.clone()),
     };
     // A forward carries the original's attachments along.
-    let attachments = match draft.forward_of {
-        Some(message) => {
-            let files = parse::attachments(&source(state, message).await?);
-            if files.iter().map(|f| f.data.len()).sum::<usize>() > smtp::MAX_ATTACHMENTS {
-                return Err("The attachments are too large to forward from here.".to_owned());
-            }
-            files
-        }
+    let mut attachments = match draft.forward_of {
+        Some(message) => parse::attachments(&source(state, message).await?),
         None => Vec::new(),
     };
+    attachments.extend(attached(&draft.attachments)?);
+    if attachments.iter().map(|f| f.data.len()).sum::<usize>() > smtp::MAX_ATTACHMENTS {
+        return Err(match draft.forward_of {
+            Some(_) if draft.attachments.is_empty() => {
+                "The attachments are too large to forward from here.".to_owned()
+            }
+            _ => "Attachments can add up to 20 MB in one email.".to_owned(),
+        });
+    }
     let raw = smtp::build(&from, &draft, reply.as_ref(), &attachments)?;
     smtp::send(&account.config, &raw).await.map_err(|e| {
         if from == main {
@@ -702,6 +705,43 @@ pub async fn send(state: &Arc<AppState>, draft: MailDraft) -> Result<(), String>
     sync::file_sent(account, raw.formatted).await;
     state.mail.poke(account.id);
     Ok(())
+}
+
+/// The files the user attached, decoded. Each goes as it is, under a plain file name.
+fn attached(files: &[mimi_protocol::NewMailAttachment]) -> Result<Vec<parse::Attachment>, String> {
+    use base64::Engine;
+    files
+        .iter()
+        .map(|f| {
+            let name: String = f
+                .name
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or_default()
+                .chars()
+                .filter(|c| !c.is_control())
+                .collect();
+            let name = match name.trim() {
+                "" => "Attachment".to_owned(),
+                n => n.to_owned(),
+            };
+            let data = base64::engine::general_purpose::STANDARD
+                .decode(f.data.trim())
+                .map_err(|_| format!("“{name}” couldn't be read. Try attaching it again."))?;
+            let content_type = f
+                .mime
+                .as_deref()
+                .map(str::trim)
+                .filter(|m| m.parse::<mime::Mime>().is_ok())
+                .unwrap_or("application/octet-stream")
+                .to_owned();
+            Ok(parse::Attachment {
+                name,
+                content_type,
+                data,
+            })
+        })
+        .collect()
 }
 
 /// Parses a view name from a query string.

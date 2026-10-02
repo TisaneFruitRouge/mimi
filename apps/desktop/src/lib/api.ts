@@ -3,6 +3,7 @@ import type { ConversationDetail } from "@/bindings/ConversationDetail";
 import type { CatalogModel } from "@/bindings/CatalogModel";
 import type { Connection } from "@/bindings/Connection";
 import type { ConnectionSetup } from "@/bindings/ConnectionSetup";
+import type { EmailSuggestion } from "@/bindings/EmailSuggestion";
 import type { HardwareInfo } from "@/bindings/HardwareInfo";
 import type { DuplicateSuggestion } from "@/bindings/DuplicateSuggestion";
 import type { Integration } from "@/bindings/Integration";
@@ -63,7 +64,6 @@ import type { CalendarInfo } from "@/bindings/CalendarInfo";
 import type { CreatedEvent } from "@/bindings/CreatedEvent";
 import type { EventChange } from "@/bindings/EventChange";
 import type { EventChanged } from "@/bindings/EventChanged";
-import type { GuestSuggestion } from "@/bindings/GuestSuggestion";
 import type { InvitationOffer } from "@/bindings/InvitationOffer";
 import type { NewCalendarEvent } from "@/bindings/NewCalendarEvent";
 import type { SendInvitations } from "@/bindings/SendInvitations";
@@ -186,6 +186,9 @@ export const api = {
   cancelGoogleSignIn: (id: string) => call<null>("DELETE", `/google/sign-in/${id}`),
 
   people: (q = "") => call<PersonSummary[]>("GET", `/people?q=${encodeURIComponent(q)}`),
+  /** People by name or address, one per email address: To, Cc and Guests fields. */
+  emailSuggestions: (q: string) =>
+    call<EmailSuggestion[]>("GET", `/people/emails?q=${encodeURIComponent(q)}`),
   person: (id: string) => call<Person>("GET", `/people/${id}`),
   addPerson: (p: NewPerson) => call<Person>("POST", "/people", p),
   updatePerson: (id: string, u: PersonUpdate) => call<Person>("PATCH", `/people/${id}`, u),
@@ -287,8 +290,7 @@ export const api = {
     call<InvitationOffer>("POST", `/calendar/invitations/${id}/send`, {
       guests: guests ?? null,
     } satisfies SendInvitations),
-  guestSuggestions: (q: string) =>
-    call<GuestSuggestion[]>("GET", `/calendar/guests?q=${encodeURIComponent(q)}`),
+
   /** @ suggestions (people and events), or # suggestions (conversations and emails). */
   mentions: (q: string, kind: MentionSigil = "@") =>
     call<MentionCandidate[]>(
@@ -386,6 +388,7 @@ export const keys = {
   /** Everything about people: lists, details, duplicates, @ suggestions. */
   people: ["people"] as const,
   peopleList: (q: string) => ["people", "list", q] as const,
+  emailSuggestions: (q: string) => ["people", "emails", q] as const,
   person: (id: string) => ["people", "person", id] as const,
   /** Events, conversations, notes, mail and access about someone. */
   personExtra: (id: string, what: "events" | "conversations" | "memory" | "mail" | "access") =>
@@ -421,6 +424,5 @@ export const keys = {
   calendars: ["calendar", "list"] as const,
   events: (from: number, to: number) => ["calendar", "events", from, to] as const,
   invitation: (id: string) => ["calendar", "invitation", id] as const,
-  /** People to suggest as guests: under "people", so changes to People refresh them. */
-  guestSuggestions: (q: string) => ["people", "guests", q] as const,
+
 };

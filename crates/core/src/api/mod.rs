@@ -111,6 +111,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/access/approvals", get(people::guest_approvals))
         .route("/mentions", get(people::mentions))
+        .route("/people/emails", get(people::emails))
         .route("/calendars", get(calendar::calendars))
         .route(
             "/calendar/events",
@@ -129,7 +130,6 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/calendar/invitations/{id}/send",
             post(calendar::send_invitations),
         )
-        .route("/calendar/guests", get(calendar::guest_suggestions))
         .route("/hardware", get(hardware::get))
         .route("/recommendations", get(hardware::recommendations))
         .route(
@@ -186,7 +186,13 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/mail/threads/{id}/archive", post(mail::archive))
         .route("/mail/threads/{id}/summarize", post(mail::summarize))
         .route("/mail/threads/{id}/draft", post(mail::draft))
-        .route("/mail/send", post(mail::send))
+        .route(
+            "/mail/send",
+            // Attachments come base64-encoded in the draft.
+            post(mail::send).layer(axum::extract::DefaultBodyLimit::max(
+                crate::mail::smtp::MAX_REQUEST_BYTES,
+            )),
+        )
         .route("/mail/refresh", post(mail::refresh))
         .route("/mail/folders", post(mail::create_folder))
         .route(

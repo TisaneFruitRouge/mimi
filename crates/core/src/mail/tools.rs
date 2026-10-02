@@ -440,6 +440,8 @@ fn draft_from(args: &Value, reply_to: Option<i64>) -> MailDraft {
         body: args["body"].as_str().unwrap_or_default().to_owned(),
         reply_to,
         forward_of: None,
+        bcc: Vec::new(),
+        attachments: Vec::new(),
     }
 }
 

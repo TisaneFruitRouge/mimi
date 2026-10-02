@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import type { CalendarEvent } from "@/bindings/CalendarEvent";
 import type { CalendarInfo } from "@/bindings/CalendarInfo";
 import type { InvitationOffer } from "@/bindings/InvitationOffer";
+import { type AddressEntry, AddressField, addressText } from "@/components/address-field";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -27,7 +28,6 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { addDays, fromInputs, inputDate, inputTime, startOfDay } from "@/features/calendar/dates";
-import { type GuestEntry, GuestsField, guestText } from "@/features/calendar/guests-field";
 import { InvitationRow, toastOffers, useSendOffer } from "@/features/calendar/invitations";
 import { optimistic } from "@/features/calendar/optimistic";
 import { api, keys } from "@/lib/api";
@@ -70,7 +70,7 @@ export function NewEventDialog({
 }
 
 /** The user themselves, among an event's attendees: not a guest to show or to invite. */
-function guestsOf(e: CalendarEvent): GuestEntry[] {
+function guestsOf(e: CalendarEvent): AddressEntry[] {
   const organizer = e.organizer?.email;
   return e.attendees
     .filter((a) => a.email !== organizer)
@@ -78,7 +78,7 @@ function guestsOf(e: CalendarEvent): GuestEntry[] {
 }
 
 /** The attendees after a change of guests: those who stay keep their answer. */
-function withGuests(e: CalendarEvent, guests: GuestEntry[]) {
+function withGuests(e: CalendarEvent, guests: AddressEntry[]) {
   const organizer = e.attendees.filter((a) => a.email === e.organizer?.email);
   return organizer.concat(
     guests.map(
@@ -124,7 +124,7 @@ function NewEventForm({
   const [endTime, setEndTime] = useState(inputTime(initialEnd));
   const [location, setLocation] = useState(event?.location ?? "");
   const [notes, setNotes] = useState(event?.notes ?? "");
-  const [guests, setGuests] = useState<GuestEntry[]>(() => (event ? guestsOf(event) : []));
+  const [guests, setGuests] = useState<AddressEntry[]>(() => (event ? guestsOf(event) : []));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // Once saved: what the guests could be sent.
@@ -158,7 +158,7 @@ function NewEventForm({
         all_day: allDay,
         location: location || null,
         notes: notes || null,
-        guests: canInvite ? guests.map(guestText) : [],
+        guests: canInvite ? guests.map(addressText) : [],
       });
       if (created.open_url) {
         await openExternal(created.open_url);
@@ -186,7 +186,7 @@ function NewEventForm({
     event: CalendarEvent,
     fields: Pick<CalendarEvent, "title" | "start" | "end" | "all_day" | "location" | "notes">,
   ) => {
-    const change = { ...fields, guests: canInvite ? guests.map(guestText) : null };
+    const change = { ...fields, guests: canInvite ? guests.map(addressText) : null };
     const edited: CalendarEvent = {
       ...event,
       ...fields,
@@ -349,7 +349,13 @@ function NewEventForm({
         {canInvite ? (
           <div className="flex flex-col gap-1.5">
             <Label>Guests</Label>
-            <GuestsField value={guests} onChange={setGuests} />
+            <AddressField
+              value={guests}
+              onChange={setGuests}
+              label="Guests"
+              placeholder="Add people by name or email"
+              typedAction="Invite"
+            />
             <p className="type-footnote text-faint">
               {calendar?.google && calendar.writable
                 ? "Google emails them the invitation when you save, and it shows in their calendar."

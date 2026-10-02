@@ -3,9 +3,9 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use mimi_protocol::{
-    DismissDuplicate, DuplicateSuggestion, Event, GuestApproval, MentionCandidate, MergePeople,
-    MergePreview, MergeRequest, MergeResult, NewHandle, NewPerson, Person, PersonAccess,
-    PersonAccessUpdate, PersonSummary, PersonUpdate, RemovedPerson, SplitPerson,
+    DismissDuplicate, DuplicateSuggestion, EmailSuggestion, Event, GuestApproval, MentionCandidate,
+    MergePeople, MergePreview, MergeRequest, MergeResult, NewHandle, NewPerson, Person,
+    PersonAccess, PersonAccessUpdate, PersonSummary, PersonUpdate, RemovedPerson, SplitPerson,
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -424,6 +424,14 @@ pub async fn dismiss_duplicate(
 pub async fn sync(State(state): State<Arc<AppState>>) -> ApiResult<()> {
     people::sync_all(&state).await;
     Ok(Json(()))
+}
+
+/// People's email addresses matching `q`, for an email's To or Cc and an event's Guests.
+pub async fn emails(
+    State(state): State<Arc<AppState>>,
+    Query(s): Query<Search>,
+) -> ApiResult<Vec<EmailSuggestion>> {
+    Ok(Json(people::emails::suggest(&state, &s.q, 8).await?))
 }
 
 pub async fn mentions(

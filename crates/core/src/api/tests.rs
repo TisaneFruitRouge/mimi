@@ -1772,6 +1772,69 @@ mod tool_use {
     }
 
     #[tokio::test]
+    async fn people_are_suggested_by_name_or_email_address() {
+        let llm = scripted_llm(|_, _| Reply::Text("Noted.")).await;
+        let (h, _, _) = setup(&llm).await;
+        for (name, handles) in [
+            (
+                "Lee, Sam",
+                json!([
+                    {"channel": "email", "value": "sam@work.example"},
+                    {"channel": "email", "value": "sam.lee@home.example"},
+                    {"channel": "telegram", "value": "t.me/samlee"}
+                ]),
+            ),
+            (
+                "Samantha Ruiz",
+                json!([{"channel": "phone", "value": "+33 6 12 34 56 78"}]),
+            ),
+            (
+                "Bo Diaz",
+                json!([{"channel": "email", "value": "bo@home.example"}]),
+            ),
+        ] {
+            let (status, p) = h
+                .call(
+                    reqwest::Method::POST,
+                    "/people",
+                    json!({"name": name, "handles": handles}),
+                )
+                .await;
+            assert_eq!(status, 200, "{p}");
+        }
+        let emails = |found: &Value| -> Vec<String> {
+            found
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| r["email"].as_str().unwrap().to_owned())
+                .collect()
+        };
+
+        // A name gives every address of theirs; no one without email.
+        let (_, found) = h
+            .call(reqwest::Method::GET, "/people/emails?q=sam", Value::Null)
+            .await;
+        assert_eq!(emails(&found), ["sam@work.example", "sam.lee@home.example"]);
+        assert_eq!(found[0]["name"], "Lee, Sam");
+
+        // Part of an address gives the addresses that match.
+        let (_, found) = h
+            .call(
+                reqwest::Method::GET,
+                "/people/emails?q=Home.ex",
+                Value::Null,
+            )
+            .await;
+        assert_eq!(emails(&found), ["bo@home.example", "sam.lee@home.example"]);
+
+        let (_, found) = h
+            .call(reqwest::Method::GET, "/people/emails?q=", Value::Null)
+            .await;
+        assert_eq!(found, json!([]));
+    }
+
+    #[tokio::test]
     async fn mentions_tell_the_model_exactly_who_was_meant() {
         let llm = scripted_llm(|_, _| Reply::Text("Noted.")).await;
         let (mut h, _, _) = setup(&llm).await;

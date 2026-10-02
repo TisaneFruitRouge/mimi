@@ -9,8 +9,7 @@ use axum::extract::{Path, Query, State};
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use mimi_protocol::{
     CalendarEvent, CalendarEvents, CalendarInfo, Channel, CreatedEvent, EventChange, EventChanged,
-    EventPerson, GuestSuggestion, InvitationOffer, NewCalendarEvent, PersonConversation,
-    SendInvitations,
+    EventPerson, InvitationOffer, NewCalendarEvent, PersonConversation, SendInvitations,
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -354,45 +353,6 @@ pub async fn send_invitations(
         .await
         .map_err(AppError::bad_request)?;
     Ok(Json(sent))
-}
-
-#[derive(Deserialize)]
-pub struct GuestQuery {
-    #[serde(default)]
-    q: String,
-}
-
-/// People to suggest in a Guests field: each of their email addresses.
-pub async fn guest_suggestions(
-    State(state): State<Arc<AppState>>,
-    Query(q): Query<GuestQuery>,
-) -> ApiResult<Vec<GuestSuggestion>> {
-    let found = people::search(&state, &q.q, 12).await?;
-    let mut out = Vec::new();
-    for p in found
-        .into_iter()
-        .filter(|p| p.channels.contains(&Channel::Email))
-    {
-        for email in crate::mail::person_addresses(&state, p.id)
-            .await
-            .unwrap_or_default()
-        {
-            // One address listed once, even when People has it twice.
-            if out.iter().any(|s: &GuestSuggestion| s.email == email) {
-                continue;
-            }
-            out.push(GuestSuggestion {
-                person_id: p.id,
-                name: p.name.clone(),
-                email,
-            });
-        }
-        if out.len() >= 8 {
-            break;
-        }
-    }
-    out.truncate(8);
-    Ok(Json(out))
 }
 
 /// Events with this person: they're invited (by email), or their name is in the title.

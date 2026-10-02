@@ -143,8 +143,10 @@ export function ChatView({
       }}
       onDrop={(e) => {
         if (!carriesFiles(e)) return;
-        e.preventDefault();
         setDropping(false);
+        // Dropped on a draft email in the chat, which attached them.
+        if (e.defaultPrevented) return;
+        e.preventDefault();
         const files = imageFiles(e.dataTransfer.files);
         if (files.length) composer.current?.addPhotos(files);
         else toast.error("Only photos can be added to a message.");

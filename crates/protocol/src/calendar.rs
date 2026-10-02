@@ -217,15 +217,6 @@ pub struct SendInvitations {
     pub guests: Option<Vec<String>>,
 }
 
-/// Someone who could be invited: a person in People, by one of their addresses.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[ts(export)]
-pub struct GuestSuggestion {
-    pub person_id: Uuid,
-    pub name: String,
-    pub email: String,
-}
-
 /// A conversation where the user @-mentioned someone.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]

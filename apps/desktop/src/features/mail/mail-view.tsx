@@ -358,10 +358,12 @@ export function MailView({
       from: null,
       to: [],
       cc: [],
+      bcc: [],
       subject: "",
       body: "",
       reply_to: null,
       forward_of: null,
+      attachments: [],
     });
   };
 
@@ -1359,10 +1361,12 @@ function forwardOf(d: MailThreadDetail, m: MailMessage = d.messages.at(-1)!): Ma
     from: d.thread.received_on,
     to: [],
     cc: [],
+    bcc: [],
     subject,
     body: `\n\n${header}\n\n${m.body}`,
     reply_to: null,
     forward_of: m.attachments.length > 0 ? m.id : null,
+    attachments: [],
   };
 }
 
@@ -1376,10 +1380,12 @@ function replyTo(d: MailThreadDetail): MailDraft {
     from: d.thread.received_on,
     to,
     cc: [],
+    bcc: [],
     subject,
     body: "",
     reply_to: d.thread.id,
     forward_of: null,
+    attachments: [],
   };
 }
 

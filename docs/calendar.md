@@ -208,7 +208,8 @@ Thunderbird send invitations this way).
   series.
 - `POST /v1/calendar/events/{id}/invitations`: a fresh offer for its guests.
 - `GET /v1/calendar/invitations/{id}`, `POST /v1/calendar/invitations/{id}/send`.
-- `GET /v1/calendar/guests?q=`: People by address, for the Guests field.
+- The Guests field suggests people from People by name or address
+  (`GET /v1/people/emails?q=`, see [People](people.md#addresses-in-to-cc-and-guests)).
 - `POST /v1/google/sign-in`, `GET /v1/google/sign-in` (`available`),
   `GET|DELETE /v1/google/sign-in/{id}`.
 

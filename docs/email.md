@@ -32,6 +32,10 @@ for showing mail. Connections in general: [Connections](connections.md).
 - The Jev key is never in `Settings` (clients read that). Automatic and suspicious mail
   is still filed locally, never sent to Jev.
 - A draft's `from` must be one of the account's addresses; anything else is refused.
+- Bcc and attached files come only from the user: the assistant's tools (`draft_from`)
+  have neither, so a model can't add a hidden recipient or send a file. Bcc counts
+  towards `MAX_RECIPIENTS`. The message sent never carries the Bcc line; only the copy
+  filed in Sent does (`smtp::build`).
 - Anyone can write delivery headers: an address on another domain never counts as the
   user's. `my_addresses` is the accounts' own addresses only, plus whatever was filed as
   outgoing (Sent).
@@ -270,6 +274,17 @@ asked for it), newest first, one conversation at a time.
 - `forward_of` on a draft re-attaches the original's attachments, fetched from the
   server.
 
+## Writing: Bcc and attachments
+
+- `MailDraft.bcc`: blind copies, in the envelope and in the Sent copy only.
+- `MailDraft.attachments` (`NewMailAttachment`: name, content type, base64 data): files
+  the user attached with the paperclip, pasted into the message (a pasted picture is
+  attached, as "Pasted image.png" when it has no name) or dropped on the draft. Sent as
+  they are; the name loses any folder part. Together with forwarded attachments they
+  can add up to `smtp::MAX_ATTACHMENTS` (20 MB); `/mail/send` takes requests up to
+  `smtp::MAX_REQUEST_BYTES`.
+- Messages are plain text, so pictures go as attachments, not inline.
+
 ## Attachments
 
 Attachments are not stored, only their names. `GET
@@ -375,7 +390,9 @@ All under `/v1`. Changes publish `MailChanged` (`mail_changed`).
   Archive, Mark as unread, Ask the assistant; a reply box that can draft the answer with
   the model; Send only by the user).
 - `message-body.tsx`: how a message is shown (Text · Formatted · Original).
-- `draft-editor.tsx`: the draft editor.
+- `draft-editor.tsx`: the draft editor; `draft-attachments.tsx`, its files. To, Cc and
+  Bcc are chips that suggest people from People by name, address or `@name` (see
+  [People](people.md#addresses-in-to-cc-and-guests)).
 - `draft-card.tsx`: drafts the assistant writes in chat, as editable cards with their
   own Send button. `mail_send` approval cards show every field.
 - `folder-looks.tsx`: the smart folders' icons and colours.

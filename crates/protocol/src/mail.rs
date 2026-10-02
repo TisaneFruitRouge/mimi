@@ -264,6 +264,10 @@ pub struct MailDraft {
     pub to: Vec<String>,
     #[serde(default)]
     pub cc: Vec<String>,
+    /// Blind copies: they get the message, and nobody else sees that they did. Only
+    /// the user adds them (the assistant's tools have no Bcc).
+    #[serde(default)]
+    pub bcc: Vec<String>,
     pub subject: String,
     pub body: String,
     /// The conversation this answers, so it threads correctly.
@@ -274,6 +278,22 @@ pub struct MailDraft {
     #[serde(default)]
     #[ts(type = "number | null")]
     pub forward_of: Option<i64>,
+    /// Files the user attached (or pasted), sent as they are.
+    #[serde(default)]
+    pub attachments: Vec<NewMailAttachment>,
+}
+
+/// A file the user attaches to an email they write.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct NewMailAttachment {
+    pub name: String,
+    /// Its content type as the app read it, e.g. "application/pdf". Unknown or
+    /// unreadable types go as "application/octet-stream".
+    #[serde(default)]
+    pub mime: Option<String>,
+    /// The file's content, base64-encoded.
+    pub data: String,
 }
 
 /// Body of `POST /v1/mail/threads/{id}/draft`.

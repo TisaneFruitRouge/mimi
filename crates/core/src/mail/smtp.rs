@@ -21,8 +21,10 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 /// Recipients per message, so a bad draft can't mail a whole address book.
 pub const MAX_RECIPIENTS: usize = 20;
 const MAX_BODY: usize = 100_000;
-/// Total size of attachments forwarded in one message.
+/// Total size of the attachments of one message (attached, or forwarded along).
 pub const MAX_ATTACHMENTS: usize = 20 * 1024 * 1024;
+/// Largest request to send a message: attachments come base64-encoded (4/3 larger).
+pub const MAX_REQUEST_BYTES: usize = MAX_ATTACHMENTS / 3 * 4 + 2 * 1024 * 1024;
 
 fn transport(
     config: &EmailConfig,
@@ -141,7 +143,9 @@ pub async fn reply_headers(state: &AppState, thread: i64) -> Result<Option<Reply
 
 /// A message ready to go.
 pub struct Built {
+    /// What goes out: without its Bcc header, so blind copies stay blind.
     pub message: Message,
+    /// The copy filed in the user's Sent folder, which keeps the Bcc line.
     pub formatted: Vec<u8>,
 }
 
@@ -173,10 +177,11 @@ pub fn build(
     };
     let to = unique(&draft.to)?;
     let cc = unique(&draft.cc)?;
+    let bcc = unique(&draft.bcc)?;
     if to.is_empty() {
         return Err("Add at least one recipient.".to_owned());
     }
-    if to.len() + cc.len() > MAX_RECIPIENTS {
+    if to.len() + cc.len() + bcc.len() > MAX_RECIPIENTS {
         return Err(format!("That's more than {MAX_RECIPIENTS} recipients."));
     }
     if draft.body.len() > MAX_BODY {
@@ -195,6 +200,9 @@ pub fn build(
     for m in cc {
         builder = builder.cc(m);
     }
+    for m in bcc {
+        builder = builder.bcc(m);
+    }
     if let Some(r) = reply {
         if let Some(id) = &r.in_reply_to {
             builder = builder.in_reply_to(format!("<{id}>"));
@@ -210,19 +218,28 @@ pub fn build(
         }
     }
     let body = draft.body.replace("\r\n", "\n");
-    let message = if attachments.is_empty() {
-        builder.header(ContentType::TEXT_PLAIN).body(body)
-    } else {
-        let mut parts = MultiPart::mixed().singlepart(SinglePart::plain(body));
-        for a in attachments {
-            let kind = ContentType::parse(&a.content_type).unwrap_or(ContentType::TEXT_PLAIN);
-            parts = parts.singlepart(Attachment::new(a.name.clone()).body(a.data.clone(), kind));
+    let finish = |builder: lettre::message::MessageBuilder| {
+        if attachments.is_empty() {
+            builder.header(ContentType::TEXT_PLAIN).body(body.clone())
+        } else {
+            let mut parts = MultiPart::mixed().singlepart(SinglePart::plain(body.clone()));
+            for a in attachments {
+                let kind = ContentType::parse(&a.content_type)
+                    .unwrap_or_else(|_| ContentType::parse("application/octet-stream").unwrap());
+                parts =
+                    parts.singlepart(Attachment::new(a.name.clone()).body(a.data.clone(), kind));
+            }
+            builder.multipart(parts)
         }
-        builder.multipart(parts)
-    }
-    .map_err(|e| e.to_string())?;
-    let formatted = message.formatted();
-    Ok(Built { message, formatted })
+        .map_err(|e| e.to_string())
+    };
+    // The same message twice: once to send, once (with its Bcc line) for Sent.
+    let filed = finish(builder.clone().keep_bcc())?;
+    let message = finish(builder)?;
+    Ok(Built {
+        message,
+        formatted: filed.formatted(),
+    })
 }
 
 /// Who to sign in to SMTP as: the account's username when it has one (iCloud always
@@ -250,6 +267,7 @@ pub fn recipients(draft: &MailDraft) -> Vec<String> {
         .to
         .iter()
         .chain(&draft.cc)
+        .chain(&draft.bcc)
         .map(|s| s.trim().to_owned())
         .collect();
     all.retain(|s| !s.is_empty());

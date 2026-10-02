@@ -18,6 +18,7 @@ use crate::db::DbError;
 use crate::{AppState, now_ms};
 
 pub mod carddav;
+pub mod emails;
 pub mod mentions;
 pub mod merge;
 pub mod normalize;

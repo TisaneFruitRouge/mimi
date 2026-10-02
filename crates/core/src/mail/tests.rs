@@ -977,6 +977,8 @@ async fn sending_threads_the_reply_and_files_it_in_sent() {
             body: "y".to_owned(),
             reply_to: None,
             forward_of: None,
+            bcc: Vec::new(),
+            attachments: Vec::new(),
         },
     )
     .await
@@ -996,12 +998,78 @@ async fn sending_threads_the_reply_and_files_it_in_sent() {
             body: "y".to_owned(),
             reply_to: None,
             forward_of: None,
+            bcc: Vec::new(),
+            attachments: Vec::new(),
         },
     )
     .await
     .unwrap_err();
     assert!(err.contains("isn't an email address"), "{err}");
     assert_eq!(fake.sent().len(), 2);
+}
+
+#[tokio::test]
+async fn blind_copies_stay_blind_and_attached_files_go_as_they_are() {
+    use base64::Engine;
+    let fake = FakeMail::start(ME, PASSWORD).await;
+    let (state, _account) = account_without_loop(&fake).await;
+    let pdf = b"%PDF-1.7 not really".to_vec();
+    let draft = MailDraft {
+        connection_id: None,
+        from: None,
+        to: vec!["sam@example.com".to_owned()],
+        cc: vec![],
+        bcc: vec!["Bo <bo@example.net>".to_owned()],
+        subject: "The plan".to_owned(),
+        body: "Attached.".to_owned(),
+        reply_to: None,
+        forward_of: None,
+        attachments: vec![mimi_protocol::NewMailAttachment {
+            name: "../../plan.pdf".to_owned(),
+            mime: Some("application/pdf".to_owned()),
+            data: base64::engine::general_purpose::STANDARD.encode(&pdf),
+        }],
+    };
+    send(&state, draft.clone()).await.unwrap();
+
+    let sent = fake.sent();
+    assert_eq!(sent[0].to, vec!["sam@example.com", "bo@example.net"]);
+    // The message itself doesn't name the blind copy; the user's Sent copy does.
+    assert!(!sent[0].data.contains("bo@example.net"), "{}", sent[0].data);
+    let filed = fake.raw_messages("Sent");
+    assert!(
+        filed[0].contains("Bcc: Bo <bo@example.net>"),
+        "{}",
+        filed[0]
+    );
+    let files = parse::attachments(sent[0].data.as_bytes());
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].name, "plan.pdf");
+    assert_eq!(files[0].content_type, "application/pdf");
+    assert_eq!(files[0].data, pdf);
+
+    // Too much, or not a file, is refused before anything is sent.
+    let big = MailDraft {
+        attachments: vec![mimi_protocol::NewMailAttachment {
+            name: "big.bin".to_owned(),
+            mime: None,
+            data: base64::engine::general_purpose::STANDARD
+                .encode(vec![0u8; smtp::MAX_ATTACHMENTS + 1]),
+        }],
+        ..draft.clone()
+    };
+    let err = send(&state, big).await.unwrap_err();
+    assert!(err.contains("20 MB"), "{err}");
+    let broken = MailDraft {
+        attachments: vec![mimi_protocol::NewMailAttachment {
+            name: "x.txt".to_owned(),
+            mime: None,
+            data: "not base64!".to_owned(),
+        }],
+        ..draft
+    };
+    assert!(send(&state, broken).await.is_err());
+    assert_eq!(fake.sent().len(), 1);
 }
 
 /// Anyone can put the user's address on From: that doesn't exempt mail from the check.
@@ -1407,6 +1475,8 @@ async fn forwarding_carries_attachments_and_deleting_moves_to_trash() {
             body: "FYI\n\n---------- Forwarded message ----------\nHere are the notes.".to_owned(),
             reply_to: None,
             forward_of: Some(detail.messages[0].id),
+            bcc: Vec::new(),
+            attachments: Vec::new(),
         },
     )
     .await

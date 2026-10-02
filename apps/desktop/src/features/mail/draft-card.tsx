@@ -11,7 +11,8 @@ export const DRAFT_TOOLS = new Set(["mail_draft_reply", "mail_compose"]);
 
 export function draftOf(a: Action): MailDraft | null {
   const d = (a.output as { draft?: MailDraft } | null)?.draft;
-  return d && Array.isArray(d.to) ? d : null;
+  // Drafts from before Bcc and attachments existed have neither.
+  return d && Array.isArray(d.to) ? { ...d, bcc: d.bcc ?? [], attachments: d.attachments ?? [] } : null;
 }
 
 // Drafts sent from this browser, so reopening the chat doesn't offer to send them again.

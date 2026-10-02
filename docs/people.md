@@ -168,6 +168,17 @@ them.
 - The highlight layer shares the textarea's box and type (`fieldText` in
   `composer.tsx`).
 
+## Addresses in To, Cc and Guests
+
+- An email's To, Cc and Bcc and an event's Guests share `AddressField`
+  (`src/components/address-field.tsx`): chips, plus suggestions from People as the user
+  types a name, part of an address, or `@name` as in chat.
+- `GET /v1/people/emails?q=` (`people/emails.rs`) gives one `EmailSuggestion` per
+  address: all of a person's addresses when their name or nickname matches, else only
+  the addresses that contain what was typed. People without email aren't suggested.
+- A chip goes out as `Name <address>` with the characters that would break the header
+  taken out of the name. An address typed out counts once the field is left.
+
 ## Assistant tools
 
 `people_search` and `person_details`: reads, without approval. Trusted people don't get
@@ -189,6 +200,7 @@ them.
   - `GET /v1/people/{id}/conversations`: chats where they were @-mentioned.
 - `GET|PUT /v1/people/{id}/access`: see [People the user trusts](trusted-people.md).
 - `GET /v1/mentions?q=`, `GET /v1/mentions?kind=mail`.
+- `GET /v1/people/emails?q=`: addresses for To, Cc and Guests.
 - Changes publish `PeopleChanged`.
 
 ## UI pieces
