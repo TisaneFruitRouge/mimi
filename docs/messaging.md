@@ -20,7 +20,9 @@ People the user trusts talking to the assistant from their own app are in
 
 - A paired app is a private line to the user. Only the owner (and, on Matrix, people the
   owner trusts, each in their own chat) gives instructions; everything else is ignored
-  or, at most, passed on as data, never to the model.
+  or, at most, passed on as data, never to the model. The one exception is a mention in
+  a Matrix group the assistant is in: it answers there as a member of the group, with
+  no tools and nothing of the owner's (see [Matrix](matrix.md#answering-in-groups)).
 - Approvals from an app go through the same approval and permission system as the
   desktop chat (see [Tools and approvals](tools-and-approvals.md)). An app's "yes" only
   ever answers a prompt on its own line.

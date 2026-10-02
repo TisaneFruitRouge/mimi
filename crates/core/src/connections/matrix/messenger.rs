@@ -8,9 +8,11 @@ use async_trait::async_trait;
 use matrix_sdk::RoomMemberships;
 use matrix_sdk::room::MessagesOptions;
 use matrix_sdk::ruma::api::error::ErrorKind;
-use matrix_sdk::ruma::events::room::message::RoomMessageEventContent;
+use matrix_sdk::ruma::events::Mentions;
+use matrix_sdk::ruma::events::relation::Reply;
+use matrix_sdk::ruma::events::room::message::{Relation, RoomMessageEventContent};
 use matrix_sdk::ruma::room::JoinRuleKind;
-use matrix_sdk::ruma::{RoomAliasId, RoomId, UInt, UserId};
+use matrix_sdk::ruma::{EventId, RoomAliasId, RoomId, UInt, UserId};
 use matrix_sdk::{Room, RoomState};
 
 use super::{Live, format, plain_error};
@@ -83,6 +85,15 @@ pub trait Messenger: Send + Sync {
     /// Sends one message as plain text and Matrix HTML to a room the assistant is in.
     /// Its event id, so a reply or reaction to it can be matched.
     async fn send_html(&self, room: &str, body: &str, html: &str) -> Result<String, String>;
+    /// Sends one message as a reply to `event`, mentioning its sender `to`. Its event id.
+    async fn reply_html(
+        &self,
+        room: &str,
+        event: &str,
+        to: &str,
+        body: &str,
+        html: &str,
+    ) -> Result<String, String>;
     /// Shows, or stops showing, that the assistant is writing in a room.
     async fn typing(&self, _room: &str, _on: bool) {}
     /// Whether a room the assistant is in is end-to-end encrypted.
@@ -283,6 +294,29 @@ impl Messenger for Live {
         let room = joined_room(self, room)
             .ok_or_else(|| "Your assistant isn't in that chat.".to_owned())?;
         room.send(RoomMessageEventContent::text_html(body, html))
+            .await
+            .map(|r| r.response.event_id.to_string())
+            .map_err(|e| plain_error(&e))
+    }
+
+    async fn reply_html(
+        &self,
+        room: &str,
+        event: &str,
+        to: &str,
+        body: &str,
+        html: &str,
+    ) -> Result<String, String> {
+        let room = joined_room(self, room)
+            .ok_or_else(|| "Your assistant isn't in that chat.".to_owned())?;
+        let mut content = RoomMessageEventContent::text_html(body, html);
+        if let Ok(event) = EventId::parse(event) {
+            content.relates_to = Some(Relation::Reply(Reply::with_event_id(event)));
+        }
+        if let Ok(to) = UserId::parse(to) {
+            content.mentions = Some(Mentions::with_user_ids([to]));
+        }
+        room.send(content)
             .await
             .map(|r| r.response.event_id.to_string())
             .map_err(|e| plain_error(&e))

@@ -62,7 +62,8 @@ pub async fn on_text(
         .await
         .is_none()
     {
-        // A group, or a room it doesn't keep: nobody there gives it instructions.
+        // A room it doesn't keep: nobody there gives it instructions. (Mentions in its
+        // groups are answered as a member of the group, before this: `group.rs`.)
         tracing::debug!(connection = %connection, room = %msg.room, "ignored a message outside the owner's chat");
         return;
     }

@@ -23,7 +23,11 @@ see [Messaging apps](messaging.md).
   [People the user trusts](trusted-people.md)) give instructions, each in their own
   direct chat. Everyone else's messages never reach the model: a reply in a chat it
   opened for the user is passed on to the owner's chat quoted as it is (`forward_text`,
-  logged, never its content); groups stay silent.
+  logged, never its content).
+- In its groups it answers whoever mentions it, the owner included, as a member of the
+  group (`group.rs`): one model call with **no tools**, from the group's latest messages
+  only. Never the owner's memory, profile, instructions or data, and nothing stored.
+  Keep it that way: everyone reads the answer, and the rest of the group is untrusted.
 - An encrypted message it can't read is logged (room and sender) and said: to the owner
   in their chat, to a trusted person in theirs, and, for a reply in a chat it opened, to
   the owner.
@@ -256,6 +260,35 @@ They're recorded before joining, and rooms it made itself are never left, so a s
 racing the send can't make it leave. A chat whose other person left is left and
 forgotten; the next message opens a new one.
 
+### Answering in groups
+
+`group.rs`. In a group it keeps (`Why::Group` or `Why::Joined`), a message that mentions
+the assistant gets an answer there, whoever wrote it, the owner included: the owner chose
+that their own mentions get no more than anyone's, so private requests stay in their
+chat.
+
+- **A mention** is the sender's app marking the assistant in `m.mentions` (a pill in
+  Element, or a reply to one of its messages), or the words naming it with an @: its
+  address, its account's name ("@mimi") or its own name, standing on their own (not
+  inside an email address). Other talk is ignored, as is `@room`.
+- **The answer** is one call to the active model (`mail::model::ask`, no tools, no
+  thinking), never a chat turn: no conversation, no memory, no learning, nothing for the
+  owner's app to show. The prompt says where it is, that everyone reads it, and that it
+  has nothing private and can't act from there (the owner can ask in their own chat);
+  the personality comes through `Persona::guest_block`, never the owner's instructions.
+  The group's latest 30 messages (6,000 characters at most, newest kept) are fenced as
+  other people's words, then the message to answer and who sent it.
+- **Sent** as a reply to the mention, mentioning its sender, with typing notices.
+  "Sorry, I can't answer right now." when no answer could be written (logged, never the
+  content).
+- **Encryption.** Once a group is encrypted, an unencrypted mention is ignored. Pictures
+  and voice messages in a group are never fetched; a caption that mentions it is
+  answered as words.
+- **One at a time.** Answers in a group are written one after another; with one being
+  written and another waiting, further mentions are dropped (`MAX_IN_LINE`), so a busy
+  group can't pile up the model.
+- With a cloud model chosen, the group's messages go to it like the owner's do.
+
 ### Nobody else gives instructions
 
 Except people the owner trusts, in their own direct chat (see
@@ -263,8 +296,9 @@ Except people the owner trusts, in their own direct chat (see
 assistant opened is passed to the owner's chat as it is, quoted and escaped ("💬 Sam
 Carter (@sam:example.org) replied: > …", at most 2,000 characters; only encrypted ones
 once the chat is), without the model (`forward_text`), and logged (never its content),
-whether it went through or not. Groups get nothing: what people say there, the owner
-included, is ignored.
+whether it went through or not. In groups, only a mention is answered, as a member of
+the group with nothing of the owner's ([Answering in groups](#answering-in-groups));
+everything else said there, the owner included, is ignored.
 
 The sender is matched to the chat without letter case: a reply from "@maya:…" to a chat
 opened for "@Maya:…" (as typed in People) used to be dropped without a word.
@@ -281,7 +315,9 @@ Settings › Permissions offers people with a Matrix address and the groups from
   `matrix/fake.rs` (`Clients::fake`). `api/tests.rs ›
   automatic_sending_only_writes_to_people_the_user_knows` and `permission_api` cover the
   known-people check with the other kinds.
-- `api/tests/access_flow.rs` drives trusted people through `Messenger` with the fake.
+- `api/tests/access_flow.rs` drives trusted people through `Messenger` with the fake,
+  and mentions in a group (`anyone_who_mentions_it_in_a_group_…`): no tools, nothing of
+  the owner's, nothing stored. Mention matching and the group prompt are in `group.rs`.
 - `api/tests/matrix_live.rs` runs everything against a real homeserver, with matrix-sdk
   clients as the owner and a friend.
 

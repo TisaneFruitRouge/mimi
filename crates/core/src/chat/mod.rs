@@ -1053,7 +1053,7 @@ fn build_prompt(
 }
 
 /// The current date and time, as the prompt says it.
-fn now_line() -> String {
+pub(crate) fn now_line() -> String {
     jiff::Zoned::now()
         .strftime("%A, %B %-d, %Y, %H:%M (%Z)")
         .to_string()

@@ -71,7 +71,9 @@ one it opened to message them for the owner, or one they open (their invitation,
 direct or with just the two of them, is joined (`Invitation::KeepDirect`) and kept as `Why::Direct`;
 it then tries to turn encryption on, as for the owner). The owner's encryption rules
 apply: once a chat is encrypted, only encrypted messages count. Their groups are
-declined; what they say in the owner's groups is ignored. Reactions answer only their
+declined; in the owner's groups they're like anyone else there: a mention gets an
+answer from the group's messages alone, never as their guest turn (see
+[Matrix](matrix.md#answering-in-groups)). Reactions answer only their
 own prompts. An encrypted message from them it can't read is said to them in their own
 chat. Everything there goes through `Messenger`, so `api/tests/access_flow.rs` drives
 it with the fake. See [Matrix](matrix.md).

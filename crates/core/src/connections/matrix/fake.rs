@@ -32,6 +32,8 @@ pub struct World {
     pub encrypted: Vec<String>,
     /// What's been said in each room, oldest first.
     pub history: HashMap<String, Vec<Said>>,
+    /// (event replied to, who was mentioned, the reply's event id) for every reply.
+    pub replies: Vec<(String, String, String)>,
     next: u32,
 }
 
@@ -236,6 +238,21 @@ impl Messenger for FakeMessenger {
         w.next += 1;
         let id = format!("$event{}", w.next);
         w.sent.push((room.to_owned(), body.to_owned()));
+        Ok(id)
+    }
+
+    async fn reply_html(
+        &self,
+        room: &str,
+        event: &str,
+        to: &str,
+        body: &str,
+        html: &str,
+    ) -> Result<String, String> {
+        let id = self.send_html(room, body, html).await?;
+        self.world()
+            .replies
+            .push((event.to_owned(), to.to_owned(), id.clone()));
         Ok(id)
     }
 

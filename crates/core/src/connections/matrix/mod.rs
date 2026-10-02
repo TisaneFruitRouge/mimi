@@ -5,7 +5,8 @@
 //! own account pairs it with its owner. Only the owner gives it instructions, in their
 //! direct chat; it also stays in groups the owner invites it into and in chats it opens
 //! to message people for the user (`send.rs`, `rooms.rs`), and leaves everything else.
-//! What's said in its groups reaches the model only when the owner asks (`read.rs`).
+//! What's said in its groups reaches the model when the owner asks (`read.rs`), and when
+//! someone there mentions it, to answer them as a member of the group (`group.rs`).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -46,6 +47,7 @@ use crate::{AppState, now_ms};
 #[cfg(test)]
 pub mod fake;
 pub mod format;
+pub mod group;
 pub mod guests;
 pub mod messenger;
 pub mod read;
@@ -106,6 +108,8 @@ pub struct Clients {
     live: Mutex<HashMap<Uuid, Arc<Live>>>,
     /// Clients signed in while connecting, waiting for their connection's task.
     handoff: Mutex<HashMap<Uuid, Client>>,
+    /// Answers to mentions in groups, waiting their turn.
+    answering: group::Answering,
     /// Stand-ins for running clients, so tests can send without a homeserver.
     #[cfg(test)]
     fakes: Mutex<HashMap<Uuid, Arc<dyn Messenger>>>,
@@ -576,8 +580,12 @@ enum Incoming {
     /// A message: words, or a picture with its caption (if any) as the words.
     Text {
         room: OwnedRoomId,
+        /// The message's own id.
+        event: OwnedEventId,
         sender: OwnedUserId,
         text: String,
+        /// Who the sender's app marked as mentioned.
+        mentioned: Vec<String>,
         /// The message it replies to.
         quoted: Option<OwnedEventId>,
         /// Whether it came end-to-end encrypted.
@@ -922,6 +930,7 @@ fn incoming(
                 continue;
             };
             let sender = event.sender().to_owned();
+            let event_id = event.event_id().to_owned();
             // History from before the connection isn't a request.
             if Some(sender.as_ref()) == me || i64::from(event.origin_server_ts().0) < since {
                 continue;
@@ -932,6 +941,11 @@ fn incoming(
                     SyncMessageLikeEvent::Original(message),
                 )) => {
                     let content = message.content;
+                    let mentioned = content
+                        .mentions
+                        .as_ref()
+                        .map(|m| m.user_ids.iter().map(ToString::to_string).collect())
+                        .unwrap_or_default();
                     let quoted = match content.relates_to {
                         // Edits aren't new requests.
                         Some(Relation::Replacement(_)) => continue,
@@ -963,8 +977,10 @@ fn incoming(
                     };
                     out.push(Incoming::Text {
                         room,
+                        event: event_id,
                         sender,
                         text,
+                        mentioned,
                         quoted,
                         sealed,
                         photo,
@@ -1158,8 +1174,10 @@ async fn handle(
         }
         Incoming::Text {
             room: room_id,
+            event,
             sender,
             text,
+            mentioned,
             quoted,
             sealed,
             photo,
@@ -1168,6 +1186,28 @@ async fn handle(
                 return;
             };
             let from = classify(config, room_id.as_str(), sender.as_str());
+            // In its groups it answers whoever mentions it, the owner included, as a
+            // member of the group: never with anything of the owner's (`group.rs`).
+            if matches!(from, Sender::OwnerElsewhere | Sender::Stranger)
+                && let Some(messenger) = state.connections.matrix.messenger(live.connection)
+                && group::on_text(
+                    state,
+                    live.connection,
+                    config,
+                    messenger,
+                    group::Inbound {
+                        room: room_id.to_string(),
+                        event: event.to_string(),
+                        sender: sender.to_string(),
+                        text: text.clone(),
+                        mentioned,
+                        sealed,
+                    },
+                )
+                .await
+            {
+                return;
+            }
             if from == Sender::Owner && !trusted(config, sealed) {
                 tracing::warn!(connection = %live.connection, "ignored an unencrypted message in the owner's encrypted Matrix chat");
                 return;
@@ -1183,8 +1223,8 @@ async fn handle(
                     }
                 }
                 Sender::OwnerElsewhere => {
-                    // The owner left their chat and opened a new one: move there. (What
-                    // they write in groups isn't for the assistant.)
+                    // The owner left their chat and opened a new one: move there. (Their
+                    // mentions in groups were answered above, as anyone's.)
                     if config.room_id.is_none()
                         && is_direct(&room).await
                         && rooms::kept_room(state, live.connection, room_id.as_str())
