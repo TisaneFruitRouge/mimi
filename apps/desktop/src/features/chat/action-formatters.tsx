@@ -128,14 +128,20 @@ export const formatters: Record<string, Formatter> = {
       return rows;
     },
   },
-  // The whole message, exactly as it will be sent. `thread_id` only threads the reply.
+  // The whole message, exactly as it will be sent: blind copies said to be hidden, and
+  // every file with its size and where it comes from (looked up by the daemon).
+  // `thread_id` only threads the reply.
   mail_send: {
-    keys: ["to", "cc", "subject", "body", "thread_id"],
+    keys: ["to", "cc", "bcc", "subject", "body", "thread_id", "attachments"],
     rows: (a) => {
       const rows: ArgRow[] = [{ label: "To", value: text(a.to) }];
       if (present(a.cc)) rows.push({ label: "Cc", value: text(a.cc) });
+      if (present(a.bcc))
+        rows.push({ label: "Bcc", value: `${lines(a.bcc)}\nA hidden copy: the others won't see this.` });
       rows.push({ label: "Subject", value: text(a.subject) || "(no subject)" });
       rows.push({ label: "Message", value: text(a.body) });
+      if (Array.isArray(a.attachments) && a.attachments.length > 0)
+        rows.push({ label: a.attachments.length === 1 ? "File" : "Files", value: a.attachments.map(fileLine).join("\n") });
       return rows;
     },
   },
@@ -157,6 +163,17 @@ function present(v: unknown) {
 /** A list with one entry per line: each guest or recipient on their own. */
 function lines(v: unknown): string {
   return Array.isArray(v) ? v.map(text).join("\n") : text(v);
+}
+
+/** "Invoice.pdf · 340 KB · From the email “March” from Sam": a file an email carries. */
+function fileLine(f: unknown): string {
+  if (f === null || typeof f !== "object") return text(f);
+  const { name, size, from } = f as { name?: unknown; size?: unknown; from?: unknown };
+  const parts = [text(name) || "A file"];
+  if (typeof size === "number" && size > 0)
+    parts.push(size < 1e6 ? `${Math.max(1, Math.round(size / 1e3))} KB` : `${(size / 1e6).toFixed(1)} MB`);
+  if (present(from)) parts.push(text(from));
+  return parts.join(" · ");
 }
 
 /** "On Friday 2 Oct, 10:00–10:45" from the daemon's "on Friday…". */

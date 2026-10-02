@@ -16,8 +16,9 @@ connection_id: string | null,
  */
 from: string | null, to: Array<string>, cc: Array<string>, 
 /**
- * Blind copies: they get the message, and nobody else sees that they did. Only
- * the user adds them (the assistant's tools have no Bcc).
+ * Blind copies: they get the message, and nobody else sees that they did. The
+ * assistant may add them too; its emails then wait for the user's OK unless every
+ * blind copy, like every other recipient, is someone the user knows.
  */
 bcc: Array<string>, subject: string, body: string, 
 /**
@@ -29,6 +30,7 @@ reply_to: number | null,
  */
 forward_of: number | null, 
 /**
- * Files the user attached (or pasted), sent as they are.
+ * Files the user attached (or pasted), sent as they are, and files the assistant
+ * attached by reference (`NewMailAttachment::source`).
  */
 attachments: Array<NewMailAttachment>, };

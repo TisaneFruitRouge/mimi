@@ -83,7 +83,7 @@ pub const KINDS: &[Kind] = &[
         ask_detail: "Shows you the whole email to approve before it goes out.",
         automatic_detail: "Sends on its own to your contacts and people you've emailed before, invitations included. Still asks before writing to anyone new.",
         note: Some(
-            "An email to someone new, who isn't in your contacts and hasn't had an email from you, always waits for your OK.",
+            "An email to someone new, who isn't in your contacts and hasn't had an email from you, always waits for your OK, and so does any email with files attached.",
         ),
         switches: &[],
         icon: "send",
@@ -226,6 +226,9 @@ pub async fn requires_approval(
     let Some(kind) = tool.governed_by().map(Governs::kind) else {
         return tool.needs_approval(args);
     };
+    if tool.always_asks(args) {
+        return true;
+    }
     let targets = tool.call_targets(args);
     let choice = choice(permissions, kind);
     if decide(state, kind, &choice, &targets).await == Autonomy::Ask {
@@ -395,7 +398,9 @@ pub async fn always_offer(
 ) -> Option<(String, Vec<PermissionTarget>)> {
     let kind = tool.governed_by()?.kind();
     let choice = choice(permissions, kind);
-    if choice.autonomy == Autonomy::Automatic && choice.rules.is_empty() {
+    // An exception wouldn't skip this card next time.
+    if tool.always_asks(args) || (choice.autonomy == Autonomy::Automatic && choice.rules.is_empty())
+    {
         return None;
     }
     let targets = tool.call_targets(args);

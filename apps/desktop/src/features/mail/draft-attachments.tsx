@@ -1,7 +1,9 @@
+import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { FileText, X } from "lucide-react";
 
 import type { NewMailAttachment } from "@/bindings/NewMailAttachment";
+import { attachmentUrl } from "@/lib/transport";
 
 /** What the attachments of one email can add up to (the daemon's limit). */
 const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
@@ -12,9 +14,20 @@ function fileSize(bytes: number) {
   return `${(bytes / 1e6).toFixed(1)} MB`;
 }
 
-/** How big an attached file is, from its base64. */
+/**
+ * How big an attached file is: from its base64, or, for one the assistant attached by
+ * reference (fetched when it's sent), as the daemon measured it.
+ */
 function sizeOf(a: NewMailAttachment) {
+  if (a.source) return a.source.size ?? 0;
   return Math.floor((a.data.length * 3) / 4);
+}
+
+/** Where a file the assistant attached comes from. */
+function originOf(a: NewMailAttachment): string | null {
+  if (a.source?.kind === "email") return "from an email";
+  if (a.source?.kind === "chat") return "from this chat";
+  return null;
 }
 
 /**
@@ -39,6 +52,7 @@ function read(file: File): Promise<NewMailAttachment> {
         name,
         mime: file.type || null,
         data: String(reader.result).replace(/^data:[^,]*,/, ""),
+        source: null,
       });
     reader.onerror = () => reject(new Error(`“${name}” couldn't be read. Try attaching it again.`));
     reader.readAsDataURL(file);
@@ -47,6 +61,25 @@ function read(file: File): Promise<NewMailAttachment> {
 
 /** Pictures this page can show from a `data:` URL (the CSP allows those, not `blob:`). */
 const SHOWN = /^image\/(png|jpeg|gif|webp)$/;
+
+/** A picture's thumbnail: its own data, or a photo from the chat fetched from the daemon. */
+function useThumbnail(a: NewMailAttachment): string | null {
+  const chatPhoto = a.source?.kind === "chat" ? a.source.attachment : null;
+  const [fetched, setFetched] = useState<string | null>(null);
+  useEffect(() => {
+    if (!chatPhoto) return;
+    let live = true;
+    attachmentUrl(chatPhoto, a.mime ?? "image/jpeg").then(
+      (u) => live && setFetched(u),
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [chatPhoto, a.mime]);
+  if (chatPhoto) return fetched;
+  return !a.source && a.mime && SHOWN.test(a.mime) ? `data:${a.mime};base64,${a.data}` : null;
+}
 
 /** The files attached to a draft, each with a way to take it out again. */
 export function DraftAttachments({
@@ -60,40 +93,45 @@ export function DraftAttachments({
   return (
     <div className="flex flex-wrap gap-2 px-4 pb-3">
       {attachments.map((a, i) => (
-        <motion.span
-          key={`${i}-${a.name}`}
-          layout
-          initial={{ opacity: 0, scale: 0.94 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ type: "spring", stiffness: 480, damping: 34 }}
-          className="inline-flex h-11 max-w-[260px] items-center gap-2 rounded-[10px] bg-fill pr-1 pl-1.5"
-        >
-          {a.mime && SHOWN.test(a.mime) ? (
-            <img
-              src={`data:${a.mime};base64,${a.data}`}
-              alt=""
-              draggable={false}
-              className="size-8 shrink-0 rounded-[6px] object-cover"
-            />
-          ) : (
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-[6px] bg-background text-muted-foreground">
-              <FileText className="size-4" />
-            </span>
-          )}
-          <span className="min-w-0 flex-1">
-            <span className="block truncate type-subhead">{a.name}</span>
-            <span className="block type-footnote text-faint">{fileSize(sizeOf(a))}</span>
-          </span>
-          <button
-            type="button"
-            aria-label={`Remove ${a.name}`}
-            onClick={() => onRemove(i)}
-            className="flex size-5 shrink-0 items-center justify-center rounded-full text-faint hover:bg-[rgb(118_118_128/0.18)] hover:text-foreground"
-          >
-            <X className="size-3" />
-          </button>
-        </motion.span>
+        <AttachedFile key={`${i}-${a.name}`} attachment={a} onRemove={() => onRemove(i)} />
       ))}
     </div>
+  );
+}
+
+function AttachedFile({ attachment: a, onRemove }: { attachment: NewMailAttachment; onRemove: () => void }) {
+  const thumbnail = useThumbnail(a);
+  const size = sizeOf(a);
+  const origin = originOf(a);
+  return (
+    <motion.span
+      layout
+      initial={{ opacity: 0, scale: 0.94 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ type: "spring", stiffness: 480, damping: 34 }}
+      className="inline-flex h-11 max-w-[260px] items-center gap-2 rounded-[10px] bg-fill pr-1 pl-1.5"
+    >
+      {thumbnail ? (
+        <img src={thumbnail} alt="" draggable={false} className="size-8 shrink-0 rounded-[6px] object-cover" />
+      ) : (
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-[6px] bg-background text-muted-foreground">
+          <FileText className="size-4" />
+        </span>
+      )}
+      <span className="min-w-0 flex-1">
+        <span className="block truncate type-subhead">{a.name}</span>
+        <span className="block truncate type-footnote text-faint">
+          {[size > 0 ? fileSize(size) : null, origin].filter(Boolean).join(" · ")}
+        </span>
+      </span>
+      <button
+        type="button"
+        aria-label={`Remove ${a.name}`}
+        onClick={onRemove}
+        className="flex size-5 shrink-0 items-center justify-center rounded-full text-faint hover:bg-[rgb(118_118_128/0.18)] hover:text-foreground"
+      >
+        <X className="size-3" />
+      </button>
+    </motion.span>
   );
 }

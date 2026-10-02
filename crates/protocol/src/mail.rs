@@ -266,8 +266,9 @@ pub struct MailDraft {
     pub to: Vec<String>,
     #[serde(default)]
     pub cc: Vec<String>,
-    /// Blind copies: they get the message, and nobody else sees that they did. Only
-    /// the user adds them (the assistant's tools have no Bcc).
+    /// Blind copies: they get the message, and nobody else sees that they did. The
+    /// assistant may add them too; its emails then wait for the user's OK unless every
+    /// blind copy, like every other recipient, is someone the user knows.
     #[serde(default)]
     pub bcc: Vec<String>,
     pub subject: String,
@@ -280,7 +281,8 @@ pub struct MailDraft {
     #[serde(default)]
     #[ts(type = "number | null")]
     pub forward_of: Option<i64>,
-    /// Files the user attached (or pasted), sent as they are.
+    /// Files the user attached (or pasted), sent as they are, and files the assistant
+    /// attached by reference (`NewMailAttachment::source`).
     #[serde(default)]
     pub attachments: Vec<NewMailAttachment>,
 }
@@ -294,8 +296,12 @@ pub struct NewMailAttachment {
     /// unreadable types go as "application/octet-stream".
     #[serde(default)]
     pub mime: Option<String>,
-    /// The file's content, base64-encoded.
+    /// The file's content, base64-encoded. Empty when `source` says where it is.
     pub data: String,
+    /// Where the file is, when the assistant attached it: the daemon fetches it when
+    /// the email is sent, so the model never handles the file itself.
+    #[serde(default)]
+    pub source: Option<MailAttachmentSource>,
 }
 
 /// Body of `POST /v1/mail/threads/{id}/draft`.
@@ -396,4 +402,33 @@ pub struct MailUnsubscribed {
 #[ts(export)]
 pub struct MailArchivedCount {
     pub archived: u32,
+}
+
+/// A file the assistant attached to an email by reference, fetched only when it's sent.
+/// Never a file from the computer: only these.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum MailAttachmentSource {
+    /// An attachment of an email in the user's mail (fetched from the server).
+    Email {
+        /// The message (`MailMessage.id`).
+        #[ts(type = "number")]
+        message: i64,
+        /// Which of its attachments, in the order `MailMessage.attachments` lists them.
+        index: u32,
+        /// Its size in bytes when it was attached, for showing.
+        #[serde(default)]
+        #[ts(type = "number | null")]
+        size: Option<u64>,
+    },
+    /// A photo the user sent in a chat (`Attachment.id`). The assistant may only attach
+    /// one from the conversation it's working in.
+    Chat {
+        attachment: Uuid,
+        /// Its size in bytes, for showing.
+        #[serde(default)]
+        #[ts(type = "number | null")]
+        size: Option<u64>,
+    },
 }

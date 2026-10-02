@@ -142,7 +142,9 @@ every tool:
 - **Nothing else:** no mail, memory, people, `matrix_send`, `message_me`, or anything
   else that reads or sends the owner's data.
 - **Photos:** when the model can't see, they get `GUEST_UNSEEN_NOTE` (type it out
-  instead): they can't change the owner's models. See [Photos](photos.md).
+  instead): they can't change the owner's models. Their photos are never named to a
+  model as files, and never attached to the owner's email, by the assistant or from a
+  draft card (`mail::chat_file`). See [Photos](photos.md).
 
 ## Approvals
 

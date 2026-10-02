@@ -1189,6 +1189,7 @@ async fn blind_copies_stay_blind_and_attached_files_go_as_they_are() {
             name: "../../plan.pdf".to_owned(),
             mime: Some("application/pdf".to_owned()),
             data: base64::engine::general_purpose::STANDARD.encode(&pdf),
+            source: None,
         }],
     };
     send(&state, draft.clone()).await.unwrap();
@@ -1216,6 +1217,7 @@ async fn blind_copies_stay_blind_and_attached_files_go_as_they_are() {
             mime: None,
             data: base64::engine::general_purpose::STANDARD
                 .encode(vec![0u8; smtp::MAX_ATTACHMENTS + 1]),
+            source: None,
         }],
         ..draft.clone()
     };
@@ -1226,6 +1228,7 @@ async fn blind_copies_stay_blind_and_attached_files_go_as_they_are() {
             name: "x.txt".to_owned(),
             mime: None,
             data: "not base64!".to_owned(),
+            source: None,
         }],
         ..draft
     };

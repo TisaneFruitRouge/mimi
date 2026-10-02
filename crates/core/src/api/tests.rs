@@ -2150,6 +2150,7 @@ SUMMARY:Dentist\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
 }
 
 mod access_flow;
+mod mail_files;
 mod matrix_live;
 mod unsubscribe_flow;
 mod voice_flow;
@@ -2842,10 +2843,10 @@ mod mail_flow {
     use super::tool_use::{Reply, scripted_llm};
     use crate::mail::fake::{FakeMail, message};
 
-    const ME: &str = "me@example.org";
+    pub(super) const ME: &str = "me@example.org";
 
     /// Connects the fake account through the API and waits for its mail.
-    async fn connect(h: &Harness, fake: &FakeMail, expect: usize) {
+    pub(super) async fn connect(h: &Harness, fake: &FakeMail, expect: usize) {
         let (status, conn) = h
             .call(
                 reqwest::Method::POST,
@@ -2876,7 +2877,7 @@ mod mail_flow {
         panic!("the mail never arrived");
     }
 
-    async fn start(h: &Harness, content: &str) -> String {
+    pub(super) async fn start(h: &Harness, content: &str) -> String {
         let (_, conv) = h
             .call(reqwest::Method::POST, "/conversations", json!({}))
             .await;
@@ -2893,7 +2894,7 @@ mod mail_flow {
     }
 
     /// Waits for an approval card on the reply; returns the pending action.
-    async fn pending(h: &mut Harness, message_id: &str) -> mimi_protocol::Action {
+    pub(super) async fn pending(h: &mut Harness, message_id: &str) -> mimi_protocol::Action {
         loop {
             let frame = tokio::time::timeout(Duration::from_secs(10), h.ws.next())
                 .await

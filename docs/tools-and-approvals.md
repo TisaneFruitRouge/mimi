@@ -27,7 +27,12 @@ injection.
   `PUT /v1/settings` keeps the stored ones.
 - **Keep the known-recipients net.** Automatic sending (email, invitations, events with
   guests, Matrix messages) still asks unless everyone it reaches is known, even for a
-  person with an exception. Don't add new permission kinds without the same care.
+  person with an exception, and every blind copy counts. Don't add new permission kinds
+  without the same care.
+- **Files leaving the computer always ask.** An email the assistant attaches files to
+  waits for approval whatever Permissions say (`Tool::always_asks`), and the assistant
+  attaches only by reference (an email's attachment, a photo from the same chat), never
+  a file from the computer (see [Email](email.md#the-assistants-bcc-and-files)).
 - **The card shows what runs.** A tool whose arguments point at something looks it up in
   `Tool::resolve` and writes the real thing over whatever the model put there; the card,
   the permission decision and the run all see the same arguments.
@@ -92,8 +97,9 @@ Details:
   `apps/desktop/src/features/chat/action-formatters.tsx`; otherwise arguments show as a
   tidy key/value list. Any argument a formatter doesn't list in its `keys` is still
   shown after its rows. A row can show Markdown as it will look (`ArgRow.markdown`, e.g.
-  a Matrix message). The `mail_send` card shows To, Cc, Subject and the whole message
-  (see [Email](email.md)); a calendar write that Google will email guests about carries
+  a Matrix message). The `mail_send` card shows To, Cc, Bcc ("A hidden copy: the others
+  won't see this"), Subject, the whole message, and each file with its name, size and
+  where it comes from, looked up by `resolve` (see [Email](email.md)); a calendar write that Google will email guests about carries
   an `email_note` saying so beforehand (see [Calendar](calendar.md)).
 - **Automatic actions** (allowed by Permissions) still show in the chat as a card with
   their details, and, for events with guests, the "Send invitations to …" button.
@@ -127,6 +133,9 @@ a `Governs` variant, a descriptor, and `Tool::governed_by` on its tools.
   exist); `PUT /v1/settings` keeps what's stored, so a stale client can't undo them.
   The page offers people with a Matrix address and the groups from `GET
   /v1/matrix/groups` as exceptions for `send_messages`, and the switch under the kind.
+- **Always asking:** `Tool::always_asks` marks a call no choice lets through (an email
+  with files attached); its card offers no "Don't ask again", as an exception wouldn't
+  skip it.
 - **Deciding** (`requires_approval`, called from `chat::act`): a tool opts in with
   `Tool::governed_by` and says what a call is about with `Tool::call_targets` (email
   recipients, a calendar id, Matrix people and groups). Each target takes its
@@ -136,10 +145,10 @@ a `Governs` variant, a descriptor, and `Tool::governed_by` on its tools.
   on its own only if every target does.
 - **The safety net** comes after, for the kinds marked `recipients_must_be_known`: every
   target must also be known, whatever the rules say.
-  - `send_mail`: every recipient (and an email must have one) is known by `mail::known`:
-    the user's own addresses, address-book or hand-added handles, or someone in the Sent
-    folder; never Mimi's correspondent cards or mail that merely claims to be from the
-    user. `calendar_send_invitations` is sending mail.
+  - `send_mail`: every recipient, Cc and Bcc included (and an email must have one), is
+    known by `mail::known`: the user's own addresses, address-book or hand-added
+    handles, or someone in the Sent folder; never Mimi's correspondent cards or mail
+    that merely claims to be from the user. `calendar_send_invitations` is sending mail.
   - `add_events` and `change_events`: every guest (`CallTarget::Email` from
     `call_targets`) when a call adds guests, since the event then reaches them (Google
     shows it in their calendar without any email); nothing more for an event with nobody
@@ -168,7 +177,7 @@ a `Governs` variant, a descriptor, and `Tool::governed_by` on its tools.
   past-tense line ("read calendar"). Return true from `needs_approval` for anything that
   sends, changes or deletes.
 - If it should fall under Settings › Permissions, implement `governed_by` and
-  `call_targets`; if its arguments point at something, `resolve`; if it reads arguments
+  `call_targets` (and `always_asks` for calls that must never run on their own); if its arguments point at something, `resolve`; if it reads arguments
   in a further shape, `prepare`.
 - Integrations expose their tools through a `ToolSource` added to `state.tool_sources`
   at startup; the source returns no tools while the integration is disconnected. Each
@@ -189,6 +198,8 @@ Debug builds have two fake tools, `dev_lookup` and `dev_send_note`, enabled with
 - `api/tests.rs › mail_flow`: a hostile email and a model that obeys it; the send waits
   on the approval card and nothing is sent when it's declined. `mail_flow ›
   people_exceptions_and_dont_ask_again` covers exceptions and "Don't ask again".
+- `api/tests/mail_files.rs`: a hostile email's Bcc and files wait for approval even when
+  sending is automatic; only files the rules allow can be attached.
 - `api/tests.rs › automatic_sending_only_writes_to_people_the_user_knows`,
   `permission_api`, `calendar_guests`, `matrix_flow`, and `matrix/send_tests.rs` cover
   permissions and the known-recipients net.

@@ -10,8 +10,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use mimi_protocol::{
-    Event, MailAccount, MailBox, MailDraft, MailOverview, MailPreset, MailReceivedAddress,
-    MailSecurity, MailServers, MailThread, MailThreadDetail,
+    Event, MailAccount, MailAttachmentSource, MailBox, MailDraft, MailOverview, MailPreset,
+    MailReceivedAddress, MailSecurity, MailServers, MailThread, MailThreadDetail,
+    NewMailAttachment,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
@@ -685,7 +686,7 @@ pub async fn send(state: &Arc<AppState>, draft: MailDraft) -> Result<(), String>
         Some(message) => parse::attachments(&source(state, message).await?),
         None => Vec::new(),
     };
-    attachments.extend(attached(&draft.attachments)?);
+    attachments.extend(attached(state, &draft.attachments).await?);
     if attachments.iter().map(|f| f.data.len()).sum::<usize>() > smtp::MAX_ATTACHMENTS {
         return Err(match draft.forward_of {
             Some(_) if draft.attachments.is_empty() => {
@@ -711,41 +712,100 @@ pub async fn send(state: &Arc<AppState>, draft: MailDraft) -> Result<(), String>
     Ok(())
 }
 
-/// The files the user attached, decoded. Each goes as it is, under a plain file name.
-fn attached(files: &[mimi_protocol::NewMailAttachment]) -> Result<Vec<parse::Attachment>, String> {
+/// The files attached to a draft: the user's own, decoded, and those attached by
+/// reference (`NewMailAttachment::source`), fetched: an email's attachment from the
+/// server, a chat photo from the encrypted database. Each goes under a plain file name.
+async fn attached(
+    state: &AppState,
+    files: &[NewMailAttachment],
+) -> Result<Vec<parse::Attachment>, String> {
     use base64::Engine;
-    files
-        .iter()
-        .map(|f| {
-            let name: String = f
-                .name
-                .rsplit(['/', '\\'])
-                .next()
-                .unwrap_or_default()
-                .chars()
-                .filter(|c| !c.is_control())
-                .collect();
-            let name = match name.trim() {
-                "" => "Attachment".to_owned(),
-                n => n.to_owned(),
-            };
-            let data = base64::engine::general_purpose::STANDARD
-                .decode(f.data.trim())
-                .map_err(|_| format!("“{name}” couldn't be read. Try attaching it again."))?;
-            let content_type = f
-                .mime
-                .as_deref()
-                .map(str::trim)
-                .filter(|m| m.parse::<mime::Mime>().is_ok())
-                .unwrap_or("application/octet-stream")
-                .to_owned();
-            Ok(parse::Attachment {
-                name,
-                content_type,
-                data,
-            })
-        })
-        .collect()
+    // Each email is fetched once, however many of its files go along.
+    let mut fetched: HashMap<i64, Vec<parse::Attachment>> = HashMap::new();
+    let mut out = Vec::new();
+    for f in files {
+        let (name, mime, data) = match &f.source {
+            None => {
+                let data = base64::engine::general_purpose::STANDARD
+                    .decode(f.data.trim())
+                    .map_err(|_| {
+                        format!(
+                            "“{}” couldn't be read. Try attaching it again.",
+                            file_name(&f.name)
+                        )
+                    })?;
+                (f.name.clone(), f.mime.clone().unwrap_or_default(), data)
+            }
+            Some(MailAttachmentSource::Email { message, index, .. }) => {
+                if !fetched.contains_key(message) {
+                    let files = parse::attachments(&source(state, *message).await?);
+                    fetched.insert(*message, files);
+                }
+                let found = fetched[message].get(*index as usize).ok_or_else(|| {
+                    format!("“{}” isn't in that email any more.", file_name(&f.name))
+                })?;
+                (
+                    found.name.clone(),
+                    found.content_type.clone(),
+                    found.data.clone(),
+                )
+            }
+            Some(MailAttachmentSource::Chat { attachment, .. }) => {
+                let (_, meta, data) = chat_file(state, *attachment).await?.ok_or_else(|| {
+                    format!(
+                        "“{}” isn't in the chat any more, so it can't be attached.",
+                        file_name(&f.name)
+                    )
+                })?;
+                (meta.name, meta.mime, data)
+            }
+        };
+        let content_type = Some(mime.trim())
+            .filter(|m| m.parse::<mime::Mime>().is_ok())
+            .unwrap_or("application/octet-stream")
+            .to_owned();
+        out.push(parse::Attachment {
+            name: file_name(&name),
+            content_type,
+            data,
+        });
+    }
+    Ok(out)
+}
+
+/// A file's name without any folder part or control characters.
+fn file_name(raw: &str) -> String {
+    let name: String = raw
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect();
+    match name.trim() {
+        "" => "Attachment".to_owned(),
+        n => n.to_owned(),
+    }
+}
+
+/// A photo sent in one of the owner's chats: the conversation it's in, what it is and
+/// its content. `None` when it's gone, or was sent in a trusted person's conversation,
+/// which is theirs and never the owner's to send on.
+pub async fn chat_file(
+    state: &AppState,
+    id: Uuid,
+) -> Result<Option<(Uuid, mimi_protocol::Attachment, Vec<u8>)>, String> {
+    let conversation = crate::attachments::conversation_of(&state.db, id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let Some(conversation) = conversation.filter(|c| !state.access.is_guest_conversation(*c))
+    else {
+        return Ok(None);
+    };
+    let found = crate::attachments::get(&state.db, id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(found.map(|(meta, data)| (conversation, meta, data)))
 }
 
 /// Parses a view name from a query string.

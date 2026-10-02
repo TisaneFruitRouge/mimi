@@ -134,6 +134,10 @@ desktop webview can't reach the daemon, so `transport.ts › attachmentUrl` asks
   marked `attachments_unseen`.
 - Internal calls (memory learning, mail) never carry pictures, and learning skips
   messages that are only photos.
+- While an email account is connected, the owner's prompt names each message's photos
+  with their ids (`chat:<id>`), so the assistant can attach one to an email written in
+  the same chat; a trusted person's prompt never does. See
+  [Email](email.md#the-assistants-bcc-and-files).
 
 ## Messaging apps
 

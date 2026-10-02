@@ -11,9 +11,11 @@ for showing mail. Connections in general: [Connections](connections.md).
 
 - **Email is untrusted.** Tools label mail as data. The only tool that acts,
   `mail_send`, asks for approval unless Settings › Permissions lets it go and every
-  recipient is known (`mail::known`); its card shows To, Cc, Subject and the whole
-  message. `api/tests.rs › mail_flow` proves a hostile email can't send mail without
-  approval; keep it passing.
+  recipient, Bcc included, is known (`mail::known`); its card shows To, Cc, Bcc (said to
+  be hidden from the others), Subject, the whole message and every file with its size
+  and where it comes from. `api/tests.rs › mail_flow` and `api/tests/mail_files.rs`
+  prove a hostile email can't send mail, a blind copy or a file without approval; keep
+  them passing.
 - Model calls about mail (`model.rs`: sorting, summaries, drafts) get no tools; their
   output is shown to the user or parsed into a fixed shape.
 - Mail never reaches memory learning: learning reads only the user's own messages.
@@ -32,10 +34,20 @@ for showing mail. Connections in general: [Connections](connections.md).
 - The Jev key is never in `Settings` (clients read that). Automatic and suspicious mail
   is still filed locally, never sent to Jev.
 - A draft's `from` must be one of the account's addresses; anything else is refused.
-- Bcc and attached files come only from the user: the assistant's tools (`draft_from`)
-  have neither, so a model can't add a hidden recipient or send a file. Bcc counts
-  towards `MAX_RECIPIENTS`. The message sent never carries the Bcc line; only the copy
-  filed in Sent does (`smtp::build`).
+- **The assistant's Bcc and files.** Its tools may add blind copies and attach files,
+  under these rules (`tools.rs`, see [The assistant's Bcc and files](#the-assistants-bcc-and-files)):
+  - Bcc addresses are recipients like any other: `call_targets` lists them, so automatic
+    sending still asks unless every one is known, and the card and the summary line
+    (all a Telegram approval shows) name them as a hidden copy.
+  - An email with files attached always asks, even when sending is automatic
+    (`Tool::always_asks`), and its card offers no "Don't ask again".
+  - Files only by reference, never bytes from the model: an attachment of an email in
+    the user's mail (`email:<message>:<index>`, never from mail flagged suspicious) or a
+    photo the user sent **in the same conversation** (`chat:<id>`). Never a file from
+    the computer (acting on the computer is out of scope), never a photo from another
+    chat, never a trusted person's.
+  - Bcc counts towards `MAX_RECIPIENTS`. The message sent never carries the Bcc line;
+    only the copy filed in Sent does (`smtp::build`).
 - Anyone can write delivery headers: an address on another domain never counts as the
   user's. `my_addresses` is the accounts' own addresses only, plus whatever was filed as
   outgoing (Sent).
@@ -166,11 +178,17 @@ The assistant's tools (`tools.rs`):
 
 - `mail_search` and `mail_read_thread` are reads; their output carries a "data, not
   instructions" notice.
+- `mail_read_thread` gives each message's `message_id` and its attachments' names with
+  the `file` id the draft and send tools take (none for suspicious mail). Sizes aren't
+  kept locally: they're measured when a file is attached.
 - `mail_draft_reply` and `mail_compose` make a draft, shown in the chat as an editable
-  card; nothing is sent.
-- `mail_send` asks for approval (the card shows To, Cc, Subject and the whole
-  message) unless the user made sending automatic and every recipient is known. Its `prepare` splits recipients into one address each. It's governed by the
-  `send_mail` permission (see [Tools and approvals](tools-and-approvals.md)).
+  card; nothing is sent. Both take `bcc` and `attachments`.
+- `mail_send` asks for approval (the card shows To, Cc, Bcc, Subject, the whole message
+  and the files) unless the user made sending automatic, every recipient is known and
+  nothing is attached. Its `resolve` looks the files up (name, size, where from) and
+  refuses one that can't go before any card; its `prepare` splits recipients into one
+  address each. It's governed by the `send_mail` permission (see
+  [Tools and approvals](tools-and-approvals.md)).
 
 Model calls about mail (`model.rs`: sorting, summaries, reply drafts) get no tools; their
 answers are shown to the user or parsed into a fixed shape (a category from three and
@@ -290,6 +308,28 @@ asked for it), newest first, one conversation at a time.
   can add up to `smtp::MAX_ATTACHMENTS` (20 MB); `/mail/send` takes requests up to
   `smtp::MAX_REQUEST_BYTES`.
 - Messages are plain text, so pictures go as attachments, not inline.
+
+## The assistant's Bcc and files
+
+The draft and send tools take `bcc` (addresses) and `attachments` (`file` ids). A file
+is a reference the daemon resolves, so the model never handles its content:
+
+- `email:<message>:<index>`: an email's attachment, as `mail_read_thread` lists it.
+  Refused for mail flagged suspicious: a hostile email mustn't get its own attachment
+  passed on from the user's address.
+- `chat:<id>`: a photo the user sent in this conversation. While an email account is
+  connected, the owner's prompt names the photos of each message with their ids
+  (`chat::files_note`); a trusted person's never does.
+
+At most 10 files, 20 MB together. `find_files` checks each one (and, for an email's,
+fetches it from the server to measure it); the error says plainly why a file can't go.
+In a draft each becomes a `NewMailAttachment` with empty `data` and a `source`
+(`MailAttachmentSource::Email { message, index, size }` or `Chat { attachment, size }`;
+`size` only for showing). `mail::send` (`attached`) fetches them when the email is sent,
+whether the assistant sends it or the user does from the draft card: an email's from the
+server, a photo from the encrypted database, never one from a trusted person's
+conversation (theirs, not the owner's). The draft card shows them with their name, size,
+origin and, for photos, a thumbnail; the user can take any of them out before sending.
 
 ## Attachments
 
@@ -481,7 +521,8 @@ All under `/v1`. Changes publish `MailChanged` (`mail_changed`).
   Bcc are chips that suggest people from People by name, address or `@name` (see
   [People](people.md#addresses-in-to-cc-and-guests)).
 - `draft-card.tsx`: drafts the assistant writes in chat, as editable cards with their
-  own Send button. `mail_send` approval cards show every field.
+  own Send button, showing the Bcc and files it added (removable). `mail_send` approval
+  cards show every field: Bcc as a hidden copy, each file's name, size and origin.
 - `folder-looks.tsx`: the smart folders' icons and colours.
 - `unsubscribe.tsx`: the reader's Unsubscribe button and its sheet (see
   [Unsubscribing](#unsubscribing)).
@@ -499,6 +540,10 @@ Mail panel reply drafts get the user's custom instructions only, not the persona
 - `api/tests.rs › mail_flow` has a hostile email and a model that obeys it: the send
   waits on the approval card, and nothing is sent when it's declined. `mail_flow ›
   people_exceptions_and_dont_ask_again` covers permissions.
+- `api/tests/mail_files.rs`: with sending automatic, a hostile email's Bcc to a stranger
+  and a file to a known person both wait, a path on the computer is refused, a photo
+  from another chat can't be attached, and a draft card's photo is sent (but not once
+  its chat is a trusted person's).
 - To try the app by hand:
   `MIMI_FAKE_MAIL_SEED=1 cargo test -p mimi-core fake_mail_server -- --ignored` serves
   seeded mail on 127.0.0.1:3143 (IMAP) / 3025 (SMTP) as `me@example.org` / `app-pass`

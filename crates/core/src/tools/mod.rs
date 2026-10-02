@@ -51,6 +51,11 @@ pub trait Tool: Send + Sync {
     fn governed_by(&self) -> Option<Governs> {
         None
     }
+    /// A call its permission never lets run on its own, whatever the user chose (an
+    /// email carrying files). Only read for tools with [`Tool::governed_by`].
+    fn always_asks(&self, _args: &Value) -> bool {
+        false
+    }
     /// Who or what this call is about, for the exceptions of its permission ("email Sam
     /// without asking", "always ask before writing to the Family calendar"). Read from
     /// the prepared (and resolved) arguments.

@@ -233,7 +233,15 @@ pub async fn send_with_extras(
         photo_model(&state, &settings, &history, &attachments, &provider, &model).await
     };
     let (model, provider) = photo.unwrap_or((model, provider));
-    let photos = prompt_photos(&state, &provider, &model.model, &history, &attachments).await;
+    let mut photos = prompt_photos(&state, &provider, &model.model, &history, &attachments).await;
+    // The owner's photos can be attached to an email they write with the assistant
+    // (`mail::tools`): the model needs their ids.
+    if guest.is_none()
+        && (!attachments.is_empty() || history.iter().any(|m| !m.attachments.is_empty()))
+    {
+        photos.file_ids = !crate::mail::accounts(&state).await.is_empty();
+        photos.new_files = attachments.iter().map(|a| a.meta.clone()).collect();
+    }
     let prompt = match &guest {
         // None of the owner's memory, and not their custom instructions: those are their
         // standing wishes about how to act for them, and may name private things.
@@ -836,6 +844,9 @@ fn replay(
             };
             text = join_note(&text, &note);
         }
+        if photos.file_ids && !m.attachments.is_empty() {
+            text = join_note(&text, &files_note(&m.attachments));
+        }
         let text = said(text, m.spoken);
         return vec![ChatMessage::text(Role::User, text).with_images(images)];
     }
@@ -886,6 +897,22 @@ struct PromptPhotos {
     new: Vec<providers::ImagePart>,
     /// How many photos the new message has.
     new_count: usize,
+    /// Whether messages name their photos' ids, for attaching them to an email.
+    file_ids: bool,
+    /// The new message's photos, for their ids.
+    new_files: Vec<mimi_protocol::Attachment>,
+}
+
+/// Tells the model the ids of a message's photos, which the mail tools can attach.
+fn files_note(files: &[mimi_protocol::Attachment]) -> String {
+    let list: Vec<String> = files
+        .iter()
+        .map(|f| format!("“{}” (file chat:{})", f.name, f.id))
+        .collect();
+    format!(
+        "(Photos here that can go with an email: {}.)",
+        list.join(", ")
+    )
 }
 
 /// Which photos go to the model with this message: only for a model that can see them,
@@ -1214,6 +1241,11 @@ fn assemble(
         )
     } else {
         new_message.to_owned()
+    };
+    let new_message = if photos.file_ids && !photos.new_files.is_empty() {
+        join_note(&new_message, &files_note(&photos.new_files))
+    } else {
+        new_message
     };
 
     // Newest history first until the budget runs out, then back in order.
