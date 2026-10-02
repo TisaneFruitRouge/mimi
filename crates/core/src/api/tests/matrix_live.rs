@@ -5,7 +5,7 @@
 //! ```
 //!
 //! The server needs open registration without verification (a throwaway Synapse; see
-//! CLAUDE.md › Connections). Never point this at a public server.
+//! docs/matrix.md › Tests). Never point this at a public server.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
