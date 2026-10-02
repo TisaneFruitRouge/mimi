@@ -57,6 +57,7 @@ import type { MailDiscovery } from "@/bindings/MailDiscovery";
 import type { MailFolderInput } from "@/bindings/MailFolderInput";
 import type { MailPreset } from "@/bindings/MailPreset";
 import type { MailSummary } from "@/bindings/MailSummary";
+import type { MailOlderResults } from "@/bindings/MailOlderResults";
 import type { MailThread } from "@/bindings/MailThread";
 import type { MailThreadDetail } from "@/bindings/MailThreadDetail";
 import type { MailUnsubscribe } from "@/bindings/MailUnsubscribe";
@@ -245,6 +246,9 @@ export const api = {
     return call<MailThread[]>("GET", `/mail/threads?${params}`);
   },
   mailThread: (id: number) => call<MailThreadDetail>("GET", `/mail/threads/${id}`),
+  /** Asks the mail servers for mail older than what's kept here; brings in the newest matches. */
+  mailOlder: (q: string, account: string | null = null) =>
+    call<MailOlderResults>("POST", "/mail/older", { q: q.trim(), account }),
   /** One email as it was sent (made safe) and as formatted text, pictures from other servers left out. */
   mailContent: (id: number) => call<MailContent>("GET", `/mail/messages/${id}/content`),
   /** The same with its pictures from other servers, fetched by the daemon now (the user asked). */
@@ -427,6 +431,8 @@ export const keys = {
     ["mail", "threads", view, q, scope.account ?? null, scope.address ?? null, folder] as const,
   mailThread: (id: number) => ["mail", "thread", id] as const,
   mailUnsubscribe: (id: number) => ["mail", "unsubscribe", id] as const,
+  // Not under "mail": each mail change would search the servers again.
+  mailOlder: (q: string, account: string | null) => ["mailOlder", q.trim(), account] as const,
   // Not under "mail": an email's content never changes, and loading its pictures again at
   // every mail change would tell the sender each time.
   mailContent: (id: number, images: boolean) => ["mailContent", id, images] as const,

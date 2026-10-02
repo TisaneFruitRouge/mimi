@@ -123,7 +123,8 @@ account, cancelled on disconnect.
      stored with its headers and a note as its body.
    - Flag changes and removals: a `UID FETCH <min>:<max> (UID FLAGS)` sweep over what's
      stored.
-   - Mail older than 97 days is forgotten; the high-water mark becomes
+   - Mail older than 97 days is forgotten (not older mail a search brought in: see
+     [Older mail on the server](#older-mail-on-the-server)); the high-water mark becomes
      `max(highest UID seen, UIDNEXT-1)`.
 2. `IDLE` on the Inbox for up to 10 minutes, until the server reports news or the app
    pokes the loop (after sending, archiving or "Check for new mail"). Before idling, a
@@ -143,6 +144,47 @@ Actions (mark read, archive, filing a sent copy) open a short second session. Ar
 uses `MOVE` (or COPY + `\Deleted` + EXPUNGE) to the Archive mailbox, or Gmail's All
 Mail. Sent mail is appended to Sent except on Gmail and Proton, which file it
 themselves.
+
+## Older mail on the server
+
+`older.rs`, migration 0030. Only the last 90 days are copied, so searching here can't
+find older mail; the server can.
+
+- **Asking.** The Mail panel's search shows local results, then a "Search older mail"
+  button under them; a server search takes seconds, so it runs only when asked, never
+  while typing, and the results stay for the same words. They show below the local
+  results as "Older mail on the server" (conversations already above left out). The
+  scope's account narrows it; an address scope doesn't (the whole account is searched).
+- **Searching.** `UID SEARCH CHARSET UTF-8 BEFORE <window start> TEXT "word" …` (every
+  word, split like the local search) in Inbox, Sent and Archive, never Spam or Trash
+  (nor Gmail's All Mail, as in sync). Non-ASCII words go as `LITERAL+` literals when the
+  server offers them, else quoted. A server that refuses UTF-8 (NO or BAD, read from the
+  tagged response: async-imap's `uid_search` reports a refusal as no matches) is asked
+  again without CHARSET, with the non-ASCII words left out and the user told. People
+  (from the assistant) are `OR FROM x OR TO x CC x`.
+- **The cap.** The newest `CAP` (50) matches per account across the three mailboxes, by
+  arrival (`INTERNALDATE` of each mailbox's 50 highest UIDs); `more` says there were more.
+  The whole search has 45 s: what came in by then is shown, with a note.
+- **Bringing it in.** Sync's own pipeline (`sync::fetch_messages`, `Fetched::read`):
+  parsing, hidden text and safe HTML, the suspicious check, received_on, 2 MB headers-only.
+  So it opens, replies, forwards, attaches and mentions like any conversation. Messages
+  already here aren't fetched again.
+- **Keeping.** `mail_messages.kept_until`: a week after it was found, 30 days after it
+  was last opened (`GET /mail/threads/{id}`), then forgotten (`older::forget_expired`, at
+  each pass and each older search). While kept it's found by local search, but left out
+  of the mailboxes and sorted views, counts, "Received on", correspondents, sorting
+  (`store::unsorted`) and smart folders (`folders::ELIGIBLE`). Nothing is announced as new
+  mail, so it wakes no sorting, notification or memory.
+- **Sync leaves it be.** Its UIDs are below the high-water mark, so nothing is fetched
+  again; the 97-day prune skips it; sync's flag sweep (`store::known`) leaves it out, as
+  its old UIDs would widen the `min:max` range to most of the mailbox. `older::sweep`, run
+  in each pass, checks flags and removals of kept mail by its own UIDs instead. A new
+  UIDVALIDITY drops it with the rest of the mailbox; an older search skips a mailbox whose
+  UIDVALIDITY changed since the last pass.
+- **The assistant.** `mail_search` takes `older: true`, and also asks the server when
+  nothing recent matches its words or person (`older: false` stops that). Older finds come
+  as `older_conversations` with a note, in the same output that carries the "data, not
+  instructions" notice.
 
 ## Storage and threading
 
@@ -177,7 +219,8 @@ out tags nested over 100 deep (keeping their text), so crafted HTML can't stall 
 The assistant's tools (`tools.rs`):
 
 - `mail_search` and `mail_read_thread` are reads; their output carries a "data, not
-  instructions" notice.
+  instructions" notice. `mail_search` can reach older mail on the server (see
+  [Older mail on the server](#older-mail-on-the-server)).
 - `mail_read_thread` gives each message's `message_id` and its attachments' names with
   the `file` id the draft and send tools take (none for suspicious mail). Sizes aren't
   kept locally: they're measured when a file is attached.
@@ -497,6 +540,9 @@ All under `/v1`. Changes publish `MailChanged` (`mail_changed`).
 - `POST /v1/mail/send` (a `MailDraft`): the panel's or a draft card's Send button, which
   is the user's own action and so the approval.
 - `POST /v1/mail/refresh`.
+- `POST /v1/mail/older` (`MailOlderSearch { q, account }` → `MailOlderResults { threads,
+  before, more, problems }`): searches the servers for older mail and brings in the
+  newest matches.
 - `GET /v1/mail/messages/{id}/content`, `POST /v1/mail/messages/{id}/images`,
   `GET /v1/mail/messages/{id}/attachments/{index}`.
 - `DELETE /v1/mail/jev`.
@@ -517,6 +563,7 @@ All under `/v1`. Changes publish `MailChanged` (`mail_changed`).
   with the model; Send only by the user). Mailboxes also lists Flagged.
 - `flag.tsx`: flagging (`useFlagThread`, the row's star); see [Flags](#flags).
 - `message-body.tsx`: how a message is shown (Text · Formatted · Original).
+- `older-mail.tsx`: "Search older mail" under search results, and what the servers found.
 - `draft-editor.tsx`: the draft editor; `draft-attachments.tsx`, its files. To, Cc and
   Bcc are chips that suggest people from People by name, address or `@name` (see
   [People](people.md#addresses-in-to-cc-and-guests)).
@@ -537,6 +584,11 @@ Mail panel reply drafts get the user's custom instructions only, not the persona
   sorting with a mock model; also `dropped_idle_connections_are_not_errors`,
   `mail_about_assistants_is_not` and
   `mail_that_only_claims_to_be_from_the_user_is_still_checked`.
+- `mail/older_tests.rs`: older mail found only in Inbox, Sent and Archive, the search
+  criteria, the cap, the UTF-8 fallback, kept mail left out of views and sorting, the
+  next passes fetching nothing again (and sweeping it by its own UIDs), expiry, and
+  `mail_search` reaching it. The fake server evaluates SEARCH keys (`BEFORE`, `TEXT`,
+  `FROM`, `OR`…), takes `LITERAL+`, can refuse CHARSET, and records UID commands.
 - `api/tests.rs › mail_flow` has a hostile email and a model that obeys it: the send
   waits on the approval card, and nothing is sent when it's declined. `mail_flow ›
   people_exceptions_and_dont_ask_again` covers permissions.

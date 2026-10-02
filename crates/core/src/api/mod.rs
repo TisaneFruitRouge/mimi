@@ -204,6 +204,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             )),
         )
         .route("/mail/refresh", post(mail::refresh))
+        .route("/mail/older", post(mail::older))
         .route("/mail/folders", post(mail::create_folder))
         .route(
             "/mail/folders/{id}",

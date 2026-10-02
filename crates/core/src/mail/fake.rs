@@ -52,6 +52,10 @@ pub struct State {
     pub bodies_sent: u32,
     /// Hang up on the next connection that's idling, as servers and routers do.
     pub drop_idle: bool,
+    /// Answer `SEARCH CHARSET …` with NO [BADCHARSET], as some servers do.
+    pub refuse_charset: bool,
+    /// Every UID command received: (mailbox, command as received).
+    pub commands: Vec<(String, String)>,
 }
 
 pub struct FakeMail {
@@ -96,6 +100,8 @@ impl FakeMail {
                 unreadable: None,
                 bodies_sent: 0,
                 drop_idle: false,
+                refuse_charset: false,
+                commands: Vec::new(),
             }),
             imap_port: imap.local_addr().unwrap().port(),
             smtp_port: smtp.local_addr().unwrap().port(),
@@ -227,6 +233,30 @@ impl FakeMail {
         self.lock().bodies_sent
     }
 
+    /// Makes the server refuse searches in UTF-8 (`NO [BADCHARSET]`).
+    pub fn set_refuse_charset(&self, on: bool) {
+        self.lock().refuse_charset = on;
+    }
+
+    /// The UID commands received in a mailbox, e.g. "SEARCH …", "FETCH …".
+    pub fn commands(&self, mailbox: &str) -> Vec<String> {
+        self.lock()
+            .commands
+            .iter()
+            .filter(|(m, _)| m == mailbox)
+            .map(|(_, c)| c.clone())
+            .collect()
+    }
+
+    /// The mailboxes any UID command was sent in.
+    pub fn mailboxes_used(&self) -> BTreeSet<String> {
+        self.lock()
+            .commands
+            .iter()
+            .map(|(m, _)| m.clone())
+            .collect()
+    }
+
     fn exists(&self, mailbox: &str) -> usize {
         self.count(mailbox)
     }
@@ -246,7 +276,22 @@ impl FakeMail {
             if r.read_line(&mut line).await? == 0 {
                 return Ok(());
             }
-            let line = line.trim_end_matches(['\r', '\n']).to_owned();
+            let mut line = line.trim_end_matches(['\r', '\n']).to_owned();
+            // Non-synchronising literals (LITERAL+): `{n+}`, then n bytes, then the rest
+            // of the command. Kept as quoted strings for the parsing below.
+            while let Some((head, n)) = line
+                .rsplit_once('{')
+                .and_then(|(head, n)| Some((head.len(), n.strip_suffix("+}")?.parse().ok()?)))
+            {
+                line.truncate(head);
+                let mut buf = vec![0; n];
+                r.read_exact(&mut buf).await?;
+                let text = String::from_utf8_lossy(&buf);
+                line += &*format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""));
+                let mut more = String::new();
+                r.read_line(&mut more).await?;
+                line += more.trim_end_matches(['\r', '\n']);
+            }
             let (tag, rest) = line.split_once(' ').unwrap_or((&line, ""));
             let tag = tag.to_owned();
             let (cmd, args) = rest.split_once(' ').unwrap_or((rest, ""));
@@ -256,8 +301,9 @@ impl FakeMail {
             match cmd.as_str() {
                 "CAPABILITY" => {
                     let idle = if self.lock().idle { " IDLE" } else { "" };
-                    out +=
-                        &*format!("* CAPABILITY IMAP4rev1 MOVE UIDPLUS{idle}\r\n{tag} OK done\r\n");
+                    out += &*format!(
+                        "* CAPABILITY IMAP4rev1 MOVE UIDPLUS LITERAL+{idle}\r\n{tag} OK done\r\n"
+                    );
                 }
                 "NOOP" => out += &*format!("{tag} OK done\r\n"),
                 "LOGOUT" => {
@@ -350,6 +396,7 @@ impl FakeMail {
                         continue;
                     };
                     let (sub, rest) = args.split_once(' ').unwrap_or((&args, ""));
+                    self.lock().commands.push((mb.clone(), args.clone()));
                     // A message that can't be fetched: the connection drops.
                     let unreadable = self.lock().unreadable;
                     if sub.eq_ignore_ascii_case("FETCH")
@@ -427,24 +474,16 @@ impl FakeMail {
         match sub {
             "SEARCH" => {
                 let mb = &st.mailboxes[mb_index];
-                let criteria = rest.trim();
+                // Parentheses as words of their own (a quoted one too: fine for tests).
+                let tokens = strings(&rest.replace('(', " ( ").replace(')', " ) "));
+                if st.refuse_charset && tokens.first().is_some_and(|t| t == "CHARSET") {
+                    return format!("{tag} NO [BADCHARSET (US-ASCII)] charset not supported\r\n");
+                }
+                let key = search_key(&mut tokens.into_iter().peekable());
                 let hits: Vec<u32> = mb
                     .messages
                     .iter()
-                    .filter(|m| {
-                        if let Some(date) = criteria.strip_prefix("SINCE ") {
-                            let since = chrono::NaiveDate::parse_from_str(date.trim(), "%d-%b-%Y")
-                                .map(|d| {
-                                    d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis()
-                                })
-                                .unwrap_or(0);
-                            m.internal_date >= since
-                        } else if let Some(set) = criteria.strip_prefix("UID ") {
-                            in_set(set, m.uid, max_uid)
-                        } else {
-                            true
-                        }
-                    })
+                    .filter(|m| key.matches(m, max_uid))
                     .map(|m| m.uid)
                     .collect();
                 let list: Vec<String> = hits.iter().map(u32::to_string).collect();
@@ -717,6 +756,86 @@ fn strings(args: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// What a SEARCH asks for (the keys Mimi sends).
+enum Key {
+    All(Vec<Key>),
+    Or(Box<Key>, Box<Key>),
+    Before(i64),
+    Since(i64),
+    Text(String),
+    Header(&'static str, String),
+    Uid(String),
+    Any,
+}
+
+type Tokens = std::iter::Peekable<std::vec::IntoIter<String>>;
+
+fn day(s: &str) -> i64 {
+    chrono::NaiveDate::parse_from_str(s.trim(), "%d-%b-%Y")
+        .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis())
+        .unwrap_or(0)
+}
+
+/// Every key up to the end or a closing parenthesis.
+fn search_key(t: &mut Tokens) -> Key {
+    let mut all = Vec::new();
+    while let Some(k) = t.peek() {
+        if k == ")" {
+            t.next();
+            break;
+        }
+        all.push(one_key(t));
+    }
+    Key::All(all)
+}
+
+fn one_key(t: &mut Tokens) -> Key {
+    let word = t.next().unwrap_or_default().to_uppercase();
+    let mut arg = || t.next().unwrap_or_default();
+    match word.as_str() {
+        "(" => search_key(t),
+        "CHARSET" => {
+            arg();
+            Key::Any
+        }
+        "BEFORE" => Key::Before(day(&arg())),
+        "SINCE" => Key::Since(day(&arg())),
+        "TEXT" | "BODY" => Key::Text(arg()),
+        "FROM" => Key::Header("from", arg()),
+        "TO" => Key::Header("to", arg()),
+        "CC" => Key::Header("cc", arg()),
+        "UID" => Key::Uid(arg()),
+        "OR" => {
+            let a = one_key(t);
+            let b = one_key(t);
+            Key::Or(Box::new(a), Box::new(b))
+        }
+        _ => Key::Any,
+    }
+}
+
+impl Key {
+    fn matches(&self, m: &Stored, max_uid: u32) -> bool {
+        let raw = || String::from_utf8_lossy(&m.raw).to_lowercase();
+        match self {
+            Key::All(keys) => keys.iter().all(|k| k.matches(m, max_uid)),
+            Key::Or(a, b) => a.matches(m, max_uid) || b.matches(m, max_uid),
+            Key::Before(d) => m.internal_date < *d,
+            Key::Since(d) => m.internal_date >= *d,
+            Key::Text(s) => raw().contains(&s.to_lowercase()),
+            Key::Header(name, s) => raw()
+                .split("\r\n\r\n")
+                .next()
+                .unwrap_or("")
+                .lines()
+                .filter(|l| l.starts_with(&format!("{name}:")))
+                .any(|l| l.contains(&s.to_lowercase())),
+            Key::Uid(set) => in_set(set, m.uid, max_uid),
+            Key::Any => true,
+        }
+    }
 }
 
 /// Whether `uid` is in an IMAP UID set like "1:*", "4,7,9" or "3:10".

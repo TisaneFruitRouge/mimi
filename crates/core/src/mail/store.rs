@@ -242,14 +242,16 @@ pub fn reset_mailbox(c: &Connection, conn: Uuid, mailbox: &str) -> rusqlite::Res
     drop_empty_threads(c)
 }
 
-/// Every stored message of a mailbox: uid, seen, flagged.
+/// Every message of a mailbox copied by sync: uid, seen, flagged. (Older mail found by a
+/// search has its own sweep, `older::sweep`, so it doesn't widen this one's UID range.)
 pub fn known(
     c: &Connection,
     conn: Uuid,
     mailbox: &str,
 ) -> rusqlite::Result<Vec<(u32, bool, bool)>> {
     let mut stmt = c.prepare(
-        "SELECT uid, seen, flagged FROM mail_messages WHERE connection_id = ?1 AND mailbox = ?2",
+        "SELECT uid, seen, flagged FROM mail_messages WHERE connection_id = ?1 AND mailbox = ?2
+           AND kept_until IS NULL",
     )?;
     stmt.query_map(params![conn.to_string(), mailbox], |r| {
         Ok((r.get(0)?, r.get(1)?, r.get(2)?))
@@ -284,10 +286,12 @@ pub fn remove(c: &Connection, conn: Uuid, mailbox: &str, uids: &[u32]) -> rusqli
     drop_empty_threads(c)
 }
 
-/// Forgets a mailbox's messages older than `before`. Returns how many went.
+/// Forgets a mailbox's messages older than `before`. Returns how many went. Older mail a
+/// search found stays until its own time is up (`older::forget_expired`).
 pub fn prune(c: &Connection, conn: Uuid, mailbox: &str, before: i64) -> rusqlite::Result<usize> {
     let n = c.execute(
-        "DELETE FROM mail_messages WHERE connection_id = ?1 AND mailbox = ?2 AND date < ?3",
+        "DELETE FROM mail_messages WHERE connection_id = ?1 AND mailbox = ?2 AND date < ?3
+           AND kept_until IS NULL",
         params![conn.to_string(), mailbox, before],
     )?;
     if n > 0 {
@@ -296,7 +300,7 @@ pub fn prune(c: &Connection, conn: Uuid, mailbox: &str, before: i64) -> rusqlite
     Ok(n)
 }
 
-fn drop_empty_threads(c: &Connection) -> rusqlite::Result<()> {
+pub(super) fn drop_empty_threads(c: &Connection) -> rusqlite::Result<()> {
     c.execute(
         "DELETE FROM mail_threads WHERE NOT EXISTS
             (SELECT 1 FROM mail_messages m WHERE m.thread_id = mail_threads.id)",
@@ -413,6 +417,7 @@ pub fn inbox_addresses(c: &Connection, conn: Uuid) -> rusqlite::Result<Vec<(Stri
         "SELECT received_on, count(DISTINCT thread_id),
                 count(DISTINCT CASE WHEN NOT seen THEN thread_id END)
          FROM mail_messages WHERE connection_id = ?1 AND folder = 'inbox' AND received_on IS NOT NULL
+           AND kept_until IS NULL
          GROUP BY received_on ORDER BY 2 DESC, 1",
     )?
     .query_map([conn.to_string()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
@@ -488,7 +493,8 @@ pub fn fts_query(text: &str) -> Option<String> {
 pub fn threads(c: &Connection, q: &Query, me: &[String]) -> rusqlite::Result<Vec<MailThread>> {
     let in_folder = |f: &str| {
         format!(
-            "EXISTS (SELECT 1 FROM mail_messages x WHERE x.thread_id = t.id AND x.folder = '{f}')"
+            "EXISTS (SELECT 1 FROM mail_messages x WHERE x.thread_id = t.id AND x.folder = '{f}'
+               AND x.kept_until IS NULL)"
         )
     };
     let (mut filters, mut args) = q.scope.filters();
@@ -787,7 +793,8 @@ pub fn category_str(c: MailCategory) -> &'static str {
 pub fn counts(c: &Connection, scope: &Scope) -> rusqlite::Result<(u32, u32, u32)> {
     let (filters, args) = scope.filters();
     let mut inbox = vec![
-        "EXISTS (SELECT 1 FROM mail_messages x WHERE x.thread_id = t.id AND x.folder = 'inbox')"
+        "EXISTS (SELECT 1 FROM mail_messages x WHERE x.thread_id = t.id AND x.folder = 'inbox'
+           AND x.kept_until IS NULL)"
             .to_owned(),
     ];
     inbox.extend(filters);
@@ -903,7 +910,8 @@ pub fn unsorted(c: &Connection, since: i64, limit: u32) -> rusqlite::Result<Vec<
     let mut stmt = c.prepare(
         "SELECT t.id FROM mail_threads t
          WHERE (t.sorted_at IS NULL OR t.sorted_at < t.last_at) AND t.last_at >= ?1
-           AND EXISTS (SELECT 1 FROM mail_messages x WHERE x.thread_id = t.id AND x.folder = 'inbox')
+           AND EXISTS (SELECT 1 FROM mail_messages x WHERE x.thread_id = t.id AND x.folder = 'inbox'
+               AND x.kept_until IS NULL)
          ORDER BY t.last_at DESC LIMIT ?2",
     )?;
     stmt.query_map(params![since, limit], |r| r.get(0))?
@@ -921,7 +929,7 @@ pub fn correspondents(
     let mut tally: HashMap<String, (HashMap<String, u32>, u32, bool)> = HashMap::new();
     let mut stmt = c.prepare(
         "SELECT from_name, from_email, to_json, cc_json, outgoing, automated FROM mail_messages
-         WHERE connection_id = ?1",
+         WHERE connection_id = ?1 AND kept_until IS NULL",
     )?;
     let rows = stmt.query_map([conn.to_string()], |r| {
         Ok((

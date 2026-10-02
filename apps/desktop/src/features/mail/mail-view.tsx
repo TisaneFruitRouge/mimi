@@ -67,6 +67,7 @@ import { DraftEditor, SendButton, useSendDraft } from "@/features/mail/draft-edi
 import { FlagStar, RowFlag, useFlagThread } from "@/features/mail/flag";
 import { FolderGlyph } from "@/features/mail/folder-looks";
 import { AddToFolder, FolderChips, FolderHeader, FolderList } from "@/features/mail/folders";
+import { OlderMail } from "@/features/mail/older-mail";
 import { type FrameContext, MailModeSwitch, MessageBody } from "@/features/mail/message-body";
 import { UnsubscribeButton } from "@/features/mail/unsubscribe";
 import {
@@ -231,6 +232,8 @@ function listDate(ms: number) {
   if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const days = (now.getTime() - ms) / 86_400_000;
   if (days < 6) return d.toLocaleDateString([], { weekday: "short" });
+  // Older mail found on the server can be years old.
+  if (d.getFullYear() !== now.getFullYear()) return d.toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
   return d.toLocaleDateString([], { day: "numeric", month: "short" });
 }
 
@@ -882,6 +885,34 @@ function ThreadList({
             />
           </ThreadMenu>
         ))}
+        {searching && !threads.isLoading && (
+          <OlderMail
+            key={`${query.trim()}|${scope.account ?? ""}`}
+            query={query}
+            account={scope.account ?? null}
+            shown={new Set(list.map((t) => t.id))}
+            renderThread={(t) => (
+              <ThreadMenu
+                key={t.id}
+                thread={t}
+                folder={null}
+                folders={overview.folders}
+                onOpen={() => onSelect(t.id)}
+                onAction={(action) => onAction(t.id, action)}
+                onDelete={() => setDeleting(t)}
+              >
+                <ThreadRow
+                  thread={t}
+                  active={t.id === selected}
+                  focusable={false}
+                  showCategory={false}
+                  showAddress={showAddress && !!t.received_on && !mainAddresses.has(t.received_on)}
+                  onClick={() => onSelect(t.id)}
+                />
+              </ThreadMenu>
+            )}
+          />
+        )}
       </div>
       <AlertDialog open={deleting !== null} onOpenChange={(o) => !o && setDeleting(null)}>
         <AlertDialogContent>

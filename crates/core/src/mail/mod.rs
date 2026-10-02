@@ -31,6 +31,7 @@ pub mod known;
 pub mod mentions;
 pub mod model;
 pub mod net;
+pub mod older;
 pub mod parse;
 pub mod render;
 pub mod smtp;
@@ -43,6 +44,8 @@ pub mod unsubscribe;
 
 #[cfg(test)]
 pub mod fake;
+#[cfg(test)]
+mod older_tests;
 #[cfg(test)]
 mod tests;
 

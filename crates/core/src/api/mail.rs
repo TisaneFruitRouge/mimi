@@ -116,6 +116,8 @@ pub async fn thread(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
 ) -> ApiResult<MailThreadDetail> {
+    // Older mail found by a search stays a while after it was last opened.
+    mail::older::opened(&state, id).await;
     mail::thread(&state, id)
         .await
         .map_err(AppError::internal)?
@@ -449,4 +451,17 @@ pub async fn refresh(State(state): State<Arc<AppState>>) -> ApiResult<()> {
         state.mail.poke(account.id);
     }
     Ok(Json(()))
+}
+
+/// Looks on the mail servers for mail older than what's kept here, and brings in the
+/// newest matches (see `mail::older`).
+pub async fn older(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<mimi_protocol::MailOlderSearch>,
+) -> ApiResult<mimi_protocol::MailOlderResults> {
+    let terms = mail::older::Terms::new(&req.q, Vec::new());
+    mail::older::search(&state, &terms, req.account, mail::older::CAP)
+        .await
+        .map(Json)
+        .map_err(AppError::bad_request)
 }

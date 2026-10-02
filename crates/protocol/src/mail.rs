@@ -432,3 +432,31 @@ pub enum MailAttachmentSource {
         size: Option<u64>,
     },
 }
+
+/// Body of `POST /v1/mail/older`: look on the mail servers for mail older than what's
+/// kept here (the last 90 days).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MailOlderSearch {
+    /// Words to look for, as in the search field.
+    pub q: String,
+    /// Only this account's server (every account's when missing).
+    #[serde(default)]
+    pub account: Option<Uuid>,
+}
+
+/// What a search of the mail servers found, older than what's kept here.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MailOlderResults {
+    /// Conversations with a match, newest first. They're kept here for a while (a week,
+    /// or 30 days after they were last opened) and open like any other.
+    pub threads: Vec<MailThread>,
+    /// The servers were searched for mail from before this moment.
+    #[ts(type = "number")]
+    pub before: i64,
+    /// More matched than were brought in: only the newest are.
+    pub more: bool,
+    /// Accounts that couldn't be searched, or only partly, in plain words.
+    pub problems: Vec<String>,
+}

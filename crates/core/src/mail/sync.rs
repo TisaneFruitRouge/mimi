@@ -40,7 +40,7 @@ const PASS_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const PARSE_TIMEOUT: Duration = Duration::from_secs(20);
 const DAY_MS: i64 = 24 * 3600 * 1000;
 
-fn proto(e: async_imap::error::Error) -> MailError {
+pub(super) fn proto(e: async_imap::error::Error) -> MailError {
     MailError::Protocol(e.to_string())
 }
 
@@ -323,7 +323,7 @@ pub async fn pass(
 }
 
 /// IMAP's date format for SEARCH: 1-Jan-2026.
-fn imap_date(ms: i64) -> String {
+pub(super) fn imap_date(ms: i64) -> String {
     chrono::DateTime::from_timestamp_millis(ms)
         .unwrap_or_default()
         .format("%-d-%b-%Y")
@@ -485,6 +485,9 @@ async fn sync_mailbox(
         }
     }
 
+    // Older mail a search found: its own sweep, and forgotten once its time is up.
+    changed |= super::older::sweep(state, session, conn, mailbox).await?;
+
     // 3. Forget what has aged out of the window.
     let name = mailbox.to_owned();
     let now = now_ms();
@@ -500,7 +503,7 @@ async fn sync_mailbox(
     Ok(changed || pruned > 0)
 }
 
-fn flags_of(f: &Fetch) -> (bool, bool) {
+pub(super) fn flags_of(f: &Fetch) -> (bool, bool) {
     let mut seen = false;
     let mut flagged = false;
     for fl in f.flags() {
@@ -514,7 +517,7 @@ fn flags_of(f: &Fetch) -> (bool, bool) {
 }
 
 /// A message as it came off the wire.
-struct Fetched {
+pub(super) struct Fetched {
     uid: u32,
     seen: bool,
     flagged: bool,
@@ -528,7 +531,13 @@ impl Fetched {
     /// Reads the message, away from the async threads. One that can't be read, or takes
     /// too long, is still stored (its headers, with a note for its body), so it's never
     /// fetched and tried again.
-    async fn read(self, conn: Uuid, mailbox: &str, folder: &'static str, me: &str) -> NewMessage {
+    pub(super) async fn read(
+        self,
+        conn: Uuid,
+        mailbox: &str,
+        folder: &'static str,
+        me: &str,
+    ) -> NewMessage {
         let raw: Arc<[u8]> = self.raw.as_slice().into();
         let reading = tokio::task::spawn_blocking({
             let raw = raw.clone();
@@ -615,7 +624,7 @@ fn unreadable(raw: &[u8]) -> parse::Parsed {
     parsed
 }
 
-async fn fetch_messages(
+pub(super) async fn fetch_messages(
     session: &mut ImapSession,
     uids: &[u32],
 ) -> Result<Vec<Fetched>, MailError> {
