@@ -452,11 +452,17 @@ pub fn user(config: &EmailConfig) -> Option<&str> {
 
 /// Hands the message to the account's SMTP server.
 pub async fn send(config: &EmailConfig, built: &Built) -> Result<(), String> {
-    let t = transport(config, user(config)).map_err(|e| e.to_string())?;
+    deliver(config, built).await.map_err(|e| e.to_string())
+}
+
+/// [`send`], saying what kind of failure it was (the outbox retries a server it
+/// couldn't reach, and nothing else).
+pub async fn deliver(config: &EmailConfig, built: &Built) -> Result<(), MailError> {
+    let t = transport(config, user(config))?;
     t.send(built.message.clone())
         .await
         .map(|_| ())
-        .map_err(|e| smtp_error(&config.servers.smtp_host, e).to_string())
+        .map_err(|e| smtp_error(&config.servers.smtp_host, e))
 }
 
 /// Everyone the message goes to, for display.

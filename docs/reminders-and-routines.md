@@ -55,6 +55,9 @@ advance while the computer is suspended. Creating, changing, pausing, snoozing o
 pokes it (`state.scheduler.poke()`, a `Notify`) to re-plan. No polling of the database
 otherwise.
 
+The mail outbox (undo send, send later) has its own loop built the same way; see
+[Email › Undo send and send later](email.md#undo-send-and-send-later).
+
 ## Catch-up
 
 When an item comes due, `rules::classify` compares the due time with now: on time, late

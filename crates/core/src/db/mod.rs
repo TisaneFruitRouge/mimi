@@ -39,6 +39,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/0029_mail_unsubscribe.sql"),
     include_str!("migrations/0030_mail_older.sql"),
     include_str!("migrations/0031_mail_notifications.sql"),
+    include_str!("migrations/0032_mail_outbox.sql"),
 ];
 
 #[derive(Debug, thiserror::Error)]

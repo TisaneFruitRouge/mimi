@@ -1,3 +1,5 @@
+import { when as whenAt } from "@/features/reminders/time";
+
 /**
  * How each tool's arguments read on an approval card. Integrations add an entry for
  * their tools; anything without one falls back to a tidy list of its arguments.
@@ -132,7 +134,7 @@ export const formatters: Record<string, Formatter> = {
   // every file with its size and where it comes from (looked up by the daemon).
   // `thread_id` only threads the reply.
   mail_send: {
-    keys: ["to", "cc", "bcc", "subject", "body", "thread_id", "attachments"],
+    keys: ["to", "cc", "bcc", "subject", "body", "thread_id", "attachments", "send_at"],
     rows: (a) => {
       const rows: ArgRow[] = [{ label: "To", value: text(a.to) }];
       if (present(a.cc)) rows.push({ label: "Cc", value: text(a.cc) });
@@ -142,6 +144,16 @@ export const formatters: Record<string, Formatter> = {
       rows.push({ label: "Message", value: text(a.body) });
       if (Array.isArray(a.attachments) && a.attachments.length > 0)
         rows.push({ label: a.attachments.length === 1 ? "File" : "Files", value: a.attachments.map(fileLine).join("\n") });
+      // A local date and time ("2026-10-03T09:00"), set by the daemon.
+      if (typeof a.send_at === "string" && a.send_at) {
+        const at = new Date(a.send_at).getTime();
+        rows.push({
+          label: "When",
+          value: Number.isFinite(at)
+            ? `${whenAt(at)}\nIf this computer is off or asleep then, it goes as soon as Mimi runs again.`
+            : a.send_at,
+        });
+      }
       return rows;
     },
   },

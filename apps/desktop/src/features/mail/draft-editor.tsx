@@ -1,15 +1,15 @@
 import { useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, Loader2, Paperclip, Send } from "lucide-react";
+import { ChevronDown, Paperclip } from "lucide-react";
 import { cn } from "cn";
 import { toast } from "sonner";
 
 import type { MailDraft } from "@/bindings/MailDraft";
 import { AddressField, addressText, parseAddresses } from "@/components/address-field";
-import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { MailBodyEditor } from "@/features/mail/body-editor";
 import { DraftAttachments, readAttachments } from "@/features/mail/draft-attachments";
+import { SendSplitButton, announceQueued } from "@/features/mail/send-later";
 import { api, keys } from "@/lib/api";
 
 /**
@@ -202,33 +202,43 @@ function Line({ label, field, children }: { label: string; field?: boolean; chil
   );
 }
 
-/** Sends a draft the user has read: their click is the approval. */
-export function useSendDraft(onSent?: () => void) {
+/**
+ * Sends a draft the user has read: their click is the approval. It waits in the daemon
+ * for the seconds Undo is offered (a toast with Undo), or until the time picked with
+ * Send later; Undo puts it back in the editor at `origin` (see `useDraftHome`), or in a
+ * new compose when that's gone.
+ */
+export function useSendDraft(origin: string, onSent?: () => void) {
   const [sending, setSending] = useState(false);
-  const send = async (draft: MailDraft) => {
+  const queue = async (draft: MailDraft, at: number | null) => {
     if (draft.to.length === 0) {
       toast.error("Add at least one recipient.");
       return;
     }
     setSending(true);
     try {
-      await api.sendMail(draft);
-      toast.success(draft.to.length === 1 ? `Sent to ${draft.to[0]}` : "Sent");
+      const item = await api.queueMail(draft, at);
       onSent?.();
+      announceQueued(item, origin);
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
       setSending(false);
     }
   };
-  return { sending, send };
+  return {
+    sending,
+    send: (draft: MailDraft) => queue(draft, null),
+    sendLater: (draft: MailDraft, at: number) => queue(draft, at),
+  };
 }
 
-export function SendButton({ sending, onClick, disabled }: { sending: boolean; onClick: () => void; disabled?: boolean }) {
-  return (
-    <Button variant="lime" onClick={onClick} disabled={sending || disabled} className="min-w-[92px]">
-      {sending ? <Loader2 className="animate-spin" /> : <Send />}
-      Send
-    </Button>
-  );
+/** Send, with Send later beside it when `onSchedule` is given. */
+export function SendButton(props: {
+  sending: boolean;
+  onClick: () => void;
+  onSchedule?: (at: number) => void;
+  disabled?: boolean;
+}) {
+  return <SendSplitButton {...props} />;
 }

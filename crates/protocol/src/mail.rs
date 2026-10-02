@@ -472,3 +472,80 @@ pub struct MailOlderResults {
     /// Accounts that couldn't be searched, or only partly, in plain words.
     pub problems: Vec<String>,
 }
+
+/// Body of `POST /v1/mail/outbox`: the user's Send, or Send later.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct NewOutgoingMail {
+    pub draft: MailDraft,
+    /// When to send it (ms since the epoch). `None`: now, after the few seconds Undo is
+    /// offered (`Settings.undo_send_secs`; straight away when that's off).
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub send_at: Option<i64>,
+}
+
+/// Why a message waits in the outbox.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum OutgoingKind {
+    /// The user pressed Send: it waits out the seconds Undo is offered.
+    Undo,
+    /// The user (or the assistant, with their OK) chose a time to send it.
+    Scheduled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum OutgoingStatus {
+    /// Waiting for `send_at`. With an `error`, an earlier try couldn't reach the server
+    /// and this is the next one.
+    Waiting,
+    /// Being handed to the mail server right now.
+    Sending,
+    /// Gone (only in events: sent mail leaves the outbox and is filed in Sent).
+    Sent,
+    /// Not sent: `error` says why. It stays until the user sends, reschedules or
+    /// cancels it.
+    Failed,
+    /// Taken back by the user (only in events).
+    Cancelled,
+}
+
+/// A message in the outbox. Lists and events leave the attachments' content out
+/// (`data` is empty); cancelling one gives the whole draft back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct OutgoingMail {
+    pub id: Uuid,
+    pub kind: OutgoingKind,
+    pub status: OutgoingStatus,
+    /// The draft as the user wrote it.
+    pub draft: MailDraft,
+    /// The account it goes from, and the address.
+    pub connection_id: Uuid,
+    pub from: String,
+    /// When it goes (ms). For a late one, when it was due.
+    #[ts(type = "number")]
+    pub send_at: i64,
+    #[ts(type = "number")]
+    pub created_at: i64,
+    /// When it actually went, for `sent`: later than `send_at` when the computer was
+    /// off or asleep at that time.
+    #[ts(type = "number | null")]
+    pub sent_at: Option<i64>,
+    /// What went wrong, in plain words.
+    pub error: Option<String>,
+    /// Scheduled by the assistant, with the user's OK.
+    pub by_assistant: bool,
+}
+
+/// Body of `PATCH /v1/mail/outbox/{id}`: send it at another time.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RescheduleMail {
+    #[ts(type = "number")]
+    pub send_at: i64,
+}

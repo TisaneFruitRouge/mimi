@@ -770,7 +770,7 @@ impl Tool for Send {
          Depending on the user's settings it may go out straight away, so write it exactly as it \
          should be sent. For a reply, pass thread_id so it joins the conversation. It can carry \
          files: an email's attachments or photos the user sent in this chat, never files from \
-         the computer."
+         the computer. To send it later, only when the user asks for that, give send_at."
     }
 
     fn parameters(&self) -> Value {
@@ -783,7 +783,8 @@ impl Tool for Send {
                 "subject": { "type": "string" },
                 "body": { "type": "string" },
                 "thread_id": { "type": "integer", "description": "The conversation this replies to, if any." },
-                "attachments": { "type": "array", "items": { "type": "string" }, "description": FILES_HELP }
+                "attachments": { "type": "array", "items": { "type": "string" }, "description": FILES_HELP },
+                "send_at": { "type": "string", "description": "Only if the user wants it sent later: local date and time, YYYY-MM-DDTHH:MM. Leave out to send now." }
             },
             "required": ["to", "subject", "body"]
         })
@@ -857,6 +858,24 @@ impl Tool for Send {
         if let (Some(files), Value::Object(map)) = (files, &mut args) {
             map.insert("attachments".to_owned(), files);
         }
+        // A later time, as a local date and time the card shows; never one that passed.
+        if let Value::Object(map) = &mut args {
+            match map
+                .remove("send_at")
+                .as_ref()
+                .and_then(Value::as_str)
+                .map(str::trim)
+            {
+                Some(at) if !at.is_empty() => {
+                    let tz = jiff::tz::TimeZone::system();
+                    let t = super::outbox::parse_when(at, &tz)?;
+                    super::outbox::check_time(t.as_millisecond(), crate::now_ms())?;
+                    let local = t.to_zoned(tz).datetime().strftime("%Y-%m-%dT%H:%M");
+                    map.insert("send_at".to_owned(), json!(local.to_string()));
+                }
+                _ => {}
+            }
+        }
         Ok(args)
     }
 
@@ -899,12 +918,20 @@ impl Tool for Send {
         if !files.is_empty() {
             line.push_str(&format!(", attaching {}", files.join(", ")));
         }
+        if let Some(at) = args["send_at"].as_str() {
+            line.push_str(&format!(", to go on {}", at.replacen('T', " at ", 1)));
+        }
         line
     }
 
-    fn result_label(&self, args: &Value, _output: &Value) -> String {
+    fn result_label(&self, args: &Value, output: &Value) -> String {
         let subject = args["subject"].as_str().unwrap_or_default();
-        format!("sent “{}”", super::model::clip(subject, 60))
+        let done = if output["scheduled"] == true {
+            "scheduled"
+        } else {
+            "sent"
+        };
+        format!("{done} “{}”", super::model::clip(subject, 60))
     }
 
     fn run<'a>(
@@ -920,6 +947,15 @@ impl Tool for Send {
                 .into_iter()
                 .map(|f| f.attachment)
                 .collect();
+            // A later time goes to the outbox (approved now, sent then; listed in the
+            // Mail panel's Scheduled view, where the user can still cancel it). Approved
+            // after that time had passed, it goes at once.
+            if let Some(at) = args["send_at"].as_str() {
+                let at = super::outbox::parse_when(at, &jiff::tz::TimeZone::system())?;
+                let at = at.as_millisecond().max(crate::now_ms());
+                super::outbox::queue(&ctx.state, draft, Some(at), true).await?;
+                return Ok(json!({ "scheduled": true, "send_at": args["send_at"] }));
+            }
             super::send(&ctx.state, draft).await?;
             Ok(json!({ "sent": true }))
         }

@@ -62,6 +62,7 @@ import type { MailThread } from "@/bindings/MailThread";
 import type { MailThreadDetail } from "@/bindings/MailThreadDetail";
 import type { MailUnsubscribe } from "@/bindings/MailUnsubscribe";
 import type { MailArchivedCount } from "@/bindings/MailArchivedCount";
+import type { OutgoingMail } from "@/bindings/OutgoingMail";
 import type { CalendarEvents } from "@/bindings/CalendarEvents";
 import type { CalendarInfo } from "@/bindings/CalendarInfo";
 import type { CreatedEvent } from "@/bindings/CreatedEvent";
@@ -277,6 +278,16 @@ export const api = {
     call<MailDraft>("POST", `/mail/threads/${id}/draft`, { instructions }),
   /** Sends a message the user wrote or checked: their click is the approval. */
   sendMail: (draft: MailDraft) => call<null>("POST", "/mail/send", draft),
+  /** The user's Send (waits the seconds Undo is offered) or, with `send_at`, Send later. */
+  queueMail: (draft: MailDraft, send_at: number | null = null) =>
+    call<OutgoingMail>("POST", "/mail/outbox", { draft, send_at }),
+  /** Mail waiting to go, and mail that couldn't. */
+  mailOutbox: () => call<OutgoingMail[]>("GET", "/mail/outbox"),
+  /** Takes a waiting email back (Undo, Cancel) and returns its draft. */
+  cancelOutgoing: (id: string) => call<MailDraft>("DELETE", `/mail/outbox/${id}`),
+  rescheduleOutgoing: (id: string, send_at: number) =>
+    call<OutgoingMail>("PATCH", `/mail/outbox/${id}`, { send_at }),
+  sendOutgoingNow: (id: string) => call<null>("POST", `/mail/outbox/${id}/send`),
   refreshMail: () => call<null>("POST", "/mail/refresh"),
   /** Checks the TypeSafe key with TypeSafe, then saves it (Jev as the mail sorter). */
   jevConnect: (api_key: string) => call<null>("PUT", "/mail/jev", { api_key }),
@@ -433,6 +444,7 @@ export const keys = {
   mailUnsubscribe: (id: number) => ["mail", "unsubscribe", id] as const,
   // Not under "mail": each mail change would search the servers again.
   mailOlder: (q: string, account: string | null) => ["mailOlder", q.trim(), account] as const,
+  mailOutbox: ["mail", "outbox"] as const,
   // Not under "mail": an email's content never changes, and loading its pictures again at
   // every mail change would tell the sender each time.
   mailContent: (id: number, images: boolean) => ["mailContent", id, images] as const,

@@ -33,6 +33,7 @@ pub mod model;
 pub mod net;
 pub mod notify;
 pub mod older;
+pub mod outbox;
 pub mod parse;
 pub mod render;
 pub mod smtp;
@@ -107,6 +108,8 @@ pub struct Mail {
     pub images: images::Fetcher,
     /// Asks a mailing list's website to unsubscribe the user, on their click.
     pub unsubscribe: unsubscribe::Poster,
+    /// Wakes the loop that sends mail waiting in the outbox (undo send, send later).
+    pub outbox: outbox::Outbox,
 }
 
 impl Mail {
@@ -419,6 +422,7 @@ pub fn install(state: &Arc<AppState>) {
     state.people.sources.add(Arc::new(contacts::Correspondents));
     tokio::spawn(triage::run(state.clone()));
     tokio::spawn(notify::run(state.clone()));
+    tokio::spawn(outbox::run(state.clone()));
 }
 
 // --- What the panel and the tools use -------------------------------------------------
@@ -654,6 +658,30 @@ pub async fn delete(state: &Arc<AppState>, id: i64) -> Result<(), String> {
 
 /// Sends a message the user wrote or approved, and files it in Sent.
 pub async fn send(state: &Arc<AppState>, draft: MailDraft) -> Result<(), String> {
+    let ready = prepare(state, &draft).await?;
+    deliver(state, ready).await.map_err(|e| e.message)
+}
+
+/// A message checked and built, ready to hand to the server.
+pub struct Prepared {
+    pub account: Account,
+    /// The address it's from.
+    pub from: String,
+    main: String,
+    built: smtp::Built,
+}
+
+/// Why a message didn't go. `retry`: the server couldn't be reached, so trying again
+/// later may work; anything else needs the user.
+#[derive(Debug, Clone)]
+pub struct Undelivered {
+    pub message: String,
+    pub retry: bool,
+}
+
+/// Checks a draft and builds its message without sending anything: the account, the
+/// From address, every file (fetched), the recipients and the sizes.
+pub async fn prepare(state: &AppState, draft: &MailDraft) -> Result<Prepared, String> {
     let accounts = accounts(state).await;
     let reply = match draft.reply_to {
         Some(thread) => smtp::reply_headers(state, thread).await?,
@@ -689,7 +717,7 @@ pub async fn send(state: &Arc<AppState>, draft: MailDraft) -> Result<(), String>
     };
     // A forward carries the original's attachments along.
     let mut attachments = match draft.forward_of {
-        Some(message) => parse::attachments(&source(state, message).await?),
+        Some(message) => forwarded(state, message).await?,
         None => Vec::new(),
     };
     // Pictures placed in the text (with a content id) go inside the formatted message.
@@ -717,27 +745,54 @@ pub async fn send(state: &Arc<AppState>, draft: MailDraft) -> Result<(), String>
             _ => "Attachments can add up to 20 MB in one email.".to_owned(),
         });
     }
-    let raw = smtp::build(&from, &draft, reply.as_ref(), &attachments, &inline)?;
-    smtp::send(&account.config, &raw).await.map_err(|e| {
-        if from == main {
+    let built = smtp::build(&from, draft, reply.as_ref(), &attachments, &inline)?;
+    Ok(Prepared {
+        account: account.clone(),
+        from,
+        main,
+        built,
+    })
+}
+
+/// Hands a prepared message to the account's server and files it in Sent.
+pub async fn deliver(state: &AppState, ready: Prepared) -> Result<(), Undelivered> {
+    let Prepared {
+        account,
+        from,
+        main,
+        built,
+    } = ready;
+    smtp::deliver(&account.config, &built).await.map_err(|e| {
+        let retry = matches!(e, MailError::Unreachable(_));
+        let e = e.to_string();
+        let message = if from == main {
             e
         } else {
             format!(
                 "{e} Your mail service may not allow sending from {from}: add it as a sending \
                  address (an identity) in its settings, or send from {main}."
             )
-        }
+        };
+        Undelivered { message, retry }
     })?;
     tracing::info!(connection = %account.id, "sent an email");
-    sync::file_sent(account, raw.formatted).await;
+    sync::file_sent(&account, built.formatted).await;
     state.mail.poke(account.id);
     Ok(())
+}
+
+/// The attachments of a message being forwarded, fetched from the server.
+pub(crate) async fn forwarded(
+    state: &AppState,
+    message: i64,
+) -> Result<Vec<parse::Attachment>, String> {
+    Ok(parse::attachments(&source(state, message).await?))
 }
 
 /// The files attached to a draft: the user's own, decoded, and those attached by
 /// reference (`NewMailAttachment::source`), fetched: an email's attachment from the
 /// server, a chat photo from the encrypted database. Each goes under a plain file name.
-async fn attached(
+pub(crate) async fn attached(
     state: &AppState,
     files: &[NewMailAttachment],
 ) -> Result<Vec<parse::Attachment>, String> {

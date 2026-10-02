@@ -10,6 +10,7 @@ import type { ModelPull } from "@/bindings/ModelPull";
 import { keys } from "@/lib/api";
 import { showMailThread } from "@/features/mail/mail-view";
 import { announceDelivery } from "@/features/reminders/announce";
+import { announceOutbox } from "@/features/mail/send-later";
 import { subscribe } from "@/lib/transport";
 
 // Connection state, fed by the transport (Tauri relay or browser WebSocket).
@@ -162,6 +163,10 @@ function apply(qc: QueryClient, event: Event) {
     case "schedule_delivered":
       qc.invalidateQueries({ queryKey: keys.schedule });
       announceDelivery(event.delivery);
+      break;
+    case "mail_outbox":
+      qc.invalidateQueries({ queryKey: keys.mailOutbox });
+      announceOutbox(event.item);
       break;
     case "resync":
       qc.invalidateQueries();

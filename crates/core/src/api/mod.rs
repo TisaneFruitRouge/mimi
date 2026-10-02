@@ -20,6 +20,7 @@ pub mod error;
 mod events;
 mod hardware;
 mod mail;
+mod mail_outbox;
 mod mail_unsubscribe;
 mod memory;
 mod people;
@@ -203,6 +204,18 @@ pub fn router(state: Arc<AppState>) -> Router {
                 crate::mail::smtp::MAX_REQUEST_BYTES,
             )),
         )
+        .route(
+            "/mail/outbox",
+            // Attachments come base64-encoded in the draft.
+            get(mail_outbox::list).post(mail_outbox::queue).layer(
+                axum::extract::DefaultBodyLimit::max(crate::mail::smtp::MAX_REQUEST_BYTES),
+            ),
+        )
+        .route(
+            "/mail/outbox/{id}",
+            axum::routing::patch(mail_outbox::reschedule).delete(mail_outbox::cancel),
+        )
+        .route("/mail/outbox/{id}/send", post(mail_outbox::send_now))
         .route("/mail/refresh", post(mail::refresh))
         .route("/mail/older", post(mail::older))
         .route("/mail/folders", post(mail::create_folder))

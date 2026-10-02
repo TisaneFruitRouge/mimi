@@ -23,6 +23,11 @@ pub async fn put(
     }
     crate::persona::validate(&mut new).map_err(AppError::bad_request)?;
     crate::voice::validate(&mut new.voice).map_err(AppError::bad_request)?;
+    if !mimi_protocol::UNDO_SEND_CHOICES.contains(&new.undo_send_secs) {
+        return Err(AppError::bad_request(
+            "Undo send waits 5, 10, 20 or 30 seconds, or is off.",
+        ));
+    }
     for model in [&new.default_model, &new.pending_model, &new.photo_model]
         .into_iter()
         .flatten()

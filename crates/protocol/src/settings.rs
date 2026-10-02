@@ -54,7 +54,13 @@ pub struct Settings {
     /// Which new emails show as notifications on this computer (Settings › Reminders &
     /// notifications).
     pub mail_notifications: MailNotifications,
+    /// How long an email the user sends waits, so they can take it back (Undo): one of
+    /// [`UNDO_SEND_CHOICES`]; 0 sends at once.
+    pub undo_send_secs: u32,
 }
+
+/// The waits "Undo send" offers, in seconds (0: off).
+pub const UNDO_SEND_CHOICES: [u32; 5] = [0, 5, 10, 20, 30];
 
 /// Longest personality, in characters. It goes into every prompt, next to the memory
 /// profile (1,200) and recalled notes (1,600), so it stays small for ~8k-token models.
@@ -96,6 +102,7 @@ impl Default for Settings {
             update_check: false,
             voice: VoiceSettings::default(),
             mail_notifications: MailNotifications::default(),
+            undo_send_secs: 10,
         }
     }
 }

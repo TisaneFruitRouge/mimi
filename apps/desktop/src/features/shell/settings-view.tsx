@@ -42,6 +42,7 @@ import type { MailSorter } from "@/bindings/MailSorter";
 import { ConnectionsView } from "@/features/connections/connections-view";
 import { MemoryView } from "@/features/memory/memory-view";
 import { ModelsView } from "@/features/models/models-view";
+import { UndoSendSetting } from "@/features/mail/send-later";
 import { PermissionsView } from "@/features/permissions/permissions-view";
 import { PersonalityView } from "@/features/personality/personality-view";
 import { NotificationsSettings } from "@/features/reminders/reminders";
@@ -170,6 +171,7 @@ export function SettingsView({
 function GeneralSettings({ onSection }: { onSection: (s: Place) => void }) {
   const settings = useSettings().data;
   const assistant = useAssistantName();
+  const email = (useConnections().data ?? []).some((c) => c.integration === "email");
 
   return (
     <Page>
@@ -207,6 +209,8 @@ function GeneralSettings({ onSection }: { onSection: (s: Place) => void }) {
       </Section>
 
       {isTauri && <BackgroundGroup />}
+
+      {email && <UndoSendSetting />}
 
       <UpdatesGroup />
 

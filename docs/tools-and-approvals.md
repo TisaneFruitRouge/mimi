@@ -99,7 +99,8 @@ Details:
   shown after its rows. A row can show Markdown as it will look (`ArgRow.markdown`, e.g.
   a Matrix message). The `mail_send` card shows To, Cc, Bcc ("A hidden copy: the others
   won't see this"), Subject, the whole message, and each file with its name, size and
-  where it comes from, looked up by `resolve` (see [Email](email.md)); a calendar write that Google will email guests about carries
+  where it comes from, looked up by `resolve` (see [Email](email.md)), and, for an email
+  to send later, when it will go; a calendar write that Google will email guests about carries
   an `email_note` saying so beforehand (see [Calendar](calendar.md)).
 - **Automatic actions** (allowed by Permissions) still show in the chat as a card with
   their details, and, for events with guests, the "Send invitations to …" button.

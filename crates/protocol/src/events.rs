@@ -78,6 +78,10 @@ pub enum Event {
     VoiceChanged {
         voice: VoiceStatus,
     },
+    /// A message in the outbox was added, rescheduled, sent, cancelled or failed.
+    MailOutbox {
+        item: crate::OutgoingMail,
+    },
     /// This client fell behind and missed events. Refetch any state you display.
     Resync,
     /// The user clicked a new-mail notification on this computer: the desktop app comes

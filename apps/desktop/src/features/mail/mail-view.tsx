@@ -64,6 +64,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ConnectDialog } from "@/features/connections/connect-dialogs";
 import { DraftEditor, SendButton, useSendDraft } from "@/features/mail/draft-editor";
+import {
+  ScheduledList,
+  ScheduledNavItem,
+  ScheduledReader,
+  useDraftHome,
+  useMailRequests,
+} from "@/features/mail/send-later";
 import { FlagStar, RowFlag, useFlagThread } from "@/features/mail/flag";
 import { FolderGlyph } from "@/features/mail/folder-looks";
 import { AddToFolder, FolderChips, FolderHeader, FolderList } from "@/features/mail/folders";
@@ -313,6 +320,20 @@ export function MailView({
     };
   }, []);
   const [composing, setComposing] = useState<MailDraft | null>(null);
+  // The Scheduled view (mail waiting to be sent), and the email open in it.
+  const [scheduled, setScheduled] = useState(false);
+  const [outgoing, setOutgoing] = useState<string | null>(null);
+  // A draft taken back with Undo whose editor is gone, or "Open" on a toast.
+  useMailRequests((r) => {
+    if ("compose" in r) {
+      setSelected(null);
+      setComposing(r.compose);
+    } else {
+      setComposing(null);
+      setScheduled(true);
+      setOutgoing(r.scheduled);
+    }
+  });
   // Conversations being deleted: gone from the list at once (the server's move to the
   // Trash follows), back if it fails. Kept apart from the query cache, so a refresh that
   // lands meanwhile can't bring them back for a moment.
@@ -348,6 +369,7 @@ export function MailView({
     setFolderState(id);
     storeFolder(id);
     setQuery("");
+    setScheduled(false);
   };
   // A remembered folder that was deleted means the usual views.
   const folder = o?.folders.find((f) => f.id === folderId) ?? null;
@@ -388,15 +410,29 @@ export function MailView({
     <div className="flex h-full">
       <Mailboxes
         overview={o}
-        view={folder ? null : current}
+        view={folder || scheduled ? null : current}
         onView={setView}
-        folder={folder?.id ?? null}
+        scheduled={scheduled}
+        onScheduled={() => {
+          setComposing(null);
+          setScheduled(true);
+        }}
+        folder={scheduled ? null : (folder?.id ?? null)}
         onFolder={setFolder}
         scope={scope}
         onScope={setScope}
         onCompose={compose}
         onSettings={onSection}
       />
+      {scheduled ? (
+        <ScheduledList
+          selected={outgoing}
+          onSelect={(id) => {
+            setComposing(null);
+            setOutgoing(id);
+          }}
+        />
+      ) : (
       <ThreadList
         view={current}
         onView={setView}
@@ -425,10 +461,11 @@ export function MailView({
         onDelete={deleteThread}
         onCompose={compose}
       />
+      )}
       <div className="h-full min-w-0 flex-1">
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
-            key={composing ? "compose" : (selected ?? "none")}
+            key={composing ? "compose" : scheduled ? `scheduled:${outgoing}` : (selected ?? "none")}
             className="h-full"
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
@@ -437,6 +474,8 @@ export function MailView({
           >
             {composing ? (
               <Compose draft={composing} onChange={setComposing} onClose={() => setComposing(null)} />
+            ) : scheduled ? (
+              <ScheduledReader id={outgoing} onGone={() => setOutgoing(null)} onEdit={setComposing} />
             ) : selected !== null ? (
               <Reader
                 id={selected}
@@ -491,6 +530,8 @@ function Mailboxes({
   overview: o,
   view,
   onView,
+  scheduled,
+  onScheduled,
   folder,
   onFolder,
   scope,
@@ -501,6 +542,8 @@ function Mailboxes({
   overview: MailOverview;
   view: MailBox | null;
   onView: (v: MailBox) => void;
+  scheduled: boolean;
+  onScheduled: () => void;
   folder: number | null;
   onFolder: (id: number) => void;
   scope: MailScope;
@@ -566,6 +609,7 @@ function Mailboxes({
       <nav aria-label="Mailboxes" className="flex flex-col gap-0.5">
         <span className="px-2.5 pb-1 section-label">Mailboxes</span>
         {views.filter((v) => !v.sorted).map(item)}
+        <ScheduledNavItem active={scheduled} onClick={onScheduled} />
       </nav>
       <FolderList overview={o} current={folder} onOpen={onFolder} />
       {rows.length > 0 && (
@@ -1168,6 +1212,8 @@ function Reader({
   const [summary, setSummary] = useState<string | null>(null);
   const [summarizing, setSummarizing] = useState(false);
   const [reply, setReply] = useState<MailDraft | null>(null);
+  // Undo send puts a reply back here while this conversation is open.
+  useDraftHome(`reply:${id}`, setReply);
   const [archiving, setArchiving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const flag = useFlagThread();
@@ -1639,7 +1685,7 @@ function ReplyBox({
   const [writing, setWriting] = useState(false);
   // Remounts the editor when the assistant fills it in.
   const [version, setVersion] = useState(0);
-  const { sending, send } = useSendDraft(onClose);
+  const { sending, send, sendLater } = useSendDraft(`reply:${threadId}`, onClose);
   const write = async () => {
     setWriting(true);
     try {
@@ -1686,7 +1732,12 @@ function ReplyBox({
           <Button variant="ghost" onClick={onClose} disabled={sending}>
             Discard
           </Button>
-          <SendButton sending={sending} onClick={() => send(draft)} disabled={!draft.body.trim() || draft.to.length === 0} />
+          <SendButton
+            sending={sending}
+            onClick={() => send(draft)}
+            onSchedule={(at) => sendLater(draft, at)}
+            disabled={!draft.body.trim() || draft.to.length === 0}
+          />
         </div>
       </div>
     </motion.div>
@@ -1703,7 +1754,7 @@ function Compose({
   onClose: () => void;
 }) {
   const onScroll = useScrollEdge();
-  const { sending, send } = useSendDraft(onClose);
+  const { sending, send, sendLater } = useSendDraft("compose", onClose);
   return (
     <div className="h-full overflow-y-auto" onScroll={onScroll}>
       <div className="mx-auto flex w-full max-w-[760px] flex-col gap-5 px-6 pt-[84px] pb-20">
@@ -1719,7 +1770,12 @@ function Compose({
             <Button variant="ghost" onClick={onClose} disabled={sending}>
               Discard
             </Button>
-            <SendButton sending={sending} onClick={() => send(draft)} disabled={draft.to.length === 0 || !draft.body.trim()} />
+            <SendButton
+              sending={sending}
+              onClick={() => send(draft)}
+              onSchedule={(at) => sendLater(draft, at)}
+              disabled={draft.to.length === 0 || !draft.body.trim()}
+            />
           </div>
         </div>
       </div>

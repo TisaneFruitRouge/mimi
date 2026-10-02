@@ -69,6 +69,11 @@ general: [Connections](connections.md).
   approval. Automatic email (Settings › Permissions) still asks unless every recipient
   is known (`mail::known`): see [Tools and approvals](tools-and-approvals.md).
 - Never log passwords, and never point tests at a real mailbox.
+- **Waiting mail lives in the daemon** (`mail/outbox.rs`, `mail_outbox` in the encrypted
+  database), never in the app: closing the window never loses or double-sends it. A
+  message cut off mid-send by a crash is marked as not sent, never sent again on its own.
+  Only a server that couldn't be reached is retried, a few times; any other problem stays
+  on the message and the user is told. See [Undo send and send later](#undo-send-and-send-later).
 - **Unsubscribing is only ever the user's click** (`POST
   /v1/mail/threads/{id}/unsubscribe`). There is no assistant tool for it; keep
   `api/tests/unsubscribe_flow.rs` passing. A one-click address is fetched over https
@@ -618,6 +623,65 @@ notifications from the background daemon don't report clicks, so it's a plain on
 Mail notifications are separate from the reminders' "Notifications on this computer"
 switch; `MIMI_NO_NOTIFICATIONS=1` and tests silence both.
 
+## Undo send and send later
+
+`mail/outbox.rs`, migration 0032 (`mail_outbox`), `api/mail_outbox.rs`. The panel's and
+the draft cards' Send buttons call `POST /v1/mail/outbox` (a `NewOutgoingMail`: the
+`MailDraft` and an optional `send_at`).
+
+- **Undo send.** Without `send_at`, the message waits `Settings.undo_send_secs` (Off, 5,
+  10, 20 or 30 seconds; default 10; Settings › General › Email) in the outbox
+  (`kind: undo`), then goes. With it off, it's sent at once as before. The app shows
+  "Sending…" with Undo; Undo (`DELETE /v1/mail/outbox/{id}`) returns the draft, which
+  goes back into the editor it came from (`useDraftHome`: the reply box of that
+  conversation, the draft card) or, if that's gone, into a new compose.
+- **Send later.** The arrow beside Send offers Tomorrow morning (8:00), Tomorrow afternoon
+  (13:00), Monday morning (8:00) and any date and time; each says plainly that if the
+  computer is off or asleep then, it goes as soon as Mimi runs again. `send_at` is an
+  instant (ms): a later time-zone change doesn't move it. At most a year ahead; a time
+  more than a minute past is refused.
+- **Checked when queued.** Everything `mail::prepare` checks happens before it's stored:
+  the account, the From address, the recipients (count, addresses), the body and
+  attachment sizes. Mistakes show at once, not when it's due.
+- **Files are fetched when queued.** A forward's originals and the files the assistant
+  attached by reference (`source`) are fetched then (under the same rules as sending) and
+  kept with the message (`files`), so what goes is what was checked, and a file moved or
+  deleted meanwhile can't stop it. The draft itself is kept as the user wrote it (the
+  whole `MailDraft` as JSON, so new fields come along), and that's what Undo or Cancel
+  give back.
+- **The account and address** are fixed when queued: a message never goes from another
+  account, even if its own was disconnected meanwhile (it fails, saying so).
+- **The loop** (`outbox::run`) works like the scheduler's: it sleeps until the earliest
+  `send_at`, at most a minute at a time (a monotonic sleep doesn't advance while the
+  computer sleeps), and is poked when something is queued or rescheduled.
+  `tick(state, now)` takes the clock for tests. Each due message is claimed (`status`
+  `sending`) and sent in its own task, so a slow server never holds up the others; what
+  came due while the computer was off goes once when Mimi runs again, with `sent_at`
+  telling the app it was late. Sent messages leave the outbox and are filed in Sent like
+  any other.
+- **Problems.** A server that couldn't be reached is tried again after 1, 5, 15 and 60
+  minutes (the message says so meanwhile), then marked not sent. Anything else (password
+  refused, account disconnected, a recipient refused) marks it not sent at once, with
+  the reason, a desktop notification (when those are on) and a toast with "Open". It
+  waits there until the user sends it now, picks another time, edits or cancels it. A
+  message left `sending` by a daemon that stopped is marked not sent ("check your Sent
+  folder"): it may have gone, and sending twice is worse.
+- **The Scheduled view** in the Mail sidebar (`features/mail/send-later.tsx`) lists
+  scheduled and unsent messages (not the few seconds of Undo), problems first. Each
+  opens read-only with Send now (`POST /v1/mail/outbox/{id}/send`), Change time (`PATCH`
+  with `RescheduleMail`), Edit (taken out of the outbox into a compose) and Cancel sending,
+  which offers to keep it as a draft (a compose) or delete it.
+- **The assistant.** `mail_send` takes an optional `send_at` (local `YYYY-MM-DDTHH:MM`,
+  or an instant with an offset). It still goes through approval; `prepare` refuses a
+  time that has passed (before any card) and writes the local time the card shows under
+  "When" (and the summary line, all a Telegram approval shows). Approved, it waits in
+  the outbox like the user's own (`by_assistant`), where the user can still cancel it;
+  approved after that time, it goes at once. Undo send applies to the user's own Send
+  only: the assistant's approved sends without a time go at once, the approval card
+  having been the chance to stop them.
+- Events: `mail_outbox` (`OutgoingMail`, attachments without their content) whenever a
+  message is queued, rescheduled, sent, cancelled or fails.
+
 ## Invitations
 
 Event invitations, updates and cancellations are sent through this mail's SMTP path and
@@ -646,8 +710,12 @@ notification publishes `open_mail`.
 - `GET /v1/mail/threads/{id}`, `DELETE /v1/mail/threads/{id}` (to Trash).
 - `POST /v1/mail/threads/{id}/read` (`{read}`), `/archive`, `/flag` (`{flagged}`, see
   [Flags](#flags)), `/summarize`, `/draft` (`{instructions}`).
-- `POST /v1/mail/send` (a `MailDraft`): the panel's or a draft card's Send button, which
-  is the user's own action and so the approval.
+- `POST /v1/mail/send` (a `MailDraft`): sends at once. The user's own action, and so the
+  approval.
+- `GET|POST /v1/mail/outbox` (list; queue a `NewOutgoingMail`: the panel's and draft
+  cards' Send and Send later), `PATCH|DELETE /v1/mail/outbox/{id}` (reschedule; take back,
+  returning the draft), `POST /v1/mail/outbox/{id}/send` (now). See
+  [Undo send and send later](#undo-send-and-send-later).
 - `POST /v1/mail/refresh`.
 - `POST /v1/mail/older` (`MailOlderSearch { q, account }` → `MailOlderResults { threads,
   before, more, problems }`): searches the servers for older mail and brings in the
@@ -685,6 +753,9 @@ notification publishes `open_mail`.
   [Unsubscribing](#unsubscribing)).
 - `mail-notifications.tsx`: the New email group of Settings › Reminders & notifications
   (which mail, and whether to show who and what).
+- `send-later.tsx`: the Send later menu and time picker, the "Sending…" toast with Undo,
+  the Scheduled view, the Undo send setting (see
+  [Undo send and send later](#undo-send-and-send-later)).
 
 Mail panel reply drafts get the user's custom instructions only, not the personality
 (see [Personality](personality.md)).
@@ -722,4 +793,10 @@ Mail panel reply drafts get the user's custom instructions only, not the persona
 - `mail/notify_tests.rs`: which mail is announced (each choice, the sorter's wait and
   fallback), batching, first-sync silence and no duplicates, against the fake server.
   Tests look at what `notify::tick` would show; nothing is ever shown.
+- Undo send and send later: `mail/outbox_tests.rs` (the undo window, sending at a time,
+  catching up after downtime, a send cut off by a crash, reschedule / send now / cancel,
+  mistakes refused when queued, a refused password and an unreachable server, a
+  disconnected account, files kept with a scheduled forward) and
+  `api/tests/mail_outbox.rs` (the API, and the assistant's scheduled send waiting for
+  approval).
 - Never point tests at a real mailbox.

@@ -87,4 +87,9 @@ voice: VoiceSettings,
  * Which new emails show as notifications on this computer (Settings › Reminders &
  * notifications).
  */
-mail_notifications: MailNotifications, };
+mail_notifications: MailNotifications, 
+/**
+ * How long an email the user sends waits, so they can take it back (Undo): one of
+ * [`UNDO_SEND_CHOICES`]; 0 sends at once.
+ */
+undo_send_secs: number, };
