@@ -252,7 +252,7 @@ pub struct MailReceivedAddress {
 }
 
 /// A message to send, written by the user (or drafted for them).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct MailDraft {
     /// Which account sends it. Defaults to the thread's account, else the first one.
@@ -350,4 +350,50 @@ pub struct MailDiscoverRequest {
 #[ts(export)]
 pub struct FlagThread {
     pub flagged: bool,
+}
+
+/// How a mailing list lets people unsubscribe, best first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum MailUnsubscribeMethod {
+    /// Mimi asks the sender's website directly (RFC 8058 one-click).
+    OneClick,
+    /// Mimi sends the short email the list asks for, from the user's account.
+    Email,
+    /// Only a web page: it opens in the user's browser.
+    Website,
+}
+
+/// `GET /v1/mail/threads/{id}/unsubscribe`: how to unsubscribe from the list a
+/// conversation's latest message came from (`null` when it doesn't say).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MailUnsubscribe {
+    pub method: MailUnsubscribeMethod,
+    /// Who is asked: the domain of the web or email address ("example.com").
+    pub domain: String,
+    /// The sender's name, else their address, for "Archive all from …".
+    pub sender: String,
+    /// `website` only: the page to open in the browser.
+    pub url: Option<String>,
+    /// Set once the user unsubscribed from this list (remembered per list).
+    pub done: Option<MailUnsubscribed>,
+    /// Conversations from this list still in the Inbox, this one included.
+    pub in_inbox: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MailUnsubscribed {
+    pub method: MailUnsubscribeMethod,
+    #[ts(type = "number")]
+    pub at: i64,
+}
+
+/// Answer of `POST /v1/mail/threads/{id}/unsubscribe/archive`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MailArchivedCount {
+    pub archived: u32,
 }

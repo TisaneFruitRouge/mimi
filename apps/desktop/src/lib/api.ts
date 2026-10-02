@@ -59,6 +59,8 @@ import type { MailPreset } from "@/bindings/MailPreset";
 import type { MailSummary } from "@/bindings/MailSummary";
 import type { MailThread } from "@/bindings/MailThread";
 import type { MailThreadDetail } from "@/bindings/MailThreadDetail";
+import type { MailUnsubscribe } from "@/bindings/MailUnsubscribe";
+import type { MailArchivedCount } from "@/bindings/MailArchivedCount";
 import type { CalendarEvents } from "@/bindings/CalendarEvents";
 import type { CalendarInfo } from "@/bindings/CalendarInfo";
 import type { CreatedEvent } from "@/bindings/CreatedEvent";
@@ -252,6 +254,12 @@ export const api = {
   archiveMail: (id: number) => call<null>("POST", `/mail/threads/${id}/archive`),
   /** Flags (stars) a conversation or takes the flag off, here and on the mail server. */
   flagMail: (id: number, flagged: boolean) => call<null>("POST", `/mail/threads/${id}/flag`, { flagged }),
+  /** How to leave the mailing list a conversation came from (`null`: it doesn't say). */
+  mailUnsubscribe: (id: number) => call<MailUnsubscribe | null>("GET", `/mail/threads/${id}/unsubscribe`),
+  /** The user's click on Unsubscribe: one-click or the list's email; a website is only remembered. */
+  unsubscribeMail: (id: number) => call<MailUnsubscribe>("POST", `/mail/threads/${id}/unsubscribe`),
+  /** Archives every Inbox conversation from the same list. */
+  archiveMailList: (id: number) => call<MailArchivedCount>("POST", `/mail/threads/${id}/unsubscribe/archive`),
   createMailFolder: (f: MailFolderInput) => call<null>("POST", "/mail/folders", f),
   updateMailFolder: (id: number, f: MailFolderInput) => call<null>("PATCH", `/mail/folders/${id}`, f),
   deleteMailFolder: (id: number) => call<null>("DELETE", `/mail/folders/${id}`),
@@ -418,6 +426,7 @@ export const keys = {
   mailThreads: (view: MailBox | null, q: string, scope: MailScope = {}, folder: number | null = null) =>
     ["mail", "threads", view, q, scope.account ?? null, scope.address ?? null, folder] as const,
   mailThread: (id: number) => ["mail", "thread", id] as const,
+  mailUnsubscribe: (id: number) => ["mail", "unsubscribe", id] as const,
   // Not under "mail": an email's content never changes, and loading its pictures again at
   // every mail change would tell the sender each time.
   mailContent: (id: number, images: boolean) => ["mailContent", id, images] as const,

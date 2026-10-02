@@ -605,6 +605,7 @@ fn unreadable(raw: &[u8]) -> parse::Parsed {
         suspicious: false,
         delivered_to: Vec::new(),
         html: None,
+        list: Default::default(),
     });
     parsed.body =
         "(This message couldn't be read here. Open it in your usual mail app to read it.)"

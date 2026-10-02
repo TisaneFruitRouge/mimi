@@ -52,6 +52,11 @@ for showing mail. Connections in general: [Connections](connections.md).
   approval. Automatic email (Settings › Permissions) still asks unless every recipient
   is known (`mail::known`): see [Tools and approvals](tools-and-approvals.md).
 - Never log passwords, and never point tests at a real mailbox.
+- **Unsubscribing is only ever the user's click** (`POST
+  /v1/mail/threads/{id}/unsubscribe`). There is no assistant tool for it; keep
+  `api/tests/unsubscribe_flow.rs` passing. A one-click address is fetched over https
+  only, from the internet only (checked after DNS, on the address connected to, and on
+  every redirect), with nothing of the user's in the request.
 
 ## Connecting
 
@@ -373,6 +378,55 @@ shortcut can call.
 - The assistant has no flag tool: flagging changes the mail account, so by the approval
   rule it would need a card, too heavy for a star.
 
+## Unsubscribing
+
+`mail/unsubscribe.rs`, migration 0029. Newsletters and mailing lists say how to leave
+them in `List-Unsubscribe` (RFC 2369) and, for one-click, `List-Unsubscribe-Post:
+List-Unsubscribe=One-Click` (RFC 8058).
+
+- **Kept at sync.** `mail_messages.list_unsubscribe`, `list_unsubscribe_post` (unfolded,
+  capped at 2 KB) and `list_id` (the bare List-Id, lowercased): `''` when the message
+  has none, `NULL` for mail stored before the columns existed. For those, the first
+  time a conversation whose latest message is automatic is opened, its source is read
+  from the server once (`mail::source`) and the headers kept. A person's email is never
+  fetched for this.
+- **The offer** comes from the conversation's latest message from someone else. Ways,
+  best first:
+  1. *one-click*: the Post header and an https address. The daemon POSTs
+     `List-Unsubscribe=One-Click` (form-encoded) and nothing else: no cookies,
+     referrer or proxy, 10 s timeout, at most 3 redirects. The address is refused
+     unless it's https with no password; names are resolved and only internet
+     addresses kept (`images::PublicOnly`, so the connection goes to the address
+     checked and DNS rebinding can't swap it); literal addresses on this computer,
+     the local network, link-local, CGNAT, NAT64/6to4 forms of those and other
+     reserved ranges are refused (`images::is_public`), and every redirect is checked
+     the same way. A 2xx answer is success.
+  2. *email*: the first `mailto:` address (one address only; cc, bcc and extra
+     recipients are ignored), with its subject and body percent-decoded, control
+     characters removed and capped (200 / 2,000 characters; "Unsubscribe" and a
+     one-line request when missing). Sent through `mail::send` from the address the
+     mail arrived at, so it's filed in Sent like any other.
+  3. *website*: an http(s) page (https first), opened in the user's browser by the
+     app; Mimi only remembers that it was opened.
+- **Remembered per list** in `mail_unsubscribed`, by account: `id:` and the List-Id,
+  else `from:` and the sender's address. Later mail from that list shows
+  "Unsubscribed".
+- **Archiving afterwards**: "Archive this conversation", or every Inbox conversation
+  from the list (`unsubscribe::archive_list`, at most 500, one IMAP session).
+- **Never automatic.** No tool, no sorting rule and no routine unsubscribes; viewing
+  the offer changes nothing. `api/tests/unsubscribe_flow.rs` has a newsletter telling
+  the assistant to unsubscribe and a model that tries: the assistant has no such tool,
+  nothing is POSTed or sent until the user's `POST`.
+- Tests reach a list server on this computer through
+  `state.mail.unsubscribe.allow_local_for_tests()` (http and loopback, tests only);
+  nothing else turns that on.
+
+In the panel, `features/mail/unsubscribe.tsx` adds "Unsubscribe" to the reader's
+toolbar. Its sheet says what will happen in plain words ("Mimi will ask example.com to
+stop sending you these emails."); website lists say it opens in the browser. Afterwards
+the button reads "Unsubscribed" and the sheet offers to archive this conversation or
+all of them from that sender.
+
 ## Invitations
 
 Event invitations, updates and cancellations are sent through this mail's SMTP path and
@@ -406,6 +460,9 @@ All under `/v1`. Changes publish `MailChanged` (`mail_changed`).
 - `GET /v1/mail/messages/{id}/content`, `POST /v1/mail/messages/{id}/images`,
   `GET /v1/mail/messages/{id}/attachments/{index}`.
 - `DELETE /v1/mail/jev`.
+- `GET /v1/mail/threads/{id}/unsubscribe` (a `MailUnsubscribe`, or `null`), `POST` the
+  same to unsubscribe, `POST /v1/mail/threads/{id}/unsubscribe/archive` (every Inbox
+  conversation from that list). See [Unsubscribing](#unsubscribing).
 
 ## UI
 
@@ -426,6 +483,8 @@ All under `/v1`. Changes publish `MailChanged` (`mail_changed`).
 - `draft-card.tsx`: drafts the assistant writes in chat, as editable cards with their
   own Send button. `mail_send` approval cards show every field.
 - `folder-looks.tsx`: the smart folders' icons and colours.
+- `unsubscribe.tsx`: the reader's Unsubscribe button and its sheet (see
+  [Unsubscribing](#unsubscribing)).
 
 Mail panel reply drafts get the user's custom instructions only, not the personality
 (see [Personality](personality.md)).
@@ -447,4 +506,8 @@ Mail panel reply drafts get the user's custom instructions only, not the persona
 - `cargo test -p mimi-core live_discovery -- --ignored` checks server discovery on real
   domains.
 - Jev: tests point `state.mail.jev_api` at a fake.
+- Unsubscribing: `mail/unsubscribe.rs` tests parsing (several addresses, missing angle
+  brackets, mailto subject and body), the refused addresses and redirects, one-click
+  against a list server on this computer and the email through the fake SMTP;
+  `api/tests/unsubscribe_flow.rs` proves only the user's click unsubscribes.
 - Never point tests at a real mailbox.

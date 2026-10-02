@@ -30,6 +30,8 @@ pub struct Parsed {
     pub delivered_to: Vec<String>,
     /// The HTML version, made safe, for display only (`render::stored_html`).
     pub html: Option<String>,
+    /// How to unsubscribe, if it's a list (`unsubscribe::ListHeaders`).
+    pub list: super::unsubscribe::ListHeaders,
 }
 
 pub fn parse(raw: &[u8]) -> Option<Parsed> {
@@ -93,6 +95,7 @@ pub fn parse(raw: &[u8]) -> Option<Parsed> {
             .filter_map(bare_address)
             .collect(),
         html: Some(super::render::stored_html(&msg)),
+        list: super::unsubscribe::ListHeaders::read(&msg),
     })
 }
 

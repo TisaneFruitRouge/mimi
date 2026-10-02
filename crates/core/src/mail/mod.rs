@@ -38,6 +38,7 @@ pub mod suspicious;
 pub mod sync;
 pub mod tools;
 pub mod triage;
+pub mod unsubscribe;
 
 #[cfg(test)]
 pub mod fake;
@@ -99,6 +100,8 @@ pub struct Mail {
     pub triage_wake: Notify,
     /// Fetches an email's pictures when the user asks for them.
     pub images: images::Fetcher,
+    /// Asks a mailing list's website to unsubscribe the user, on their click.
+    pub unsubscribe: unsubscribe::Poster,
 }
 
 impl Mail {

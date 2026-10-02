@@ -20,6 +20,7 @@ pub mod error;
 mod events;
 mod hardware;
 mod mail;
+mod mail_unsubscribe;
 mod memory;
 mod people;
 mod permissions;
@@ -187,6 +188,14 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/mail/threads/{id}/flag", post(mail::flag))
         .route("/mail/threads/{id}/summarize", post(mail::summarize))
         .route("/mail/threads/{id}/draft", post(mail::draft))
+        .route(
+            "/mail/threads/{id}/unsubscribe",
+            get(mail_unsubscribe::offer).post(mail_unsubscribe::unsubscribe),
+        )
+        .route(
+            "/mail/threads/{id}/unsubscribe/archive",
+            post(mail_unsubscribe::archive_all),
+        )
         .route(
             "/mail/send",
             // Attachments come base64-encoded in the draft.

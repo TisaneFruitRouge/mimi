@@ -42,7 +42,7 @@ fn setup_for(fake: &FakeMail, password: &str) -> ConnectionSetup {
 }
 
 /// A state with the account saved but no sync loop running, so tests drive passes.
-async fn account_without_loop(fake: &FakeMail) -> (Arc<AppState>, Account) {
+pub(super) async fn account_without_loop(fake: &FakeMail) -> (Arc<AppState>, Account) {
     let state = Arc::new(AppState::for_tests("t"));
     let (name, config) = connect(
         &reqwest::Client::new(),
@@ -69,13 +69,13 @@ async fn account_without_loop(fake: &FakeMail) -> (Arc<AppState>, Account) {
     (state, Account { id, name, config })
 }
 
-async fn pass(state: &Arc<AppState>, account: &Account) {
+pub(super) async fn pass(state: &Arc<AppState>, account: &Account) {
     let mut s = sync::session(&account.config).await.unwrap();
     sync::pass(state, &mut s, account).await.unwrap();
     let _ = s.logout().await;
 }
 
-async fn all_threads(state: &AppState) -> Vec<mimi_protocol::MailThread> {
+pub(super) async fn all_threads(state: &AppState) -> Vec<mimi_protocol::MailThread> {
     threads(
         state,
         store::Query {

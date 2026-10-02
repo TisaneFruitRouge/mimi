@@ -106,6 +106,7 @@ pub fn insert(c: &Connection, m: &NewMessage) -> rusqlite::Result<Option<i64>> {
             p.html,
         ],
     )?;
+    super::unsubscribe::store_headers(c, c.last_insert_rowid(), &p.list)?;
     Ok(Some(thread))
 }
 
@@ -314,6 +315,10 @@ pub fn forget_connection(c: &Connection, conn: Uuid) -> rusqlite::Result<()> {
     c.execute("DELETE FROM mail_messages WHERE connection_id = ?1", [&id])?;
     c.execute("DELETE FROM mail_threads WHERE connection_id = ?1", [&id])?;
     c.execute("DELETE FROM mail_sync WHERE connection_id = ?1", [&id])?;
+    c.execute(
+        "DELETE FROM mail_unsubscribed WHERE connection_id = ?1",
+        [&id],
+    )?;
     Ok(())
 }
 

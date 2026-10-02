@@ -68,6 +68,7 @@ import { FlagStar, RowFlag, useFlagThread } from "@/features/mail/flag";
 import { FolderGlyph } from "@/features/mail/folder-looks";
 import { AddToFolder, FolderChips, FolderHeader, FolderList } from "@/features/mail/folders";
 import { type FrameContext, MailModeSwitch, MessageBody } from "@/features/mail/message-body";
+import { UnsubscribeButton } from "@/features/mail/unsubscribe";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -1229,6 +1230,7 @@ function Reader({
             <Button variant="secondary" size="sm" aria-pressed={t.flagged} onClick={() => void flag(id, !t.flagged)}>
               <FlagStar flagged={t.flagged} /> {t.flagged ? "Flagged" : "Flag"}
             </Button>
+            <UnsubscribeButton thread={t.id} onArchived={onGone} />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon-sm" aria-label="More" className="rounded-full text-muted-foreground">
