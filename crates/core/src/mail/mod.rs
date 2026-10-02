@@ -24,6 +24,7 @@ use crate::connections::store as connection_store;
 pub mod batch;
 pub mod contacts;
 pub mod discover;
+pub mod drafts;
 pub mod flags;
 pub mod folders;
 pub mod images;
@@ -112,6 +113,8 @@ pub struct Mail {
     pub unsubscribe: unsubscribe::Poster,
     /// Wakes the loop that sends mail waiting in the outbox (undo send, send later).
     pub outbox: outbox::Outbox,
+    /// Copies saved drafts to the servers' Drafts folders.
+    pub drafts: drafts::Drafts,
 }
 
 impl Mail {
@@ -414,6 +417,7 @@ pub async fn forget(state: &AppState, id: Uuid) {
     {
         tracing::error!("couldn't remove a disconnected account's mail: {e}");
     }
+    drafts::forget(state, id).await;
     changed(state);
 }
 
@@ -425,6 +429,7 @@ pub fn install(state: &Arc<AppState>) {
     tokio::spawn(triage::run(state.clone()));
     tokio::spawn(notify::run(state.clone()));
     tokio::spawn(outbox::run(state.clone()));
+    tokio::spawn(drafts::run(state.clone()));
 }
 
 // --- What the panel and the tools use -------------------------------------------------

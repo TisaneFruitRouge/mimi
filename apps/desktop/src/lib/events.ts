@@ -168,6 +168,9 @@ function apply(qc: QueryClient, event: Event) {
       qc.invalidateQueries({ queryKey: keys.mailOutbox });
       announceOutbox(event.item);
       break;
+    case "mail_drafts":
+      qc.invalidateQueries({ queryKey: keys.mailDrafts });
+      break;
     case "resync":
       qc.invalidateQueries();
       break;

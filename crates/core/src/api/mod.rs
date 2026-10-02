@@ -20,6 +20,7 @@ pub mod error;
 mod events;
 mod hardware;
 mod mail;
+mod mail_drafts;
 mod mail_outbox;
 mod mail_signature;
 mod mail_unsubscribe;
@@ -222,6 +223,18 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/mail/signatures",
             get(mail_signature::get).put(mail_signature::put),
         )
+        .route("/mail/drafts", get(mail_drafts::list))
+        .route(
+            "/mail/drafts/{id}",
+            // Files and pictures come base64-encoded in the draft.
+            get(mail_drafts::get)
+                .put(mail_drafts::save)
+                .delete(mail_drafts::delete)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    crate::mail::smtp::MAX_REQUEST_BYTES,
+                )),
+        )
+        .route("/mail/drafts/{id}/mirror", post(mail_drafts::mirror))
         .route("/mail/refresh", post(mail::refresh))
         .route("/mail/older", post(mail::older))
         .route("/mail/folders", post(mail::create_folder))

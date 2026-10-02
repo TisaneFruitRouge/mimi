@@ -41,4 +41,9 @@ attachments: Array<NewMailAttachment>,
  * it's what models, tools, approval cards and checks read. Without it the message
  * goes as plain text.
  */
-html?: string, };
+html?: string, 
+/**
+ * The saved draft this is (`/v1/mail/drafts/{id}`): sending it removes the draft
+ * once it's queued, and taking it back (Undo, Cancel) saves it again.
+ */
+draft_id?: string, };

@@ -12,10 +12,13 @@ import { api, keys } from "@/lib/api";
  */
 export function useSignature() {
   const sigs = useQuery({ queryKey: keys.mailSignatures, queryFn: api.mailSignatures, staleTime: 60_000 });
-  const accounts = useQuery({ queryKey: keys.mailOverview(), queryFn: () => api.mailOverview() }).data?.accounts ?? [];
+  const overview = useQuery({ queryKey: keys.mailOverview(), queryFn: () => api.mailOverview() });
+  const accounts = overview.data?.accounts ?? [];
   const pick = (d: MailDraft) => signatureFor(sigs.data, fromOf(d, accounts), draftKind(d));
   return {
     ready: sigs.data !== undefined && accounts.length > 0,
+    /** Still asking: whether there's a signature isn't known yet. */
+    loading: sigs.isLoading || overview.isLoading,
     sign: (d: MailDraft) => addSignature(d, pick(d)),
     swap: (was: MailDraft, now: MailDraft) => swapSignature(now, pick(was), pick(now)),
   };

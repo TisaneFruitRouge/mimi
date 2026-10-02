@@ -26,7 +26,8 @@ general: [Connections](connections.md).
   on this computer (Proton Bridge).
 - SMTP says hello as `[127.0.0.1]`, never the computer's name. Message-IDs use the
   sender's domain.
-- Inbox, Sent and Archive only: Spam and Trash are never read.
+- Inbox, Sent and Archive only: Spam and Trash are never read. The Drafts folder is read
+  only for the Drafts view (`mail/drafts.rs`), never as mail.
 - Finding servers never uses a third-party lookup service.
 - Suspicious mail is never sorted or summarised by the model, and never filed into a
   smart folder. Keep the phrases specific: mail *about* AI must not be flagged. Only
@@ -90,6 +91,12 @@ general: [Connections](connections.md).
   late, the user's own mail or the same message twice, and never show a suspicious
   email's subject (`mail::notify`; see [New mail notifications](#new-mail-notifications)).
   Tests never show a real notification.
+- **Drafts are never sent by themselves.** Nothing in `mail::drafts` sends: a draft goes
+  only through the outbox, on the user's Send. Copying drafts to the server touches the
+  Drafts folder only. Drafts live in `mail_drafts`, apart from `mail_messages`, so they
+  never reach the model, memory, sorting, notifications, # mentions or smart folders; a
+  draft from another app is shown cleaned like mail. Never lose text written here: see
+  [Drafts](#drafts). `mail/drafts_tests.rs` proves it; keep it passing.
 
 ## Connecting
 
@@ -147,6 +154,7 @@ account, cancelled on disconnect.
    - Mail older than 97 days is forgotten (not older mail a search brought in: see
      [Older mail on the server](#older-mail-on-the-server)); the high-water mark becomes
      `max(highest UID seen, UIDNEXT-1)`.
+   Then the Drafts folder, for drafts written in other apps (see [Drafts](#drafts)).
 2. `IDLE` on the Inbox for up to 10 minutes, until the server reports news or the app
    pokes the loop (after sending, archiving or "Check for new mail"). Before idling, a
    `UIDNEXT` beyond the stored mark (mail that arrived during the pass) triggers another
@@ -220,6 +228,7 @@ find older mail; the server can.
 - `mail_notify_queue`, `mail_notify_seen` (migration 0031): new mail waiting to be
   announced, and Message-IDs already considered (see
   [New mail notifications](#new-mail-notifications)).
+- `mail_drafts` (migration 0033): saved drafts, apart from mail (see [Drafts](#drafts)).
 
 A message joins the thread of its In-Reply-To or References, or of a message that
 already refers to it (Message-ID), else (for "Re:"-style subjects) a thread from the
@@ -689,6 +698,88 @@ the draft cards' Send buttons call `POST /v1/mail/outbox` (a `NewOutgoingMail`: 
 - Events: `mail_outbox` (`OutgoingMail`, attachments without their content) whenever a
   message is queued, rescheduled, sent, cancelled or fails.
 
+## Drafts
+
+`mail/drafts.rs`, migration 0033 (`mail_drafts`), `api/mail_drafts.rs`,
+`features/mail/drafts.tsx`. An email being written is never lost, and drafts are shared
+with the user's other mail apps through the account's Drafts folder.
+
+- **Saved as it's written.** Compose, reply (and forward) editors save the draft
+  (`useDraftAutosave`) 0.8 s after the writing pauses and when the editor closes:
+  `PUT /v1/mail/drafts/{id}` (`SaveMailDraft { draft, now }`), the whole `MailDraft` with
+  its HTML, pictures and files, in the encrypted database. The id is made by the app
+  (`MailDraft.draft_id`, a UUID) so the first save needs no round trip. Nothing is saved
+  until the user changes something: opening a reply box or a draft saves nothing, and
+  changes in the first half second (a signature put in, the text read in) count as how
+  it opened. A draft emptied out is deleted when its editor closes. A save that fails as
+  the editor closes says so, with "Open it" to put the text back in a compose.
+- **Discard** deletes it here at once and from the server soon after, with a short
+  "Draft deleted" toast whose Undo saves it again and puts it back where it was (the
+  reply box, else a compose). Undo rather than a confirmation: Discard is common, and
+  the toast costs nothing when it's meant. A draft with nothing written goes quietly.
+  The Drafts list's right-click "Delete draft" works the same way.
+- **Sending.** `MailDraft.draft_id` goes with the draft into the outbox: once
+  `outbox::queue` has stored it (or sent it, with Undo send off) the draft leaves Drafts
+  (`drafts::sent`), here and on the server. Undo or Cancel (`outbox::cancel`) save it
+  again under the same id (`drafts::restore`), so it's a draft again wherever it reopens.
+  A save arriving after the Send (an editor's last one) is ignored: the row is kept
+  marked `sent` for ten minutes after its server copy is gone. The Scheduled view's
+  "Cancel sending › Delete it" deletes the restored draft. The assistant's own
+  `mail_send` never carries a `draft_id`.
+- **The server copy.** The copier (`drafts::run`, `tick(state, now)` for tests) copies a
+  draft to its account's Drafts folder (`\Drafts` special use, else by name: Drafts,
+  Draft, Brouillons, Entwürfe, Borradores, Bozze; made as "Drafts" if missing) once it
+  hasn't changed for `PAUSE_MS` (3 s), or `MAX_WAIT_MS` (30 s) after its first change not
+  yet there while the user keeps writing, or at once when its editor closes (`now`, or
+  `POST /v1/mail/drafts/{id}/mirror` when there was nothing new to save), and before the
+  daemon stops (`drafts::flush`, 8 s at most; what's left goes at the next start). The
+  copy is the message as it would be sent (`smtp::outgoing_html`, pictures in
+  `multipart/related`, files, In-Reply-To and References for a reply, Bcc kept), with the
+  `\Draft` and `\Seen` flags and an `X-Mimi-Draft: <id>` header. Addresses still being
+  typed are left out; a draft without recipients is still a message. Each change APPENDs
+  the new copy, finds it (`UID SEARCH HEADER X-Mimi-Draft <id>`, else the newest UID
+  since the append) and deletes the old one and any other copy with that header
+  (`\Deleted`, then `UID EXPUNGE` with UIDPLUS, else EXPUNGE), so there's one copy. A
+  server that can't be reached is tried again after 2 minutes; the draft stays here.
+  Copies and the sync's read of the folder run one at a time (`Drafts::lock`).
+- **Drafts from other apps.** Each sync pass reads the Drafts folder
+  (`drafts::read_server`): new messages' headers first, Mimi's own copies (by
+  `X-Mimi-Draft` naming a draft here) skipped, the others fetched (up to 2 MB) and kept
+  as drafts `from_elsewhere`: their text and, for the list, subject, To and snippet. A
+  reply is matched to its conversation by In-Reply-To. Their files aren't kept here:
+  opening one (`GET /v1/mail/drafts/{id}`) reads it from the server, files and all
+  (`partial`). Their HTML goes through `parse::strip_hidden` (as mail that's shown) and
+  then `smtp::outgoing_html`, down to the editor's own formatting; pictures stay only if
+  the draft carries them (`cid:`). The app takes the text from that HTML as the editor
+  reads it (`textOfDraftHtml`), so the formatting isn't dropped. A From that isn't one of
+  the account's addresses is left empty.
+- **Conflicts** (changed in two places). Mimi never merges and never drops text written
+  here:
+  - Its copy gone from the server and the draft unchanged here since it was copied: it
+    was sent, deleted or taken over in another app, so it leaves Drafts here too
+    (another app's version shows as its own draft).
+  - Its copy gone but the draft changed here since: it stays and is copied again; any
+    version another app saved stays beside it, as a second draft.
+  - A draft from elsewhere changed here becomes Mimi's: its copy replaces the other
+    app's (APPEND, then the old UID deleted).
+  - A renumbered Drafts folder (new UIDVALIDITY): Mimi's drafts are copied again (the
+    old copies, found by header, replaced); drafts from elsewhere are read again.
+- **Accounts.** A draft belongs to `draft.connection_id`, else its conversation's
+  account, else the first one; changing From to another account moves the copy. When an
+  account is disconnected, its drafts that are on its server go with its mail; ones with
+  changes that never reached it stay here, without an account.
+- **The assistant's draft cards** become saved drafts once the user changes one (its id
+  is the card's action id): the card shows their version after a reload, and the draft
+  is in the Drafts view and on the server like any. An untouched card isn't saved (it's
+  in the chat already). Sending from the card removes the draft.
+- **In the panel.** "Drafts" in the sidebar's Mailboxes lists them (`DraftList`: To or
+  "No recipients yet", subject or "No subject", when last changed, a snippet, a clip
+  for files), latest first. A new message opens in a compose; a reply opens its
+  conversation with the reply box filled (the reader also opens a saved reply by itself
+  when its conversation is opened). Conversations with a saved reply show a "Draft" mark
+  in the list. Editors say "Saved to Drafts" once something is. Events: `mail_drafts`
+  (`Event::MailDrafts`) whenever drafts change, here or on a server.
+
 ## Several conversations at once
 
 `mail/batch.rs`. The user chooses several conversations in the list and acts on them
@@ -749,7 +840,7 @@ sidebar's "Keyboard shortcuts" or "Press ? for keyboard shortcuts" when nothing 
   sheet, popover or menu is open; never with Alt or the other modifier (Ctrl on macOS,
   Super elsewhere). The app's own ⌘/Ctrl K, N, comma and 1–4 are left alone. While a new
   message is being written only `?` works, so nothing can discard it; the same in the
-  Scheduled view, which has no list to act on.
+  Scheduled and Drafts views, which have no conversations to act on.
 - ⌘ on macOS, Ctrl elsewhere (`lib/platform.ts`: `hasMod`, `isMac`).
 - With several chosen, E, Delete, U and S act on all of them; R, A and F need one open.
 - ↓ / ↑ scroll an open conversation; in the list they move between conversations.
@@ -785,7 +876,9 @@ an email account is connected).
   stays off while there's nothing but the signature. Nothing else is special: it's part
   of the draft.
 - **The assistant's drafts.** Draft cards (`mail_compose`, `mail_draft_reply`) get it
-  from the card once the signatures have loaded. `mail_send`'s `resolve` puts the
+  from the card, which waits for the signatures to load and starts signed: added later,
+  the signature would count as the user's change and save the untouched card to Drafts
+  (see [Drafts](#drafts)). `mail_send`'s `resolve` puts the
   signature of the address it goes from under `signature` (the card's Message shows it
   under the text) and takes a copy the model wrote out of the body; `run` adds it with its
   formatting and pictures if it's still the user's, else the text that was approved. The
@@ -832,6 +925,9 @@ notification publishes `open_mail`.
   cards' Send and Send later), `PATCH|DELETE /v1/mail/outbox/{id}` (reschedule; take back,
   returning the draft), `POST /v1/mail/outbox/{id}/send` (now). See
   [Undo send and send later](#undo-send-and-send-later).
+- `GET /v1/mail/drafts` (`MailDraftInfo` list), `GET|PUT|DELETE /v1/mail/drafts/{id}`
+  (open, save a `SaveMailDraft`, discard), `POST /v1/mail/drafts/{id}/mirror` (copy to
+  the server now). See [Drafts](#drafts).
 - `POST /v1/mail/refresh`.
 - `POST /v1/mail/older` (`MailOlderSearch { q, account }` → `MailOlderResults { threads,
   before, more, problems }`): searches the servers for older mail and brings in the
@@ -875,6 +971,8 @@ notification publishes `open_mail`.
   [Undo send and send later](#undo-send-and-send-later)).
 - `signature.ts`, `use-signature.ts`, `signature-settings.tsx`: signatures in drafts and
   their settings (see [Signatures](#signatures)).
+- `drafts.tsx`: saving as the user writes (`useDraftAutosave`), the Drafts view and its
+  sidebar entry, the "Draft" mark (see [Drafts](#drafts)).
 - `selection.tsx`: choosing several conversations and acting on them;
   `shortcuts.tsx`: the keyboard shortcuts and their sheet (see
   [Several conversations at once](#several-conversations-at-once) and
@@ -922,6 +1020,14 @@ Mail panel reply drafts get the user's custom instructions only, not the persona
   disconnected account, files kept with a scheduled forward) and
   `api/tests/mail_outbox.rs` (the API, and the assistant's scheduled send waiting for
   approval).
+- Drafts: `mail/drafts_tests.rs` (saved and given back whole; one copy on the server,
+  replaced as it changes, made in a Drafts folder found by name; drafts from another app
+  appearing, matched to their conversation, opening with their file and cleaned HTML,
+  then taken over; text changed here surviving its copy going elsewhere; Discard and
+  Send removing both copies, a late save ignored, Undo send giving it back; nothing in
+  Drafts ever sent; a refusing server retried later; a disconnected account keeping
+  unsent writing) and `api/tests/mail_drafts.rs` (the routes with the outbox). The fake
+  server takes `HEADER` searches, `UID EXPUNGE` and APPEND flags.
 - Batches: `mail/batch/tests.rs` (every action on several conversations in one session
   per account, checked with the fake's login count; an account whose password was
   revoked fails only its own conversations and says why) and

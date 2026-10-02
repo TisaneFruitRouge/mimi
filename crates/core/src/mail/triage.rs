@@ -278,5 +278,6 @@ pub fn reply_draft(detail: &MailThreadDetail, body: String) -> mimi_protocol::Ma
         bcc: Vec::new(),
         attachments: Vec::new(),
         html: None,
+        draft_id: None,
     }
 }

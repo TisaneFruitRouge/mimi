@@ -260,7 +260,11 @@ pub async fn queue(
                 .map_err(|e| e.to_string())?
                 .undo_send_secs;
             if wait == 0 || by_assistant {
-                return send_at_once(state, draft, by_assistant).await;
+                let sent = send_at_once(state, draft, by_assistant).await?;
+                if let (Some(id), false) = (sent.draft.draft_id, by_assistant) {
+                    super::drafts::sent(state, id).await;
+                }
+                return Ok(sent);
             }
             (OutgoingKind::Undo, now + i64::from(wait.min(60)) * 1000)
         }
@@ -308,6 +312,10 @@ pub async fn queue(
         .await
         .map_err(|e| e.to_string())?;
     tracing::info!(id = %item.id, kind = kind_str(kind), "an email is waiting to be sent");
+    // Queued: it's no longer a draft (Undo or Cancel make it one again).
+    if let (Some(id), false) = (item.draft.draft_id, by_assistant) {
+        super::drafts::sent(state, id).await;
+    }
     state.mail.outbox.poke();
     let public = item.public(OutgoingStatus::Waiting, None);
     publish(state, public.clone());
@@ -392,6 +400,8 @@ pub async fn cancel(state: &AppState, id: Uuid) -> Result<MailDraft, String> {
         .map_err(not_waiting)?;
     tracing::info!(%id, "an email was taken back before it went");
     publish(state, taken.public(OutgoingStatus::Cancelled, None));
+    // A draft again, saved and shared like any.
+    super::drafts::restore(state, &taken.draft).await;
     Ok(taken.draft)
 }
 

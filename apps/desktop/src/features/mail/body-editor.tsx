@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type { Editor } from "@tiptap/core";
+import { Editor as HeadlessEditor } from "@tiptap/core";
 import Image from "@tiptap/extension-image";
 import { Placeholder } from "@tiptap/extensions";
 import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
@@ -9,6 +10,7 @@ import { cn } from "cn";
 import { toast } from "sonner";
 
 import type { MailDraft } from "@/bindings/MailDraft";
+import type { NewMailAttachment } from "@/bindings/NewMailAttachment";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
@@ -434,4 +436,22 @@ function LinkTool({
       </PopoverContent>
     </Popover>
   );
+}
+
+/**
+ * The plain text the editor makes of a draft's HTML, for a draft written in another mail
+ * app: its own text part may not say exactly what the HTML does, and the editor would
+ * then keep the text and drop the formatting.
+ */
+export function textOfDraftHtml(html: string, attachments: NewMailAttachment[]): string {
+  const editor = new HeadlessEditor({
+    extensions: extensions(),
+    content: editorHtml(html, attachments),
+    parseOptions: PARSE,
+  });
+  try {
+    return textOfDoc(editor.getJSON());
+  } finally {
+    editor.destroy();
+  }
 }

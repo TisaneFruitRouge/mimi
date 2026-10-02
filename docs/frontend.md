@@ -160,6 +160,9 @@ email feature owns that file; see [Email](email.md).
 
 - Several conversations are chosen as in the People list (⌘/Ctrl-click, Shift-click) and
   acted on together (`features/mail/selection.tsx`).
+- Drafts are saved as they're written (`useDraftAutosave` in `features/mail/drafts.tsx`,
+  used by the compose, the reply box and the assistant's draft cards) and listed in the
+  Drafts view. See [Email › Drafts](email.md#drafts).
 - Mail has its own keyboard shortcuts while it's shown (`features/mail/shortcuts.tsx`, a
   window `keydown` listener that steps aside while typing or with a dialog or menu open,
   and leaves the app's ⌘/Ctrl shortcuts alone); `?` lists them. See

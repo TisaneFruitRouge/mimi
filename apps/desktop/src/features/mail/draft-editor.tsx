@@ -9,6 +9,7 @@ import { AddressField, addressText, parseAddresses } from "@/components/address-
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { MailBodyEditor } from "@/features/mail/body-editor";
 import { DraftAttachments, readAttachments } from "@/features/mail/draft-attachments";
+import type { DraftSaving } from "@/features/mail/drafts";
 import { SendSplitButton, announceQueued } from "@/features/mail/send-later";
 import { useSignature } from "@/features/mail/use-signature";
 import { api, keys } from "@/lib/api";
@@ -210,9 +211,10 @@ function Line({ label, field, children }: { label: string; field?: boolean; chil
  * Sends a draft the user has read: their click is the approval. It waits in the daemon
  * for the seconds Undo is offered (a toast with Undo), or until the time picked with
  * Send later; Undo puts it back in the editor at `origin` (see `useDraftHome`), or in a
- * new compose when that's gone.
+ * new compose when that's gone. With `saving` (`useDraftAutosave`), nothing is saved
+ * while it's being queued, and once it is, it's out of Drafts.
  */
-export function useSendDraft(origin: string, onSent?: () => void) {
+export function useSendDraft(origin: string, onSent?: () => void, saving?: DraftSaving) {
   const [sending, setSending] = useState(false);
   const queue = async (draft: MailDraft, at: number | null) => {
     if (draft.to.length === 0) {
@@ -220,11 +222,14 @@ export function useSendDraft(origin: string, onSent?: () => void) {
       return;
     }
     setSending(true);
+    saving?.hold();
     try {
       const item = await api.queueMail(draft, at);
+      saving?.sent();
       onSent?.();
       announceQueued(item, origin);
     } catch (e) {
+      saving?.release();
       toast.error((e as Error).message);
     } finally {
       setSending(false);

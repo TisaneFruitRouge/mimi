@@ -1141,6 +1141,7 @@ async fn sending_threads_the_reply_and_files_it_in_sent() {
             bcc: Vec::new(),
             attachments: Vec::new(),
             html: None,
+            draft_id: None,
         },
     )
     .await
@@ -1163,6 +1164,7 @@ async fn sending_threads_the_reply_and_files_it_in_sent() {
             bcc: Vec::new(),
             attachments: Vec::new(),
             html: None,
+            draft_id: None,
         },
     )
     .await
@@ -1195,6 +1197,7 @@ async fn blind_copies_stay_blind_and_attached_files_go_as_they_are() {
             content_id: None,
         }],
         html: None,
+        draft_id: None,
     };
     send(&state, draft.clone()).await.unwrap();
 
@@ -1648,6 +1651,7 @@ async fn forwarding_carries_attachments_and_deleting_moves_to_trash() {
             bcc: Vec::new(),
             attachments: Vec::new(),
             html: None,
+            draft_id: None,
         },
     )
     .await
@@ -2608,6 +2612,17 @@ fn seed(fake: &FakeMail) {
         now - 90 * 60 * 1000,
         &[],
     );
+    // A draft written in another mail app, answering Sam, for the Drafts view.
+    fake.add_mailbox("Drafts", "\\Drafts");
+    fake.deliver(
+        "Drafts",
+        "From: me@example.org\r\nTo: Sam Carter <sam@example.com>\r\nSubject: Re: Dinner on Thursday?\r\n\
+         In-Reply-To: <seed1@example.com>\r\nMessage-ID: <draft1@example.org>\r\nMIME-Version: 1.0\r\n\
+         Content-Type: text/html; charset=utf-8\r\n\r\n\
+         <div>Thursday works. <b>19:30</b> at Chez Léon,</div><div>I'll bring the book.</div>\r\n",
+        now - 3600 * 1000,
+        &["\\Draft"],
+    );
 }
 
 #[tokio::test]
@@ -2816,6 +2831,7 @@ async fn formatted_mail_goes_with_its_pictures_in_the_text() {
             r#"<div>It <strong>grew</strong>:</div><div><img src="cid:p1@inline" onerror="x()"><img src="https://tracker.example/t.gif"></div>"#
                 .to_owned(),
         ),
+        draft_id: None,
     };
     send(&state, draft).await.unwrap();
 

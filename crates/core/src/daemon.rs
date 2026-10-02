@@ -145,6 +145,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
     let served = axum::serve(listener, api::router(state.clone()))
         .with_graceful_shutdown(shutdown_signal())
         .await;
+    // Drafts not yet on the mail servers get there now, if they can.
+    crate::mail::drafts::flush(&state).await;
     // The runtime is a child process: take it down with the daemon.
     state.runtime.stop(&state).await;
     state.semantic.stop().await;

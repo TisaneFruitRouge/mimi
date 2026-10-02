@@ -37,6 +37,7 @@ import { toast } from "sonner";
 import type { MailBatchAction } from "@/bindings/MailBatchAction";
 import type { MailBox } from "@/bindings/MailBox";
 import type { MailDraft } from "@/bindings/MailDraft";
+import type { MailDraftInfo } from "@/bindings/MailDraftInfo";
 import type { MailFolder } from "@/bindings/MailFolder";
 import type { MailMessage } from "@/bindings/MailMessage";
 import type { MailOverview } from "@/bindings/MailOverview";
@@ -68,6 +69,17 @@ import { ConnectDialog } from "@/features/connections/connect-dialogs";
 import { DraftEditor, SendButton, useSendDraft } from "@/features/mail/draft-editor";
 import { replaceText, withoutSignature } from "@/features/mail/signature";
 import { useSignature } from "@/features/mail/use-signature";
+import {
+  continueDraft,
+  DraftList,
+  DraftSavedNote,
+  DraftsNavItem,
+  NoDraftOpen,
+  useDraftAutosave,
+  useDraftReplies,
+  useMailDrafts,
+  withDraftId,
+} from "@/features/mail/drafts";
 import {
   ScheduledList,
   ScheduledNavItem,
@@ -333,6 +345,7 @@ export function MailView({
     // A notification's click: show that conversation, whatever view or choice was on.
     openMailThread = (id) => {
       setScheduled(false);
+      setDraftsView(false);
       setChosen([]);
       setSelected(id);
     };
@@ -340,10 +353,15 @@ export function MailView({
       openMailThread = null;
     };
   }, []);
-  const [composing, setComposing] = useState<MailDraft | null>(null);
+  // A message being written: always with its saved draft's id (`drafts.tsx`).
+  const [composing, setComposingState] = useState<MailDraft | null>(null);
+  const setComposing = (d: MailDraft | null) => setComposingState(withDraftId(d));
   // The Scheduled view (mail waiting to be sent), and the email open in it.
   const [scheduled, setScheduled] = useState(false);
   const [outgoing, setOutgoing] = useState<string | null>(null);
+  // The Drafts view, and the draft open in it (a reply opens in its conversation).
+  const [draftsView, setDraftsView] = useState(false);
+  const [openDraft, setOpenDraft] = useState<string | null>(null);
   // A draft taken back with Undo whose editor is gone, or "Open" on a toast.
   useMailRequests((r) => {
     if ("compose" in r) {
@@ -352,6 +370,7 @@ export function MailView({
     } else {
       setComposing(null);
       setChosen([]);
+      setDraftsView(false);
       setScheduled(true);
       setOutgoing(r.scheduled);
     }
@@ -396,6 +415,7 @@ export function MailView({
     storeFolder(id);
     setQuery("");
     setScheduled(false);
+    setDraftsView(false);
     setChosen([]);
   };
   // A remembered folder that was deleted means the usual views.
@@ -456,6 +476,24 @@ export function MailView({
         forward_of: null,
         attachments: [],
       }),
+    );
+  };
+
+  // A saved draft: a reply opens in its conversation (the reader loads it), a new message
+  // in a compose.
+  const openSaved = (info: MailDraftInfo) => {
+    setOpenDraft(info.id);
+    if (info.reply_to !== null) {
+      setComposing(null);
+      setSelected(info.reply_to);
+      return;
+    }
+    continueDraft(info).then(
+      (d) => {
+        setSelected(null);
+        setComposing(d);
+      },
+      (e) => toast.error((e as Error).message),
     );
   };
 
@@ -520,8 +558,9 @@ export function MailView({
     openThread(shown[next].id);
   };
   shortcuts.current = {
-    // The Scheduled view has no list to act on: only ? works there, as while writing.
-    writing: composing !== null || scheduled,
+    // The Scheduled and Drafts views have no conversations to act on: only ? works
+    // there, as while writing.
+    writing: composing !== null || scheduled || draftsView,
     arrows: selected === null || many,
     next: () => move(1),
     previous: () => move(-1),
@@ -569,15 +608,25 @@ export function MailView({
     <div className="flex h-full">
       <Mailboxes
         overview={o}
-        view={folder || scheduled ? null : current}
+        view={folder || scheduled || draftsView ? null : current}
         onView={setView}
         scheduled={scheduled}
         onScheduled={() => {
           setComposing(null);
           setChosen([]);
+          setDraftsView(false);
           setScheduled(true);
         }}
-        folder={scheduled ? null : (folder?.id ?? null)}
+        drafts={draftsView}
+        onDrafts={() => {
+          setComposing(null);
+          setSelected(null);
+          setChosen([]);
+          setScheduled(false);
+          setOpenDraft(null);
+          setDraftsView(true);
+        }}
+        folder={scheduled || draftsView ? null : (folder?.id ?? null)}
         onFolder={setFolder}
         scope={scope}
         onScope={setScope}
@@ -585,7 +634,9 @@ export function MailView({
         onSettings={onSection}
         onShortcuts={() => setShowKeys(true)}
       />
-      {scheduled ? (
+      {draftsView ? (
+        <DraftList selected={openDraft} onOpen={openSaved} />
+      ) : scheduled ? (
         <ScheduledList
           selected={outgoing}
           onSelect={(id) => {
@@ -629,7 +680,15 @@ export function MailView({
       <div className="h-full min-w-0 flex-1">
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
-            key={composing ? "compose" : scheduled ? `scheduled:${outgoing}` : many ? "chosen" : (selected ?? "none")}
+            key={
+              composing
+                ? `compose:${composing.draft_id}`
+                : scheduled
+                  ? `scheduled:${outgoing}`
+                  : many
+                    ? "chosen"
+                    : (selected ?? (draftsView ? "drafts" : "none"))
+            }
             className="h-full"
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
@@ -637,7 +696,15 @@ export function MailView({
             transition={{ type: "spring", stiffness: 420, damping: 36, mass: 0.8 }}
           >
             {composing ? (
-              <Compose draft={composing} onChange={setComposing} onClose={() => setComposing(null)} />
+              <Compose
+                key={composing.draft_id}
+                draft={composing}
+                onChange={setComposing}
+                onClose={() => {
+                  setComposing(null);
+                  setOpenDraft(null);
+                }}
+              />
             ) : scheduled ? (
               <ScheduledReader id={outgoing} onGone={() => setOutgoing(null)} onEdit={setComposing} />
             ) : bulk ? (
@@ -657,7 +724,10 @@ export function MailView({
                 }}
                 action={pendingAction?.id === selected ? pendingAction.action : null}
                 onActionTaken={() => setPendingAction(null)}
+                openDraft={draftsView ? openDraft : null}
               />
+            ) : draftsView ? (
+              <NoDraftOpen />
             ) : (
               <NothingOpen view={current} onShortcuts={() => setShowKeys(true)} />
             )}
@@ -711,6 +781,8 @@ function Mailboxes({
   onView,
   scheduled,
   onScheduled,
+  drafts,
+  onDrafts,
   folder,
   onFolder,
   scope,
@@ -724,6 +796,8 @@ function Mailboxes({
   onView: (v: MailBox) => void;
   scheduled: boolean;
   onScheduled: () => void;
+  drafts: boolean;
+  onDrafts: () => void;
   folder: number | null;
   onFolder: (id: number) => void;
   scope: MailScope;
@@ -790,6 +864,7 @@ function Mailboxes({
       <nav aria-label="Mailboxes" className="flex flex-col gap-0.5">
         <span className="px-2.5 pb-1 section-label">Mailboxes</span>
         {views.filter((v) => !v.sorted).map(item)}
+        <DraftsNavItem active={drafts} onClick={onDrafts} />
         <ScheduledNavItem active={scheduled} onClick={onScheduled} />
       </nav>
       <FolderList overview={o} current={folder} onOpen={onFolder} />
@@ -970,6 +1045,7 @@ function ThreadList({
   const problem = accounts.find((c) => c.status === "error");
   const checking = accounts.some((c) => c.detail.startsWith("Checking"));
   const list = (threads.data ?? []).filter((t) => !removing.has(t.id));
+  const drafted = useDraftReplies();
   const box = useRef<HTMLDivElement>(null);
   const [deleting, setDeleting] = useState<MailThread | null>(null);
 
@@ -1129,6 +1205,7 @@ function ThreadList({
               focusable={t.id === selected || (selected === null && t === list[0])}
               showCategory={searching || view === "inbox"}
               showAddress={showAddress && !!t.received_on && !mainAddresses.has(t.received_on)}
+              draft={drafted.has(t.id)}
               onClick={(e) => onChoose(t.id, e)}
             />
           </ThreadMenu>
@@ -1306,6 +1383,7 @@ function ThreadRow({
   focusable,
   showCategory,
   showAddress,
+  draft,
   onClick,
 }: {
   thread: MailThread;
@@ -1313,6 +1391,8 @@ function ThreadRow({
   focusable: boolean;
   showCategory: boolean;
   showAddress: boolean;
+  /** A reply to it is being written (a saved draft). */
+  draft?: boolean;
   onClick: (e: React.MouseEvent) => void;
 }) {
   const pill = t.suspicious
@@ -1349,6 +1429,7 @@ function ThreadRow({
             </Pill>
           </span>
         )}
+        {draft && <Pill className="h-[18px] bg-fill px-2 text-[11px] text-muted-foreground">Draft</Pill>}
         {pill && <Pill className={cn("h-[18px] px-2 text-[11px]", pill.className)}>{pill.label}</Pill>}
       </span>
       <span className="line-clamp-2 type-subhead text-muted-foreground">
@@ -1396,6 +1477,7 @@ function Reader({
   onActionTaken,
   onAsk,
   onOpenPerson,
+  openDraft,
 }: {
   id: number;
   overview: MailOverview;
@@ -1409,6 +1491,8 @@ function Reader({
   onActionTaken: () => void;
   onAsk: (draft: Draft) => void;
   onOpenPerson: (id: string) => void;
+  /** The saved draft to continue in the reply box (from the Drafts view). */
+  openDraft?: string | null;
 }) {
   const onScroll = useScrollEdge();
   const assistant = useAssistantName();
@@ -1421,6 +1505,26 @@ function Reader({
   const startWith = (r: MailDraft) => setReply(sign(r));
   // Undo send puts a reply back here while this conversation is open.
   useDraftHome(`reply:${id}`, setReply);
+  // A reply saved earlier (here, or in another mail app) opens in the reply box. Once:
+  // after it's sent or discarded, the list may still name it for a moment.
+  const drafts = useMailDrafts().data;
+  const draftLoaded = useRef(false);
+  // A reply box opened that way doesn't take the keyboard: J and K keep moving.
+  const [quietReply, setQuietReply] = useState(false);
+  useEffect(() => {
+    if (reply) draftLoaded.current = true;
+    if (draftLoaded.current || !drafts) return;
+    const saved = drafts.find((x) => x.id === openDraft) ?? drafts.find((x) => x.reply_to === id);
+    if (!saved) return;
+    draftLoaded.current = true;
+    continueDraft(saved).then(
+      (d) => {
+        setQuietReply(true);
+        setReply((r) => r ?? d);
+      },
+      (e) => toast.error((e as Error).message),
+    );
+  }, [drafts, reply, id, openDraft]);
   const [archiving, setArchiving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const flag = useFlagThread();
@@ -1623,7 +1727,17 @@ function Reader({
         />
 
         {reply ? (
-          <ReplyBox threadId={id} draft={reply} onChange={setReply} onClose={() => setReply(null)} overview={overview} />
+          <ReplyBox
+            threadId={id}
+            draft={reply}
+            onChange={setReply}
+            onClose={() => {
+              setReply(null);
+              setQuietReply(false);
+            }}
+            overview={overview}
+            autoFocus={!quietReply || openDraft !== null}
+          />
         ) : (
           <button
             onClick={startReply}
@@ -1885,18 +1999,22 @@ function ReplyBox({
   onChange,
   onClose,
   overview,
+  autoFocus = true,
 }: {
   threadId: number;
   draft: MailDraft;
   onChange: (d: MailDraft) => void;
   onClose: () => void;
   overview: MailOverview;
+  /** Put the cursor in the text (not for a saved reply opened with its conversation). */
+  autoFocus?: boolean;
 }) {
   const [instructions, setInstructions] = useState("");
   const [writing, setWriting] = useState(false);
   // Remounts the editor when the assistant fills it in.
   const [version, setVersion] = useState(0);
-  const { sending, send, sendLater } = useSendDraft(`reply:${threadId}`, onClose);
+  const saving = useDraftAutosave(draft, onChange, `reply:${threadId}`);
+  const { sending, send, sendLater } = useSendDraft(`reply:${threadId}`, onClose, saving);
   const write = async () => {
     setWriting(true);
     try {
@@ -1937,11 +2055,24 @@ function ReplyBox({
           {writing && <Loader2 className="animate-spin" />} {withoutSignature(draft.body).trim() ? "Write again" : "Draft it for me"}
         </Button>
       </form>
-      <DraftEditor key={version} draft={draft} onChange={onChange} autoFocus="body" className="border-t-[0.5px] border-separator" />
+      <DraftEditor
+        key={version}
+        draft={draft}
+        onChange={onChange}
+        autoFocus={autoFocus || version > 0 ? "body" : undefined}
+        className="border-t-[0.5px] border-separator"
+      />
       <div className="flex items-center justify-between gap-3 border-t-[0.5px] border-separator px-4 py-2.5">
-        <span className="type-footnote text-faint">Sent from your account when you press Send.</span>
+        <DraftSavedNote saving={saving} fallback="Sent from your account when you press Send." />
         <div className="flex gap-2">
-          <Button variant="ghost" onClick={onClose} disabled={sending}>
+          <Button
+            variant="ghost"
+            onClick={() => {
+              saving.discard();
+              onClose();
+            }}
+            disabled={sending}
+          >
             Discard
           </Button>
           <SendButton
@@ -1966,7 +2097,8 @@ function Compose({
   onClose: () => void;
 }) {
   const onScroll = useScrollEdge();
-  const { sending, send, sendLater } = useSendDraft("compose", onClose);
+  const saving = useDraftAutosave(draft, onChange, "compose");
+  const { sending, send, sendLater } = useSendDraft("compose", onClose, saving);
   return (
     <div className="h-full overflow-y-auto" onScroll={onScroll}>
       <div className="mx-auto flex w-full max-w-[760px] flex-col gap-5 px-6 pt-[84px] pb-20">
@@ -1979,7 +2111,17 @@ function Compose({
         <div className="overflow-hidden rounded-[18px] bg-background shadow-[var(--shadow-card)]">
           <DraftEditor draft={draft} onChange={onChange} autoFocus="to" />
           <div className="flex items-center justify-end gap-2 border-t-[0.5px] border-separator px-4 py-2.5">
-            <Button variant="ghost" onClick={onClose} disabled={sending}>
+            <span className="mr-auto">
+              <DraftSavedNote saving={saving} />
+            </span>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                saving.discard();
+                onClose();
+              }}
+              disabled={sending}
+            >
               Discard
             </Button>
             <SendButton

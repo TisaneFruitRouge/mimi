@@ -475,6 +475,8 @@ export function ScheduledReader({
   const takeOut = (edit: boolean) =>
     run(async () => {
       const draft = await api.cancelOutgoing(item.id);
+      // Taken back, it's a draft again: unless the user deletes it here.
+      if (!edit && draft.draft_id) await api.deleteMailDraft(draft.draft_id);
       onGone();
       if (edit) onEdit(draft);
     }, edit ? undefined : "Cancelled. It won't be sent.");

@@ -53,6 +53,7 @@ import type { CalendarEvent } from "@/bindings/CalendarEvent";
 import type { MailBox } from "@/bindings/MailBox";
 import type { MailContent } from "@/bindings/MailContent";
 import type { MailDraft } from "@/bindings/MailDraft";
+import type { MailDraftInfo } from "@/bindings/MailDraftInfo";
 import type { MailOverview } from "@/bindings/MailOverview";
 import type { MailDiscovery } from "@/bindings/MailDiscovery";
 import type { MailFolderInput } from "@/bindings/MailFolderInput";
@@ -294,6 +295,16 @@ export const api = {
   rescheduleOutgoing: (id: string, send_at: number) =>
     call<OutgoingMail>("PATCH", `/mail/outbox/${id}`, { send_at }),
   sendOutgoingNow: (id: string) => call<null>("POST", `/mail/outbox/${id}/send`),
+  /** Saved drafts: written here, or found in a mail server's Drafts folder. */
+  mailDrafts: () => call<MailDraftInfo[]>("GET", "/mail/drafts"),
+  /** One draft, to continue it (one from another mail app is read from the server). */
+  mailDraft: (id: string) => call<MailDraft>("GET", `/mail/drafts/${id}`),
+  /** Saves a draft as it's written; `now`: the editor closed, copy it to the server now. */
+  saveMailDraft: (id: string, draft: MailDraft, now = false) =>
+    call<null>("PUT", `/mail/drafts/${id}`, { draft, now }),
+  deleteMailDraft: (id: string) => call<null>("DELETE", `/mail/drafts/${id}`),
+  /** The editor closed with nothing new to save: copy the draft to the server now. */
+  mirrorMailDraft: (id: string) => call<null>("POST", `/mail/drafts/${id}/mirror`),
   refreshMail: () => call<null>("POST", "/mail/refresh"),
   /** Checks the TypeSafe key with TypeSafe, then saves it (Jev as the mail sorter). */
   jevConnect: (api_key: string) => call<null>("PUT", "/mail/jev", { api_key }),
@@ -457,6 +468,10 @@ export const keys = {
   mailOutbox: ["mail", "outbox"] as const,
   // Not under "mail": they can carry a picture, and don't change with new mail.
   mailSignatures: ["mailSignatures"] as const,
+  // Not under "mail": saved as the user types, the drafts change far more often.
+  mailDrafts: ["mailDrafts"] as const,
+  // Read once, when a draft card in a chat shows: not refreshed as drafts change.
+  mailDraftCard: (id: string) => ["mailDraftCard", id] as const,
   // Not under "mail": an email's content never changes, and loading its pictures again at
   // every mail change would tell the sender each time.
   mailContent: (id: number, images: boolean) => ["mailContent", id, images] as const,

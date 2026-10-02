@@ -519,6 +519,7 @@ mod tests {
             forward_of: None,
             attachments: vec![],
             html: html.map(str::to_owned),
+            draft_id: None,
         }
     }
 

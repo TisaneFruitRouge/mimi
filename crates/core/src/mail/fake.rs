@@ -160,6 +160,16 @@ impl FakeMail {
         mb.uid_next += 1000;
     }
 
+    /// Adds a mailbox (`special`: `\\Drafts`…, or empty to be found by its name).
+    pub fn add_mailbox(&self, name: &str, special: &'static str) {
+        self.lock().mailboxes.push(mailbox(name, special));
+    }
+
+    /// Whether a mailbox exists.
+    pub fn has_mailbox(&self, name: &str) -> bool {
+        self.lock().mailboxes.iter().any(|m| m.name == name)
+    }
+
     pub fn remove(&self, mailbox: &str, uid: u32) {
         let mut st = self.lock();
         let mb = st.mailboxes.iter_mut().find(|m| m.name == mailbox).unwrap();
@@ -380,11 +390,11 @@ impl FakeMail {
                     r.read_exact(&mut buf).await?;
                     let mut end = String::new();
                     r.read_line(&mut end).await?;
-                    let flags: Vec<&str> = if args.contains("\\Seen") {
-                        vec!["\\Seen"]
-                    } else {
-                        vec![]
-                    };
+                    let flags: Vec<&str> = args
+                        .split_once('(')
+                        .and_then(|(_, rest)| rest.split_once(')'))
+                        .map(|(flags, _)| flags.split_whitespace().collect())
+                        .unwrap_or_default();
                     let raw = String::from_utf8_lossy(&buf).into_owned();
                     self.deliver(&name, &raw, crate::now_ms(), &flags);
                     out += &*format!("{tag} OK appended\r\n");
@@ -600,6 +610,20 @@ impl FakeMail {
                 }
                 out += &*format!("{tag} OK done\r\n");
             }
+            "EXPUNGE" => {
+                // UID EXPUNGE set (UIDPLUS): only those, and only when deleted.
+                let mb = &mut st.mailboxes[mb_index];
+                let mut seq = mb.messages.len();
+                while seq > 0 {
+                    let m = &mb.messages[seq - 1];
+                    if in_set(rest.trim(), m.uid, max_uid) && m.flags.contains("\\Deleted") {
+                        mb.messages.remove(seq - 1);
+                        out += &*format!("* {seq} EXPUNGE\r\n");
+                    }
+                    seq -= 1;
+                }
+                out += &*format!("{tag} OK done\r\n");
+            }
             _ => out += &*format!("{tag} BAD unknown UID command\r\n"),
         }
         out
@@ -765,7 +789,7 @@ enum Key {
     Before(i64),
     Since(i64),
     Text(String),
-    Header(&'static str, String),
+    Header(String, String),
     Uid(String),
     Any,
 }
@@ -803,9 +827,13 @@ fn one_key(t: &mut Tokens) -> Key {
         "BEFORE" => Key::Before(day(&arg())),
         "SINCE" => Key::Since(day(&arg())),
         "TEXT" | "BODY" => Key::Text(arg()),
-        "FROM" => Key::Header("from", arg()),
-        "TO" => Key::Header("to", arg()),
-        "CC" => Key::Header("cc", arg()),
+        "FROM" => Key::Header("from".to_owned(), arg()),
+        "TO" => Key::Header("to".to_owned(), arg()),
+        "CC" => Key::Header("cc".to_owned(), arg()),
+        "HEADER" => {
+            let name = arg().to_lowercase();
+            Key::Header(name, arg())
+        }
         "UID" => Key::Uid(arg()),
         "OR" => {
             let a = one_key(t);

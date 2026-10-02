@@ -74,6 +74,9 @@ pub struct Folders {
     pub all: Option<String>,
     /// Where deleted mail goes. Not read.
     pub trash: Option<String>,
+    /// Drafts: read for drafts written elsewhere, and where Mimi's drafts are copied
+    /// (`mail::drafts`). Never read as mail.
+    pub drafts: Option<String>,
 }
 
 pub async fn folders(session: &mut ImapSession) -> Result<Folders, MailError> {
@@ -88,6 +91,7 @@ pub async fn folders(session: &mut ImapSession) -> Result<Folders, MailError> {
     let mut sent_by_name = None;
     let mut archive_by_name = None;
     let mut trash_by_name = None;
+    let mut drafts_by_name = None;
     for n in &names {
         let attrs = n.attributes();
         if attrs.contains(&NameAttribute::NoSelect) {
@@ -102,6 +106,8 @@ pub async fn folders(session: &mut ImapSession) -> Result<Folders, MailError> {
             f.all.get_or_insert(name.clone());
         } else if attrs.contains(&NameAttribute::Trash) {
             f.trash.get_or_insert(name.clone());
+        } else if attrs.contains(&NameAttribute::Drafts) {
+            f.drafts.get_or_insert(name.clone());
         }
         let leaf = n
             .delimiter()
@@ -130,10 +136,17 @@ pub async fn folders(session: &mut ImapSession) -> Result<Folders, MailError> {
         ) {
             trash_by_name.get_or_insert(name.clone());
         }
+        if matches!(
+            leaf.as_str(),
+            "drafts" | "draft" | "brouillons" | "entwürfe" | "borradores" | "bozze"
+        ) {
+            drafts_by_name.get_or_insert(name.clone());
+        }
     }
     f.sent = f.sent.or(sent_by_name);
     f.archive = f.archive.or(archive_by_name);
     f.trash = f.trash.or(trash_by_name);
+    f.drafts = f.drafts.or(drafts_by_name);
     Ok(f)
 }
 
@@ -314,6 +327,10 @@ pub async fn pass(
     }
     if let Some(archive) = &f.archive {
         changed |= sync_mailbox(state, session, account, archive, "archive").await?;
+    }
+    // Drafts written in other mail apps, for the Drafts view (never stored as mail).
+    if let Err(e) = super::drafts::read_server(state, session, account, f.drafts.as_deref()).await {
+        tracing::warn!(connection = %account.id, "couldn't read the Drafts folder: {e}");
     }
     if changed {
         super::changed(state);

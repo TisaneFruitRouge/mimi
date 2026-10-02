@@ -293,6 +293,11 @@ pub struct MailDraft {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub html: Option<String>,
+    /// The saved draft this is (`/v1/mail/drafts/{id}`): sending it removes the draft
+    /// once it's queued, and taking it back (Undo, Cancel) saves it again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub draft_id: Option<Uuid>,
 }
 
 /// A file the user attaches to an email they write.
@@ -658,4 +663,42 @@ pub struct MailSignature {
 pub struct AddressSignature {
     pub address: String,
     pub signature: MailSignature,
+}
+
+/// A saved draft, as the Drafts view lists it (`GET /v1/mail/drafts`): an email the user
+/// started here, or one found in an account's Drafts folder on the server (written in
+/// another mail app). Drafts are never sent unless the user opens one and presses Send.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MailDraftInfo {
+    pub id: Uuid,
+    /// The account it belongs to, and is copied to (`None` until there is one).
+    pub connection_id: Option<Uuid>,
+    pub subject: String,
+    pub to: Vec<String>,
+    /// The start of its text.
+    pub snippet: String,
+    /// When it last changed (ms).
+    #[ts(type = "number")]
+    pub updated_at: i64,
+    /// The conversation it answers, when that conversation is here: it opens there, in
+    /// the reply box.
+    #[ts(type = "number | null")]
+    pub reply_to: Option<i64>,
+    /// How many files and pictures it carries.
+    pub files: u32,
+    /// Written in another mail app (found in the server's Drafts folder) and not changed
+    /// here since.
+    pub from_elsewhere: bool,
+}
+
+/// Body of `PUT /v1/mail/drafts/{id}`: the draft as it is now, saved as the user writes.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SaveMailDraft {
+    pub draft: MailDraft,
+    /// The editor closed: copy it to the server's Drafts folder now rather than after a
+    /// pause.
+    #[serde(default)]
+    pub now: bool,
 }

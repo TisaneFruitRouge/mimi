@@ -82,6 +82,9 @@ pub enum Event {
     MailOutbox {
         item: crate::OutgoingMail,
     },
+    /// The saved drafts changed: one was saved, deleted or sent, or a server's Drafts
+    /// folder changed (`GET /v1/mail/drafts`).
+    MailDrafts,
     /// This client fell behind and missed events. Refetch any state you display.
     Resync,
     /// The user clicked a new-mail notification on this computer: the desktop app comes

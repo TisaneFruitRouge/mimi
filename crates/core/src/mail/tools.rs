@@ -754,6 +754,7 @@ fn draft_from(args: &Value, reply_to: Option<i64>) -> MailDraft {
         forward_of: None,
         attachments: Vec::new(),
         html: None,
+        draft_id: None,
     }
 }
 
