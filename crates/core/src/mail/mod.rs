@@ -21,6 +21,7 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::connections::store as connection_store;
 
+pub mod batch;
 pub mod contacts;
 pub mod discover;
 pub mod flags;

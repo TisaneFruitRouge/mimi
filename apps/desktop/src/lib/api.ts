@@ -63,6 +63,8 @@ import type { MailThreadDetail } from "@/bindings/MailThreadDetail";
 import type { MailUnsubscribe } from "@/bindings/MailUnsubscribe";
 import type { MailArchivedCount } from "@/bindings/MailArchivedCount";
 import type { OutgoingMail } from "@/bindings/OutgoingMail";
+import type { MailBatchAction } from "@/bindings/MailBatchAction";
+import type { MailBatchResult } from "@/bindings/MailBatchResult";
 import type { CalendarEvents } from "@/bindings/CalendarEvents";
 import type { CalendarInfo } from "@/bindings/CalendarInfo";
 import type { CreatedEvent } from "@/bindings/CreatedEvent";
@@ -259,6 +261,9 @@ export const api = {
   archiveMail: (id: number) => call<null>("POST", `/mail/threads/${id}/archive`),
   /** Flags (stars) a conversation or takes the flag off, here and on the mail server. */
   flagMail: (id: number, flagged: boolean) => call<null>("POST", `/mail/threads/${id}/flag`, { flagged }),
+  /** One action on several conversations at once; says which couldn't be changed, and why. */
+  mailBatch: (ids: number[], action: MailBatchAction) =>
+    call<MailBatchResult>("POST", "/mail/threads/batch", { ids, action }),
   /** How to leave the mailing list a conversation came from (`null`: it doesn't say). */
   mailUnsubscribe: (id: number) => call<MailUnsubscribe | null>("GET", `/mail/threads/${id}/unsubscribe`),
   /** The user's click on Unsubscribe: one-click or the list's email; a website is only remembered. */

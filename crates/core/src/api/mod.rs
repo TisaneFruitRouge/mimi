@@ -183,6 +183,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/mail/presets", get(mail::presets))
         .route("/mail/discover", post(mail::discover))
         .route("/mail/threads", get(mail::threads))
+        .route("/mail/threads/batch", post(mail::batch))
         .route("/mail/threads/{id}", get(mail::thread).delete(mail::delete))
         .route("/mail/threads/{id}/read", post(mail::read))
         .route("/mail/threads/{id}/archive", post(mail::archive))

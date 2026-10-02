@@ -74,6 +74,9 @@ general: [Connections](connections.md).
   message cut off mid-send by a crash is marked as not sent, never sent again on its own.
   Only a server that couldn't be reached is retried, a few times; any other problem stays
   on the message and the user is told. See [Undo send and send later](#undo-send-and-send-later).
+- Acting on several conversations at once (`POST /v1/mail/threads/batch`) is only the
+  user's click: no assistant tool. One IMAP session per account, and a failure names
+  what wasn't changed (see [Several conversations at once](#several-conversations-at-once)).
 - **Unsubscribing is only ever the user's click** (`POST
   /v1/mail/threads/{id}/unsubscribe`). There is no assistant tool for it; keep
   `api/tests/unsubscribe_flow.rs` passing. A one-click address is fetched over https
@@ -156,7 +159,7 @@ account, cancelled on disconnect.
 
 Actions (mark read, archive, filing a sent copy) open a short second session. Archive
 uses `MOVE` (or COPY + `\Deleted` + EXPUNGE) to the Archive mailbox, or Gmail's All
-Mail. Sent mail is appended to Sent except on Gmail and Proton, which file it
+Mail; a move signs in once per account, whatever the number of mailboxes. Sent mail is appended to Sent except on Gmail and Proton, which file it
 themselves.
 
 ## Older mail on the server
@@ -682,6 +685,74 @@ the draft cards' Send buttons call `POST /v1/mail/outbox` (a `NewOutgoingMail`: 
 - Events: `mail_outbox` (`OutgoingMail`, attachments without their content) whenever a
   message is queued, rescheduled, sent, cancelled or fails.
 
+## Several conversations at once
+
+`mail/batch.rs`. The user chooses several conversations in the list and acts on them
+together: `POST /v1/mail/threads/batch` (`MailBatch { ids, action }`, at most
+`batch::MAX_BATCH` = 500), with `MailBatchAction` archive, delete, read `{read}`, flag
+`{flagged}` or folder `{folder, member}`. It's the user's own click, like the single
+actions; there's no assistant tool for it.
+
+- The work is the single actions', done in **one IMAP session per account** (not one per
+  conversation): `sync::move_on_server` for archive and delete, one `UID STORE` per
+  mailbox for read, `flags::on_server` for flags. Folders are labels here only.
+- Read and flag changes show here at once (and `MailChanged` goes out), then each
+  account's server is told; an account whose server refuses or takes over 30 s has its
+  conversations put back here, as a single flag is. Archive and delete wait for the
+  server and change the local copy of what it moved (2 min per account at most).
+- **Partial failures**: accounts are told one after the other, so one that can't be
+  reached fails only its own conversations. `MailBatchResult` lists `done` and `failed`
+  (`{ids, reason}`, the reason naming the account when there are several) and a
+  `message` in plain words ("Couldn't archive 1 of the 3 conversations. you@example.net:
+  The mail server didn't accept…"). Gone conversations, and ones already so (already
+  flagged, already out of the Inbox), count as done.
+- No undo, as for the single actions: read and flag are undone by doing them again;
+  Delete asks first and says the Trash keeps them.
+
+In the panel (`features/mail/selection.tsx`): ⌘/Ctrl-click adds or removes a
+conversation, Shift-click takes the range from the open one, ⌘/Ctrl A (with the list
+focused) takes every conversation shown, and X adds or removes the open one. With more
+than one chosen, the reader shows "4 conversations selected" with Archive (not in the
+Archive view), Mark as read / unread, Flag / Remove flag, Add to folder (and "Remove
+from" in a folder), Delete…, and Clear selection; a chosen row's right-click menu has
+the same. Esc clears the selection; changing view, folder or account clears it too.
+Archived and deleted conversations leave the list at once and come back if the server
+refuses; the open one's place is taken by the next.
+
+## Keyboard shortcuts
+
+`features/mail/shortcuts.tsx` (`useMailShortcuts`, mounted by the panel, so only while
+Mail is shown). A "Keyboard shortcuts" sheet lists them in plain words: `?`, the
+sidebar's "Keyboard shortcuts" or "Press ? for keyboard shortcuts" when nothing is open.
+
+| Keys | Does |
+|---|---|
+| J / K (↓ / ↑ in the list, or when nothing is open) | Next / previous conversation |
+| ↵ | Open it (and leave a selection) |
+| Esc | Clear the selection, else close the conversation |
+| R, A, F | Reply, reply to everyone, forward |
+| C or N | New message |
+| E | Archive |
+| ⌫ / Delete or # | Delete (asks first) |
+| U or ⇧⌘U (Shift Ctrl U) | Mark as read or unread |
+| S | Flag, or remove the flag (`useFlagThread`) |
+| / or ⌘F (Ctrl F) | Search |
+| X | Add to the selection, or take out |
+| ⌘A (Ctrl A) in the list | Select every conversation shown |
+| ? | The sheet |
+
+- Never while typing (inputs, text areas, editors, the reply box) or while a dialog,
+  sheet, popover or menu is open; never with Alt or the other modifier (Ctrl on macOS,
+  Super elsewhere). The app's own ⌘/Ctrl K, N, comma and 1–4 are left alone. While a new
+  message is being written only `?` works, so nothing can discard it; the same in the
+  Scheduled view, which has no list to act on.
+- ⌘ on macOS, Ctrl elsewhere (`lib/platform.ts`: `hasMod`, `isMac`).
+- With several chosen, E, Delete, U and S act on all of them; R, A and F need one open.
+- ↓ / ↑ scroll an open conversation; in the list they move between conversations.
+- R, A and F leave a reply being written as it is.
+- An open conversation is marked read once, when it opens, so U can mark it unread and
+  it stays open.
+
 ## Invitations
 
 Event invitations, updates and cancellations are sent through this mail's SMTP path and
@@ -708,6 +779,8 @@ notification publishes `open_mail`.
 - `GET /v1/mail/threads?view=&q=&person=&folder=&account=&address=&before=&limit=`
   (`view=flagged`: flagged conversations, wherever they are).
 - `GET /v1/mail/threads/{id}`, `DELETE /v1/mail/threads/{id}` (to Trash).
+- `POST /v1/mail/threads/batch` (`MailBatch`, answers `MailBatchResult`): several
+  conversations at once, see [Several conversations at once](#several-conversations-at-once).
 - `POST /v1/mail/threads/{id}/read` (`{read}`), `/archive`, `/flag` (`{flagged}`, see
   [Flags](#flags)), `/summarize`, `/draft` (`{instructions}`).
 - `POST /v1/mail/send` (a `MailDraft`): sends at once. The user's own action, and so the
@@ -756,6 +829,10 @@ notification publishes `open_mail`.
 - `send-later.tsx`: the Send later menu and time picker, the "Sending…" toast with Undo,
   the Scheduled view, the Undo send setting (see
   [Undo send and send later](#undo-send-and-send-later)).
+- `selection.tsx`: choosing several conversations and acting on them;
+  `shortcuts.tsx`: the keyboard shortcuts and their sheet (see
+  [Several conversations at once](#several-conversations-at-once) and
+  [Keyboard shortcuts](#keyboard-shortcuts)).
 
 Mail panel reply drafts get the user's custom instructions only, not the personality
 (see [Personality](personality.md)).
@@ -799,4 +876,8 @@ Mail panel reply drafts get the user's custom instructions only, not the persona
   disconnected account, files kept with a scheduled forward) and
   `api/tests/mail_outbox.rs` (the API, and the assistant's scheduled send waiting for
   approval).
+- Batches: `mail/batch/tests.rs` (every action on several conversations in one session
+  per account, checked with the fake's login count; an account whose password was
+  revoked fails only its own conversations and says why) and
+  `api/tests/mail_batch.rs` (the route).
 - Never point tests at a real mailbox.

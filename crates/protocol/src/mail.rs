@@ -549,3 +549,57 @@ pub struct RescheduleMail {
     #[ts(type = "number")]
     pub send_at: i64,
 }
+
+/// Body of `POST /v1/mail/threads/batch`: one action on several conversations at once,
+/// chosen together in the Mail panel. The user's own click, like the single actions.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MailBatch {
+    #[ts(type = "number[]")]
+    pub ids: Vec<i64>,
+    pub action: MailBatchAction,
+}
+
+/// What a batch does to each conversation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum MailBatchAction {
+    /// Out of the Inbox, to the account's Archive.
+    Archive,
+    /// Every copy to the account's Trash.
+    Delete,
+    /// Mark read (`true`) or unread.
+    Read { read: bool },
+    /// Flag (`true`) or remove the flag.
+    Flag { flagged: bool },
+    /// Into a smart folder (`member`), or out of it. Labels in Mimi only.
+    Folder {
+        #[ts(type = "number")]
+        folder: i64,
+        member: bool,
+    },
+}
+
+/// Answer of `POST /v1/mail/threads/batch`. Some conversations can fail while others
+/// work (one account's server can't be reached): `failed` says which, and `message` says
+/// so in plain words.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MailBatchResult {
+    /// Conversations it was done to (or that needed nothing).
+    #[ts(type = "number[]")]
+    pub done: Vec<i64>,
+    pub failed: Vec<MailBatchFailure>,
+    /// What went wrong, for showing as it is; `None` when nothing did.
+    pub message: Option<String>,
+}
+
+/// Conversations a batch couldn't change, and why.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MailBatchFailure {
+    #[ts(type = "number[]")]
+    pub ids: Vec<i64>,
+    pub reason: String,
+}

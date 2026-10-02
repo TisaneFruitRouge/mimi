@@ -158,6 +158,13 @@ API).
 `features/mail/mail-view.tsx`, with props `{ onSection, onAsk, onOpenPerson }`. The
 email feature owns that file; see [Email](email.md).
 
+- Several conversations are chosen as in the People list (⌘/Ctrl-click, Shift-click) and
+  acted on together (`features/mail/selection.tsx`).
+- Mail has its own keyboard shortcuts while it's shown (`features/mail/shortcuts.tsx`, a
+  window `keydown` listener that steps aside while typing or with a dialog or menu open,
+  and leaves the app's ⌘/Ctrl shortcuts alone); `?` lists them. See
+  [Email › Keyboard shortcuts](email.md#keyboard-shortcuts).
+
 ### Chat
 
 The chat screen, the composer and its @ / # mentions are in `features/chat/`; see

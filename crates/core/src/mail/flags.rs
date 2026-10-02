@@ -26,26 +26,26 @@ pub const FLAGGED_FILTER: &str =
     "EXISTS (SELECT 1 FROM mail_messages x WHERE x.thread_id = t.id AND x.flagged)";
 
 /// Longest the server may take to apply a flag before the change is undone here.
-const SERVER_TIMEOUT: Duration = Duration::from_secs(30);
+pub(super) const SERVER_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// One change at a time, so a quick flag-unflag can't have the first change's undo or
 /// rewrite land over the second.
-static ONE_AT_A_TIME: LazyLock<tokio::sync::Mutex<()>> =
+pub(super) static ONE_AT_A_TIME: LazyLock<tokio::sync::Mutex<()>> =
     LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 /// One stored copy of a message, where it is on the server, and its flag before.
 #[derive(Debug, Clone)]
-struct Copy {
+pub(super) struct Copy {
     id: i64,
-    conn: Uuid,
+    pub(super) conn: Uuid,
     mailbox: String,
     uid: u32,
     message_id: Option<String>,
-    flagged: bool,
+    pub(super) flagged: bool,
 }
 
 /// A conversation's stored copies, oldest first.
-fn copies(c: &Connection, thread: i64) -> rusqlite::Result<Vec<Copy>> {
+pub(super) fn copies(c: &Connection, thread: i64) -> rusqlite::Result<Vec<Copy>> {
     let mut stmt = c.prepare(
         "SELECT id, connection_id, mailbox, uid, message_id, flagged FROM mail_messages
          WHERE thread_id = ?1 ORDER BY date, id",
@@ -65,7 +65,7 @@ fn copies(c: &Connection, thread: i64) -> rusqlite::Result<Vec<Copy>> {
 
 /// What a change touches: flagging, every copy of the latest message; unflagging,
 /// every message.
-fn targets(all: Vec<Copy>, flagged: bool) -> Vec<Copy> {
+pub(super) fn targets(all: Vec<Copy>, flagged: bool) -> Vec<Copy> {
     if !flagged {
         return all;
     }
@@ -81,7 +81,7 @@ fn targets(all: Vec<Copy>, flagged: bool) -> Vec<Copy> {
     }
 }
 
-fn set_local(c: &Connection, copies: &[Copy], flagged: bool) -> rusqlite::Result<usize> {
+pub(super) fn set_local(c: &Connection, copies: &[Copy], flagged: bool) -> rusqlite::Result<usize> {
     let mut n = 0;
     for m in copies {
         n += c.execute(
@@ -93,7 +93,7 @@ fn set_local(c: &Connection, copies: &[Copy], flagged: bool) -> rusqlite::Result
 }
 
 /// Puts back what a failed change altered, unless sync has changed it since.
-fn undo_local(c: &Connection, copies: &[Copy], flagged: bool) -> rusqlite::Result<()> {
+pub(super) fn undo_local(c: &Connection, copies: &[Copy], flagged: bool) -> rusqlite::Result<()> {
     for m in copies.iter().filter(|m| m.flagged != flagged) {
         c.execute(
             "UPDATE mail_messages SET flagged = ?2 WHERE id = ?1 AND flagged = ?3",
@@ -177,7 +177,11 @@ pub async fn set_flagged(state: &Arc<AppState>, thread: i64, flagged: bool) -> R
 }
 
 /// Sets or clears `\Flagged` on the given copies, one session for the account.
-async fn on_server(account: &Account, copies: &[Copy], flagged: bool) -> Result<(), MailError> {
+pub(super) async fn on_server(
+    account: &Account,
+    copies: &[Copy],
+    flagged: bool,
+) -> Result<(), MailError> {
     let proto = |e: async_imap::error::Error| MailError::Protocol(e.to_string());
     let mut by_mailbox: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     for m in copies.iter().filter(|m| m.conn == account.id) {

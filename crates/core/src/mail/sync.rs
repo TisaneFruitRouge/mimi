@@ -790,18 +790,24 @@ pub async fn trash_on_server(
 }
 
 #[derive(Clone, Copy)]
-enum Destination {
+pub(super) enum Destination {
     Archive,
     Trash,
 }
 
-async fn move_on_server(
+/// Moves messages to Archive or Trash: one session per account, whatever the number of
+/// mailboxes and conversations.
+pub(super) async fn move_on_server(
     state: &AppState,
     locations: &[(Uuid, String, String, u32)],
     to: Destination,
 ) -> Result<(), MailError> {
     let accounts = super::accounts(state).await;
+    let mut by_account: BTreeMap<Uuid, BTreeMap<String, Vec<u32>>> = BTreeMap::new();
     for ((conn, mailbox), uids) in group(locations) {
+        by_account.entry(conn).or_default().insert(mailbox, uids);
+    }
+    for (conn, mailboxes) in by_account {
         let account = accounts.iter().find(|a| a.id == conn).ok_or_else(|| {
             MailError::Protocol("that account isn't connected any more".to_owned())
         })?;
@@ -818,29 +824,30 @@ async fn move_on_server(
                 made.to_owned()
             }
         };
-        if target == mailbox {
-            let _ = s.logout().await;
-            continue;
-        }
         let can_move = s.capabilities().await.map_err(proto)?.has_str("MOVE");
-        s.select(&mailbox).await.map_err(proto)?;
-        let set = uid_set(&uids);
-        if can_move {
-            s.uid_mv(&set, &target).await.map_err(proto)?;
-        } else {
-            s.uid_copy(&set, &target).await.map_err(proto)?;
-            s.uid_store(&set, "+FLAGS.SILENT (\\Deleted)")
-                .await
-                .map_err(proto)?
-                .try_collect::<Vec<_>>()
-                .await
-                .map_err(proto)?;
-            s.expunge()
-                .await
-                .map_err(proto)?
-                .try_collect::<Vec<_>>()
-                .await
-                .map_err(proto)?;
+        for (mailbox, uids) in mailboxes {
+            if target == mailbox {
+                continue;
+            }
+            s.select(&mailbox).await.map_err(proto)?;
+            let set = uid_set(&uids);
+            if can_move {
+                s.uid_mv(&set, &target).await.map_err(proto)?;
+            } else {
+                s.uid_copy(&set, &target).await.map_err(proto)?;
+                s.uid_store(&set, "+FLAGS.SILENT (\\Deleted)")
+                    .await
+                    .map_err(proto)?
+                    .try_collect::<Vec<_>>()
+                    .await
+                    .map_err(proto)?;
+                s.expunge()
+                    .await
+                    .map_err(proto)?
+                    .try_collect::<Vec<_>>()
+                    .await
+                    .map_err(proto)?;
+            }
         }
         let _ = s.logout().await;
     }

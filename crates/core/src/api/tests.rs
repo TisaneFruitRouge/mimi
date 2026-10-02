@@ -2150,6 +2150,7 @@ SUMMARY:Dentist\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
 }
 
 mod access_flow;
+mod mail_batch;
 mod mail_files;
 mod mail_outbox;
 mod matrix_live;

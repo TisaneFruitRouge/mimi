@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
   AtSign,
@@ -11,6 +11,7 @@ import {
   ExternalLink,
   Forward,
   Inbox,
+  Keyboard,
   Layers,
   Link,
   Loader2,
@@ -33,6 +34,7 @@ import {
 import { cn } from "cn";
 import { toast } from "sonner";
 
+import type { MailBatchAction } from "@/bindings/MailBatchAction";
 import type { MailBox } from "@/bindings/MailBox";
 import type { MailDraft } from "@/bindings/MailDraft";
 import type { MailFolder } from "@/bindings/MailFolder";
@@ -77,6 +79,17 @@ import { AddToFolder, FolderChips, FolderHeader, FolderList } from "@/features/m
 import { OlderMail } from "@/features/mail/older-mail";
 import { type FrameContext, MailModeSwitch, MessageBody } from "@/features/mail/message-body";
 import { UnsubscribeButton } from "@/features/mail/unsubscribe";
+import {
+  type Bulk,
+  BulkMenuItems,
+  clickChoice,
+  DeleteConversations,
+  rowChosen,
+  SelectionSummary,
+  useBulkMail,
+  useShownThreads,
+} from "@/features/mail/selection";
+import { LIST_SELECTOR, ShortcutsSheet, useMailShortcuts } from "@/features/mail/shortcuts";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -158,10 +171,10 @@ function storeFolder(id: number | null) {
 // A conversation another panel asked to show (e.g. "Recent emails" on a person's page).
 let pendingThread: number | null = null;
 // The panel while it's showing, so a request (a click on a new-mail notification) reaches it.
-let openThread: ((id: number) => void) | null = null;
+let openMailThread: ((id: number) => void) | null = null;
 /** Opens a conversation the next time the Mail panel shows, or now if it's showing. */
 export function showMailThread(id: number) {
-  if (openThread) openThread(id);
+  if (openMailThread) openMailThread(id);
   else pendingThread = id;
 }
 
@@ -304,6 +317,7 @@ export function MailView({
     setScopeState(next);
     storeScope(next);
     setSelected(null);
+    setChosen([]);
   };
   const [view, setViewState] = useState<MailBox | null>(storedView);
   const [folderId, setFolderState] = useState<number | null>(storedFolder);
@@ -314,9 +328,14 @@ export function MailView({
     return id;
   });
   useEffect(() => {
-    openThread = setSelected;
+    // A notification's click: show that conversation, whatever view or choice was on.
+    openMailThread = (id) => {
+      setScheduled(false);
+      setChosen([]);
+      setSelected(id);
+    };
     return () => {
-      openThread = null;
+      openMailThread = null;
     };
   }, []);
   const [composing, setComposing] = useState<MailDraft | null>(null);
@@ -330,10 +349,14 @@ export function MailView({
       setComposing(r.compose);
     } else {
       setComposing(null);
+      setChosen([]);
       setScheduled(true);
       setOutgoing(r.scheduled);
     }
   });
+  // Conversations chosen together (⌘/Ctrl-click, Shift-click, X, ⌘/Ctrl A): see
+  // `selection.tsx`. Empty unless several are, or X started a choice.
+  const [chosenState, setChosen] = useState<number[]>([]);
   // Conversations being deleted: gone from the list at once (the server's move to the
   // Trash follows), back if it fails. Kept apart from the query cache, so a refresh that
   // lands meanwhile can't bring them back for a moment.
@@ -364,15 +387,39 @@ export function MailView({
     storeView(v);
     setFolder(null);
     setQuery("");
+    setChosen([]);
   };
   const setFolder = (id: number | null) => {
     setFolderState(id);
     storeFolder(id);
     setQuery("");
     setScheduled(false);
+    setChosen([]);
   };
   // A remembered folder that was deleted means the usual views.
   const folder = o?.folders.find((f) => f.id === folderId) ?? null;
+
+  // Choosing several and acting on them, and the keyboard (`selection.tsx`, `shortcuts.tsx`).
+  const shown = useShownThreads(current, query, scope, folder?.id ?? null, removing, !!o && o.accounts.length > 0);
+  const chosen = chosenState.filter((id) => shown.some((t) => t.id === id));
+  const many = chosen.length > 1;
+  const [deletingIds, setDeletingIds] = useState<number[] | null>(null);
+  const [showKeys, setShowKeys] = useState(false);
+  const hide = useCallback((ids: number[]) => setRemoving((s) => new Set([...s, ...ids])), []);
+  const show = useCallback(
+    (ids: number[]) =>
+      setRemoving((s) => {
+        const next = new Set(s);
+        for (const id of ids) next.delete(id);
+        return next;
+      }),
+    [],
+  );
+  const runBulk = useBulkMail({ hide, show, folders: o?.folders ?? [] });
+  const flag = useFlagThread();
+  const qc = useQueryClient();
+  const shortcuts = useMailShortcuts();
+  shortcuts.current = null;
 
   if (overview.isLoading) {
     return (
@@ -406,6 +453,112 @@ export function MailView({
     });
   };
 
+  const focusRow = (id: number) =>
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(`${LIST_SELECTOR} [data-id="${id}"]`)?.focus());
+  const openThread = (id: number) => {
+    setComposing(null);
+    setSelected(id);
+    focusRow(id);
+  };
+  const choose = (id: number, e: React.MouseEvent | null) => {
+    const next = clickChoice(
+      shown.map((t) => t.id),
+      chosen,
+      composing ? null : selected,
+      id,
+      e,
+    );
+    setChosen(next.chosen);
+    setComposing(null);
+    setSelected(next.open);
+  };
+  // What an action applies to: the chosen conversations, else the one open.
+  const targets = many ? chosen : selected !== null && !composing ? [selected] : [];
+  const targetThreads = shown.filter((t) => targets.includes(t.id));
+  const canArchive = query.trim().length > 0 || folder !== null || current !== "archive";
+  const act = (action: MailBatchAction, ids: number[] = targets) => {
+    if (ids.length === 0) return;
+    if (action.kind === "archive" || action.kind === "delete") {
+      if (many) {
+        setChosen([]);
+        setSelected(null);
+      } else if (selected !== null && ids.includes(selected)) {
+        // The next conversation takes its place, as in mail apps.
+        const i = shown.findIndex((t) => t.id === selected);
+        const next =
+          shown.slice(i + 1).find((t) => !ids.includes(t.id)) ??
+          shown
+            .slice(0, Math.max(0, i))
+            .reverse()
+            .find((t) => !ids.includes(t.id));
+        if (next) openThread(next.id);
+        else setSelected(null);
+      }
+    }
+    void runBulk(ids, action);
+  };
+  const bulk: Bulk | null = many
+    ? {
+        ids: chosen,
+        threads: targetThreads,
+        run: (action) => act(action),
+        askDelete: () => setDeletingIds(chosen),
+        clear: () => setChosen([]),
+        canArchive,
+      }
+    : null;
+  const move = (by: number) => {
+    if (shown.length === 0) return;
+    const i = shown.findIndex((t) => t.id === selected);
+    const next = i === -1 ? (by > 0 ? 0 : shown.length - 1) : Math.min(shown.length - 1, Math.max(0, i + by));
+    openThread(shown[next].id);
+  };
+  shortcuts.current = {
+    // The Scheduled view has no list to act on: only ? works there, as while writing.
+    writing: composing !== null || scheduled,
+    arrows: selected === null || many,
+    next: () => move(1),
+    previous: () => move(-1),
+    open: () => {
+      setChosen([]);
+      if (selected === null && shown[0]) openThread(shown[0].id);
+    },
+    back: () => {
+      if (chosenState.length > 0) setChosen([]);
+      else setSelected(null);
+    },
+    reply: () => !many && selected !== null && setPendingAction({ id: selected, action: "reply" }),
+    replyAll: () => !many && selected !== null && setPendingAction({ id: selected, action: "reply_all" }),
+    forward: () => !many && selected !== null && setPendingAction({ id: selected, action: "forward" }),
+    compose,
+    archive: () => canArchive && act({ kind: "archive" }),
+    remove: () => targets.length > 0 && setDeletingIds(targets),
+    toggleRead: () => {
+      // The open conversation may not be in the list (opened from someone's page).
+      const open = selected !== null ? qc.getQueryData<MailThreadDetail>(keys.mailThread(selected))?.thread : undefined;
+      const threads = targetThreads.length > 0 ? targetThreads : open && !many ? [open] : [];
+      if (threads.length > 0) act({ kind: "read", read: threads.some((t) => t.unread) });
+    },
+    toggleFlag: () => {
+      if (many) act({ kind: "flag", flagged: targetThreads.some((t) => !t.flagged) });
+      else if (selected !== null && !composing) void flag(selected);
+    },
+    search: () => {
+      const field = document.querySelector<HTMLInputElement>('input[aria-label="Search mail"]');
+      field?.focus();
+      field?.select();
+    },
+    choose: () => {
+      if (selected === null || composing) return;
+      setChosen(chosen.includes(selected) ? chosen.filter((x) => x !== selected) : [...chosen, selected]);
+    },
+    chooseAll: () => {
+      if (shown.length > 1) setChosen(shown.map((t) => t.id));
+      else if (shown[0]) openThread(shown[0].id);
+    },
+    help: () => setShowKeys(true),
+  };
+
   return (
     <div className="flex h-full">
       <Mailboxes
@@ -415,6 +568,7 @@ export function MailView({
         scheduled={scheduled}
         onScheduled={() => {
           setComposing(null);
+          setChosen([]);
           setScheduled(true);
         }}
         folder={scheduled ? null : (folder?.id ?? null)}
@@ -423,6 +577,7 @@ export function MailView({
         onScope={setScope}
         onCompose={compose}
         onSettings={onSection}
+        onShortcuts={() => setShowKeys(true)}
       />
       {scheduled ? (
         <ScheduledList
@@ -460,12 +615,15 @@ export function MailView({
         removing={removing}
         onDelete={deleteThread}
         onCompose={compose}
+        chosen={chosen}
+        onChoose={choose}
+        bulk={bulk}
       />
       )}
       <div className="h-full min-w-0 flex-1">
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
-            key={composing ? "compose" : scheduled ? `scheduled:${outgoing}` : (selected ?? "none")}
+            key={composing ? "compose" : scheduled ? `scheduled:${outgoing}` : many ? "chosen" : (selected ?? "none")}
             className="h-full"
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
@@ -476,6 +634,8 @@ export function MailView({
               <Compose draft={composing} onChange={setComposing} onClose={() => setComposing(null)} />
             ) : scheduled ? (
               <ScheduledReader id={outgoing} onGone={() => setOutgoing(null)} onEdit={setComposing} />
+            ) : bulk ? (
+              <SelectionSummary bulk={bulk} folders={o.folders} folder={folder} />
             ) : selected !== null ? (
               <Reader
                 id={selected}
@@ -493,11 +653,24 @@ export function MailView({
                 onActionTaken={() => setPendingAction(null)}
               />
             ) : (
-              <NothingOpen view={current} />
+              <NothingOpen view={current} onShortcuts={() => setShowKeys(true)} />
             )}
           </motion.div>
         </AnimatePresence>
       </div>
+      <DeleteConversations
+        ids={deletingIds}
+        subject={
+          deletingIds?.length === 1
+            ? (shown.find((t) => t.id === deletingIds[0])?.subject ??
+              qc.getQueryData<MailThreadDetail>(keys.mailThread(deletingIds[0]))?.thread.subject ??
+              null)
+            : null
+        }
+        onDelete={(ids) => act({ kind: "delete" }, ids)}
+        onCancel={() => setDeletingIds(null)}
+      />
+      <ShortcutsSheet open={showKeys} onClose={() => setShowKeys(false)} />
     </div>
   );
 }
@@ -538,6 +711,7 @@ function Mailboxes({
   onScope,
   onCompose,
   onSettings,
+  onShortcuts,
 }: {
   overview: MailOverview;
   view: MailBox | null;
@@ -550,6 +724,7 @@ function Mailboxes({
   onScope: (s: MailScope) => void;
   onCompose: () => void;
   onSettings: (s: Section) => void;
+  onShortcuts: () => void;
 }) {
   const rows = scopeRows(o);
   const [refreshing, setRefreshing] = useState(false);
@@ -653,6 +828,9 @@ function Mailboxes({
               {a.email}
             </span>
           ))}
+        <button onClick={onShortcuts} className="flex items-center gap-1.5 text-left hover:text-foreground">
+          <Keyboard className="size-3.5" /> Keyboard shortcuts
+        </button>
       </div>
     </aside>
   );
@@ -743,6 +921,9 @@ function ThreadList({
   selected,
   onSelect,
   onCompose,
+  chosen,
+  onChoose,
+  bulk,
 }: {
   view: MailBox;
   onView: (v: MailBox) => void;
@@ -763,6 +944,12 @@ function ThreadList({
   selected: number | null;
   onSelect: (id: number) => void;
   onCompose: () => void;
+  /** Conversations chosen together; see `selection.tsx`. */
+  chosen: number[];
+  /** A click on a row (`null`: "Open" in its menu): ⌘/Ctrl- and Shift-click choose several. */
+  onChoose: (id: number, e: React.MouseEvent | null) => void;
+  /** What can be done to the chosen ones, while several are. */
+  bulk: Bulk | null;
 }) {
   const searching = query.trim().length > 0;
   // A search looks through everything, not only the current view.
@@ -884,6 +1071,7 @@ function ThreadList({
         ref={box}
         role="listbox"
         aria-label="Conversations"
+        aria-multiselectable
         className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-2 pb-4"
         onKeyDown={(e) => {
           if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -924,17 +1112,18 @@ function ThreadList({
             thread={t}
             folder={folder}
             folders={overview.folders}
-            onOpen={() => onSelect(t.id)}
+            onOpen={() => onChoose(t.id, null)}
             onAction={(action) => onAction(t.id, action)}
             onDelete={() => setDeleting(t)}
+            bulk={bulk && chosen.includes(t.id) ? <BulkMenuItems bulk={bulk} folders={overview.folders} folder={folder} /> : null}
           >
             <ThreadRow
               thread={t}
-              active={t.id === selected}
+              active={rowChosen(t.id, chosen, selected)}
               focusable={t.id === selected || (selected === null && t === list[0])}
               showCategory={searching || view === "inbox"}
               showAddress={showAddress && !!t.received_on && !mainAddresses.has(t.received_on)}
-              onClick={() => onSelect(t.id)}
+              onClick={(e) => onChoose(t.id, e)}
             />
           </ThreadMenu>
         ))}
@@ -1001,6 +1190,7 @@ function ThreadMenu({
   onOpen,
   onAction,
   onDelete,
+  bulk,
   children,
 }: {
   thread: MailThread;
@@ -1009,6 +1199,8 @@ function ThreadMenu({
   onOpen: () => void;
   onAction: (action: ThreadAction) => void;
   onDelete: () => void;
+  /** While this row is one of several chosen: their menu instead (`selection.tsx`). */
+  bulk?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const fail = (e: unknown) => toast.error((e as Error).message);
@@ -1024,6 +1216,8 @@ function ThreadMenu({
           <RowFlag thread={t} className="absolute top-[34px] left-[3px]" />
         </div>
       </ContextMenuTrigger>
+      {bulk && <ContextMenuContent className="w-[230px]">{bulk}</ContextMenuContent>}
+      {!bulk && (
       <ContextMenuContent className="w-[220px]">
         <ContextMenuItem onSelect={onOpen}>
           <MailOpen /> Open
@@ -1090,6 +1284,7 @@ function ThreadMenu({
           <Trash2 /> Delete…
         </ContextMenuItem>
       </ContextMenuContent>
+      )}
     </ContextMenu>
   );
 }
@@ -1112,7 +1307,7 @@ function ThreadRow({
   focusable: boolean;
   showCategory: boolean;
   showAddress: boolean;
-  onClick: () => void;
+  onClick: (e: React.MouseEvent) => void;
 }) {
   const pill = t.suspicious
     ? { label: "Suspicious", className: "bg-[#fdeeec] text-destructive" }
@@ -1127,7 +1322,7 @@ function ThreadRow({
       tabIndex={focusable ? 0 : -1}
       onClick={onClick}
       className={cn(
-        "relative flex flex-col gap-0.5 rounded-[10px] py-2.5 pr-3 pl-6 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/45",
+        "relative flex flex-col gap-0.5 rounded-[10px] py-2.5 pr-3 pl-6 text-left transition-colors outline-none select-none focus-visible:ring-2 focus-visible:ring-ring/45",
         active ? "bg-[rgb(118_118_128/0.14)]" : "hover:bg-[rgb(118_118_128/0.07)]",
       )}
     >
@@ -1164,7 +1359,7 @@ function ThreadRow({
   );
 }
 
-function NothingOpen({ view }: { view: MailBox }) {
+function NothingOpen({ view, onShortcuts }: { view: MailBox; onShortcuts: () => void }) {
   const v = viewOf(view);
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 px-6 pt-[60px] text-center">
@@ -1175,6 +1370,9 @@ function NothingOpen({ view }: { view: MailBox }) {
       <p className="max-w-sm type-callout text-muted-foreground">
         Read it here, ask for a summary, or have a reply drafted for you to check and send.
       </p>
+      <button onClick={onShortcuts} className="type-footnote text-faint hover:text-foreground">
+        Press ? for keyboard shortcuts
+      </button>
     </div>
   );
 }
@@ -1221,19 +1419,23 @@ function Reader({
 
   useEffect(() => {
     if (!d || !action) return;
-    if (action === "forward") onForward(forwardOf(d));
-    else setReply(action === "reply_all" ? (replyAllTo(d, ownAddresses(overview)) ?? replyTo(d)) : replyTo(d));
+    // A reply being written is kept (R, A or F pressed outside it).
+    if (!reply) {
+      if (action === "forward") onForward(forwardOf(d));
+      else setReply(action === "reply_all" ? (replyAllTo(d, ownAddresses(overview)) ?? replyTo(d)) : replyTo(d));
+    }
     onActionTaken();
     // Once per request: the callbacks change on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [d, action]);
 
-  // Opening an unread conversation marks it read, as mail apps do.
+  // Opening an unread conversation marks it read, as mail apps do: once, when it opens,
+  // so marking it unread again (U) keeps it so.
   const marked = useRef(false);
   useEffect(() => {
-    if (d?.thread.unread && !marked.current) {
+    if (d && !marked.current) {
       marked.current = true;
-      api.markMailRead(id, true).catch(() => {});
+      if (d.thread.unread) api.markMailRead(id, true).catch(() => {});
     }
   }, [d, id]);
 

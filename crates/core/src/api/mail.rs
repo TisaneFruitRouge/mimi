@@ -156,6 +156,18 @@ pub async fn archive(State(state): State<Arc<AppState>>, Path(id): Path<i64>) ->
     Ok(Json(()))
 }
 
+/// One action on several conversations, chosen together in the Mail panel: the user's
+/// own click. Answers which went through; some can fail while the rest still do.
+pub async fn batch(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<mimi_protocol::MailBatch>,
+) -> ApiResult<mimi_protocol::MailBatchResult> {
+    mail::batch::run(&state, body.ids, body.action)
+        .await
+        .map(Json)
+        .map_err(AppError::bad_request)
+}
+
 /// Moves a conversation to the Trash. The user's own click in the Mail panel.
 pub async fn delete(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> ApiResult<()> {
     mail::delete(&state, id)
