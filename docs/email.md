@@ -82,6 +82,10 @@ general: [Connections](connections.md).
   `api/tests/unsubscribe_flow.rs` passing. A one-click address is fetched over https
   only, from the internet only (checked after DNS, on the address connected to, and on
   every redirect), with nothing of the user's in the request.
+- **Signatures are the user's, added by code, never written by the model.** The daemon
+  adds them to `mail_send` (shown on the card under `signature`, replacing anything the
+  model put there) and the app to drafts; their HTML goes through `smtp::clean_html`
+  when saved and `smtp::outgoing_html` when sent. See [Signatures](#signatures).
 - New-mail notifications never announce an account's first sync, old mail that arrives
   late, the user's own mail or the same message twice, and never show a suspicious
   email's subject (`mail::notify`; see [New mail notifications](#new-mail-notifications)).
@@ -753,6 +757,45 @@ sidebar's "Keyboard shortcuts" or "Press ? for keyboard shortcuts" when nothing 
 - An open conversation is marked read once, when it opens, so U can mark it unread and
   it stays open.
 
+## Signatures
+
+`mail/signature.rs`, `api/mail_signature.rs`, `features/mail/signature.ts` (pure),
+`use-signature.ts`, `signature-settings.tsx`. Settings › General › Signature (shown once
+an email account is connected).
+
+- **The setting** (`MailSignatures`, `GET|PUT /v1/mail/signatures`): one signature for
+  every address (`same_for_all`, the default), or one per address (the account's own and
+  each alias in the overview); an address without its own signs with `all`.
+  `in_replies` (on by default): replies and forwards get it too. A signature
+  (`MailSignature`) is what the mail editor writes: `text`, `html` with formatting, and
+  small `pictures` (inline attachments with a content id, at most 3 and 200 KB together;
+  the app shrinks them to 480 pixels wide, shown at most 240). Kept in the `settings`
+  table, row `mail_signatures` (encrypted database), not in `Settings`, which every client
+  reads; no migration. Saving cleans the HTML like an email's (`smtp::clean_html`), keeps
+  only the pictures it shows and refuses other types or sizes, with a plain message. The
+  page saves shortly after typing stops, like Personality.
+- **In a draft** it's only text: below what's written, after a `-- ` line (`<div>-- </div>`
+  in the HTML), above a forward's `---------- Forwarded message ----------`. The plain
+  text and the HTML change together line for line, so the editor reads them as one
+  message. New messages, replies and forwards start with the From address's signature
+  (`useSignature().sign`, at the places they're made in `mail-view.tsx`); a draft given
+  back by Undo or Edit is left as it is. Picking another From swaps it if its text is
+  still the old address's, removes it if the new address has none, and leaves it when the
+  user changed or deleted it. "Draft it for me" replaces only the text above it. Send
+  stays off while there's nothing but the signature. Nothing else is special: it's part
+  of the draft.
+- **The assistant's drafts.** Draft cards (`mail_compose`, `mail_draft_reply`) get it
+  from the card once the signatures have loaded. `mail_send`'s `resolve` puts the
+  signature of the address it goes from under `signature` (the card's Message shows it
+  under the text) and takes a copy the model wrote out of the body; `run` adds it with its
+  formatting and pictures if it's still the user's, else the text that was approved. The
+  Mail panel's reply drafts (`triage::draft_reply`) tell the model the signature is added
+  for it, and strip a copy. The tools' descriptions say not to sign. `strip_duplicate`
+  (mirrored in `signature.ts`) removes a short block after the model's own `--` line, or
+  the signature's own lines at the end; a sign-off ("Best, Vincent") stays.
+- No tests run in the frontend: `signature.ts` is kept pure (no DOM) so it can be tried
+  with `node --experimental-strip-types` against a scratch script.
+
 ## Invitations
 
 Event invitations, updates and cancellations are sent through this mail's SMTP path and
@@ -796,6 +839,7 @@ notification publishes `open_mail`.
 - `GET /v1/mail/messages/{id}/content`, `POST /v1/mail/messages/{id}/images`,
   `GET /v1/mail/messages/{id}/attachments/{index}`.
 - `DELETE /v1/mail/jev`.
+- `GET|PUT /v1/mail/signatures` (`MailSignatures`): see [Signatures](#signatures).
 - `GET /v1/mail/threads/{id}/unsubscribe` (a `MailUnsubscribe`, or `null`), `POST` the
   same to unsubscribe, `POST /v1/mail/threads/{id}/unsubscribe/archive` (every Inbox
   conversation from that list). See [Unsubscribing](#unsubscribing).
@@ -829,6 +873,8 @@ notification publishes `open_mail`.
 - `send-later.tsx`: the Send later menu and time picker, the "Sending…" toast with Undo,
   the Scheduled view, the Undo send setting (see
   [Undo send and send later](#undo-send-and-send-later)).
+- `signature.ts`, `use-signature.ts`, `signature-settings.tsx`: signatures in drafts and
+  their settings (see [Signatures](#signatures)).
 - `selection.tsx`: choosing several conversations and acting on them;
   `shortcuts.tsx`: the keyboard shortcuts and their sheet (see
   [Several conversations at once](#several-conversations-at-once) and
@@ -880,4 +926,9 @@ Mail panel reply drafts get the user's custom instructions only, not the persona
   per account, checked with the fake's login count; an account whose password was
   revoked fails only its own conversations and says why) and
   `api/tests/mail_batch.rs` (the route).
+- Signatures: `mail/signature.rs` tests (chosen by From alias, left out of replies, the
+  plain-text separator, HTML and picture, duplicates, hostile HTML cleaned, a signed
+  formatted email's MIME) and `api/tests/mail_signature.rs` (the assistant's email
+  carries it once, shown on the card, the model's `signature` replaced, replies without
+  it; reply drafts strip it).
 - Never point tests at a real mailbox.

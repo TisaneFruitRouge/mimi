@@ -617,7 +617,7 @@ impl Tool for DraftReply {
         "Write a reply to an email conversation as a draft the user can edit and send. Nothing is \
          sent. Write the body in the user's voice, in the conversation's language. It can carry \
          files: an email's attachments or photos the user sent in this chat, never files from \
-         the computer."
+         the computer. Don't end it with a signature: the user's own is added below the text."
     }
 
     fn parameters(&self) -> Value {
@@ -685,7 +685,8 @@ impl Tool for Compose {
         "Write a new email as a draft the user can edit and send. Nothing is sent. Use addresses \
          the user gave or that come from their contacts; never invent one. To pass on an \
          email's attachment or a photo the user sent in this chat, list it in attachments; \
-         files on the computer can't be attached."
+         files on the computer can't be attached. Don't end it with a signature: the user's own \
+         is added below the text."
     }
 
     fn parameters(&self) -> Value {
@@ -770,7 +771,8 @@ impl Tool for Send {
          Depending on the user's settings it may go out straight away, so write it exactly as it \
          should be sent. For a reply, pass thread_id so it joins the conversation. It can carry \
          files: an email's attachments or photos the user sent in this chat, never files from \
-         the computer. To send it later, only when the user asks for that, give send_at."
+         the computer. To send it later, only when the user asks for that, give send_at. Don't \
+         end it with a signature: the user's own is added below the text."
     }
 
     fn parameters(&self) -> Value {
@@ -820,6 +822,10 @@ impl Tool for Send {
 
     /// The files it names, looked up, so the card shows each one's name, size and where
     /// it comes from (and a file that can't go is refused before any card).
+    ///
+    /// The user's signature for the address it goes from is written under `signature`
+    /// (whatever the model put there), so the card shows the message as it will go; a
+    /// copy of it the model wrote at the end of the body is taken out.
     fn resolve<'a>(
         &'a self,
         ctx: &'a ToolContext,
@@ -827,15 +833,34 @@ impl Tool for Send {
     ) -> BoxFuture<'a, Result<Value, String>> {
         async move {
             let refs = file_refs(&args["attachments"]);
+            let found = match refs.is_empty() {
+                true => Vec::new(),
+                false => find_files(ctx, &refs, true).await?,
+            };
+            let thread = args["thread_id"]
+                .as_i64()
+                .or_else(|| args["thread_id"].as_str()?.trim().parse().ok());
+            let signature =
+                super::signature::for_draft(&ctx.state, &draft_from(&args, thread)).await;
             if let Value::Object(map) = &mut args {
                 if refs.is_empty() {
                     map.remove("attachments");
                 } else {
-                    let found = find_files(ctx, &refs, true).await?;
                     map.insert(
                         "attachments".to_owned(),
                         Value::Array(found.iter().map(Found::card).collect()),
                     );
+                }
+                match signature {
+                    Some(sig) => {
+                        if let Some(Value::String(body)) = map.get_mut("body") {
+                            *body = super::signature::strip_duplicate(body, &sig.text);
+                        }
+                        map.insert("signature".to_owned(), json!(sig.text));
+                    }
+                    None => {
+                        map.remove("signature");
+                    }
                 }
             }
             Ok(args)
@@ -947,6 +972,18 @@ impl Tool for Send {
                 .into_iter()
                 .map(|f| f.attachment)
                 .collect();
+            // The signature the card showed: with its formatting and pictures while it's
+            // still the user's, else as the text that was approved.
+            if let Some(text) = args["signature"].as_str() {
+                let sig = super::signature::for_draft(&ctx.state, &draft)
+                    .await
+                    .filter(|s| s.text == text)
+                    .unwrap_or_else(|| mimi_protocol::MailSignature {
+                        text: text.to_owned(),
+                        ..Default::default()
+                    });
+                super::signature::sign(&mut draft, &sig);
+            }
             // A later time goes to the outbox (approved now, sent then; listed in the
             // Mail panel's Scheduled view, where the user can still cancel it). Approved
             // after that time had passed, it goes at once.

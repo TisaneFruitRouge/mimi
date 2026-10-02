@@ -10,6 +10,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { MailBodyEditor } from "@/features/mail/body-editor";
 import { DraftAttachments, readAttachments } from "@/features/mail/draft-attachments";
 import { SendSplitButton, announceQueued } from "@/features/mail/send-later";
+import { useSignature } from "@/features/mail/use-signature";
 import { api, keys } from "@/lib/api";
 
 /**
@@ -158,9 +159,12 @@ export function DraftEditor({
 /**
  * Which address it's sent from, when there's a choice: every connected account and the
  * aliases mail has arrived at. Replies start from the address the mail was sent to.
+ * Another address brings its own signature (`signature.ts`).
  */
 function FromLine({ draft, onChange }: { draft: MailDraft; onChange: (d: MailDraft) => void }) {
   const overview = useQuery({ queryKey: keys.mailOverview(), queryFn: () => api.mailOverview() }).data;
+  // The signature goes with the address, unless the user changed it.
+  const { swap } = useSignature();
   const options = (overview?.accounts ?? []).flatMap((a) =>
     a.addresses.map((x) => ({ connection: a.connection_id, email: x.email })),
   );
@@ -180,7 +184,7 @@ function FromLine({ draft, onChange }: { draft: MailDraft; onChange: (d: MailDra
           {options.map((o) => (
             <DropdownMenuItem
               key={`${o.connection}:${o.email}`}
-              onSelect={() => onChange({ ...draft, connection_id: o.connection, from: o.email })}
+              onSelect={() => onChange(swap(draft, { ...draft, connection_id: o.connection, from: o.email }))}
             >
               {o.email}
             </DropdownMenuItem>

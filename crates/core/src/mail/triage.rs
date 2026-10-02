@@ -225,12 +225,24 @@ pub async fn draft_reply(
         .await
         .map(|s| crate::persona::Persona::from_settings(&s))
         .unwrap_or_default();
-    let system = match persona.mail_block() {
+    let mut system = match persona.mail_block() {
         Some(block) => format!("{DRAFT_INSTRUCTIONS}\n\n{block}"),
         None => DRAFT_INSTRUCTIONS.to_owned(),
     };
+    // The app adds the user's signature below the reply; the model mustn't write one.
+    let signature = super::signature::for_draft(state, &reply_draft(&detail, String::new())).await;
+    if let Some(sig) = &signature {
+        system.push_str(&format!(
+            "\n\nThe user's email signature is added below your text for you, so don't write \
+             it or any other signature. It reads:\n{}",
+            model::clip(&sig.text, 300)
+        ));
+    }
     let body = model::ask(state, &system, text).await?;
-    let body = body.trim().trim_matches('`').trim().to_owned();
+    let mut body = body.trim().trim_matches('`').trim().to_owned();
+    if let Some(sig) = &signature {
+        body = super::signature::strip_duplicate(&body, &sig.text);
+    }
     if body.is_empty() {
         return Err("The model didn't write anything. Try again.".to_owned());
     }

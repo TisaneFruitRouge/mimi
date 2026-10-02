@@ -66,6 +66,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ConnectDialog } from "@/features/connections/connect-dialogs";
 import { DraftEditor, SendButton, useSendDraft } from "@/features/mail/draft-editor";
+import { replaceText, withoutSignature } from "@/features/mail/signature";
+import { useSignature } from "@/features/mail/use-signature";
 import {
   ScheduledList,
   ScheduledNavItem,
@@ -420,6 +422,8 @@ export function MailView({
   const qc = useQueryClient();
   const shortcuts = useMailShortcuts();
   shortcuts.current = null;
+  // New messages, replies and forwards start with the user's signature.
+  const { sign } = useSignature();
 
   if (overview.isLoading) {
     return (
@@ -439,18 +443,20 @@ export function MailView({
 
   const compose = () => {
     setSelected(null);
-    setComposing({
-      connection_id: null,
-      from: null,
-      to: [],
-      cc: [],
-      bcc: [],
-      subject: "",
-      body: "",
-      reply_to: null,
-      forward_of: null,
-      attachments: [],
-    });
+    setComposing(
+      sign({
+        connection_id: null,
+        from: null,
+        to: [],
+        cc: [],
+        bcc: [],
+        subject: "",
+        body: "",
+        reply_to: null,
+        forward_of: null,
+        attachments: [],
+      }),
+    );
   };
 
   const focusRow = (id: number) =>
@@ -647,7 +653,7 @@ export function MailView({
                 onOpenPerson={onOpenPerson}
                 onForward={(draft) => {
                   setSelected(null);
-                  setComposing(draft);
+                  setComposing(sign(draft));
                 }}
                 action={pendingAction?.id === selected ? pendingAction.action : null}
                 onActionTaken={() => setPendingAction(null)}
@@ -1410,6 +1416,9 @@ function Reader({
   const [summary, setSummary] = useState<string | null>(null);
   const [summarizing, setSummarizing] = useState(false);
   const [reply, setReply] = useState<MailDraft | null>(null);
+  // A reply starts with the user's signature (not one put back by Undo).
+  const { sign } = useSignature();
+  const startWith = (r: MailDraft) => setReply(sign(r));
   // Undo send puts a reply back here while this conversation is open.
   useDraftHome(`reply:${id}`, setReply);
   const [archiving, setArchiving] = useState(false);
@@ -1422,7 +1431,7 @@ function Reader({
     // A reply being written is kept (R, A or F pressed outside it).
     if (!reply) {
       if (action === "forward") onForward(forwardOf(d));
-      else setReply(action === "reply_all" ? (replyAllTo(d, ownAddresses(overview)) ?? replyTo(d)) : replyTo(d));
+      else startWith(action === "reply_all" ? (replyAllTo(d, ownAddresses(overview)) ?? replyTo(d)) : replyTo(d));
     }
     onActionTaken();
     // Once per request: the callbacks change on every render.
@@ -1478,7 +1487,7 @@ function Reader({
     }
   };
   const mine = ownAddresses(overview);
-  const startReply = () => setReply(replyTo(d));
+  const startReply = () => startWith(replyTo(d));
   const replyAll = replyAllTo(d, mine);
   // The conversation itself goes along as a # mention, so the assistant reads it.
   const ask = () => onAsk(mentionDraft("mail_thread", String(t.id), mailLabel(t.subject)));
@@ -1532,7 +1541,7 @@ function Reader({
                   <MailOpen /> Mark as unread
                 </DropdownMenuItem>
                 {replyAll && (
-                  <DropdownMenuItem onSelect={() => setReply(replyAll)}>
+                  <DropdownMenuItem onSelect={() => startWith(replyAll)}>
                     <ReplyAll /> Reply all
                   </DropdownMenuItem>
                 )}
@@ -1606,7 +1615,7 @@ function Reader({
           onPerson={openPerson}
           actions={{
             reply: startReply,
-            replyAll: replyAll ? () => setReply(replyAll) : null,
+            replyAll: replyAll ? () => startWith(replyAll) : null,
             forward: (m) => onForward(forwardOf(d, m)),
             ask,
             askText: (text) => onAsk(quoteDraft(text)),
@@ -1892,7 +1901,8 @@ function ReplyBox({
     setWriting(true);
     try {
       const d = await api.draftMailReply(threadId, instructions.trim() || null);
-      onChange({ ...draft, body: d.body, to: draft.to.length ? draft.to : d.to });
+      // The new text goes above the signature, which stays as it is in this reply.
+      onChange(replaceText({ ...draft, to: draft.to.length ? draft.to : d.to }, d.body));
       setVersion((v) => v + 1);
     } catch (e) {
       toast.error((e as Error).message);
@@ -1924,7 +1934,7 @@ function ReplyBox({
         />
         {overview.model_locality && <LocalityBadge locality={overview.model_locality} />}
         <Button type="submit" size="sm" variant="secondary" disabled={writing}>
-          {writing && <Loader2 className="animate-spin" />} {draft.body ? "Write again" : "Draft it for me"}
+          {writing && <Loader2 className="animate-spin" />} {withoutSignature(draft.body).trim() ? "Write again" : "Draft it for me"}
         </Button>
       </form>
       <DraftEditor key={version} draft={draft} onChange={onChange} autoFocus="body" className="border-t-[0.5px] border-separator" />
@@ -1938,7 +1948,7 @@ function ReplyBox({
             sending={sending}
             onClick={() => send(draft)}
             onSchedule={(at) => sendLater(draft, at)}
-            disabled={!draft.body.trim() || draft.to.length === 0}
+            disabled={!withoutSignature(draft.body).trim() || draft.to.length === 0}
           />
         </div>
       </div>
@@ -1976,7 +1986,7 @@ function Compose({
               sending={sending}
               onClick={() => send(draft)}
               onSchedule={(at) => sendLater(draft, at)}
-              disabled={draft.to.length === 0 || !draft.body.trim()}
+              disabled={draft.to.length === 0 || !withoutSignature(draft.body).trim()}
             />
           </div>
         </div>

@@ -49,6 +49,9 @@ and warm"; empty texts leave the prompt exactly as it was.
 - **Mail panel reply drafts** (`triage::draft_reply`) get the instructions only: the
   draft is the user's voice, not the assistant's. Drafts the assistant writes in a chat
   already have both. See [Email](email.md).
+- **Email signatures** are their own setting (Settings › General › Signature), added to
+  emails by code rather than by these instructions; the model is told not to sign (see
+  [Email › Signatures](email.md#signatures)).
 - **Sorting, summaries, smart folders and memory learning** never see them: their
   output has a fixed shape, and learning reads only the user's messages.
 - **Someone the user trusts** gets the personality in their turns

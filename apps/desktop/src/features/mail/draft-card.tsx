@@ -6,6 +6,7 @@ import type { Action } from "@/bindings/Action";
 import type { MailDraft } from "@/bindings/MailDraft";
 import { DraftEditor, SendButton, useSendDraft } from "@/features/mail/draft-editor";
 import { useDraftHome } from "@/features/mail/send-later";
+import { useSignature } from "@/features/mail/use-signature";
 import { when } from "@/features/reminders/time";
 
 /** Tools that leave a draft in the chat for the user to check and send. */
@@ -51,6 +52,14 @@ function forgetSent(id: string) {
 export function DraftCard({ action }: { action: Action }) {
   const initial = draftOf(action);
   const [draft, setDraft] = useState<MailDraft | null>(initial);
+  // The user's signature goes under what the assistant wrote, once it's known: added
+  // here, never written by the model.
+  const { ready, sign } = useSignature();
+  const [signed, setSigned] = useState(false);
+  if (ready && !signed) {
+    setSigned(true);
+    if (draft) setDraft(sign(draft));
+  }
   const [sent, setSent] = useState(() => sentBefore(action.id));
   // When it was scheduled for, if it was sent with Send later.
   const [later, setLater] = useState<number | null>(null);

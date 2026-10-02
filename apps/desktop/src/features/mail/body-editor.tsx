@@ -54,7 +54,7 @@ const Picture = Image.extend({
 /** Links go to the web or to an email address, nowhere else. */
 const LINKABLE = /^(https?:\/\/|mailto:)/i;
 
-function extensions() {
+function extensions(placeholder = "Write your message") {
   return [
     StarterKit.configure({
       code: false,
@@ -71,7 +71,7 @@ function extensions() {
       },
     }),
     Picture.configure({ inline: true, allowBase64: true }),
-    Placeholder.configure({ placeholder: "Write your message" }),
+    Placeholder.configure({ placeholder }),
   ];
 }
 
@@ -87,11 +87,14 @@ export function MailBodyEditor({
   onChange,
   onFiles,
   autoFocus,
+  placeholder,
 }: {
   draft: MailDraft;
   onChange: (d: MailDraft) => void;
   onFiles: (files: File[]) => void;
   autoFocus?: boolean;
+  /** Shown while it's empty (the signature editor's own words). */
+  placeholder?: string;
 }) {
   const latest = useRef({ draft, onChange, onFiles });
   latest.current = { draft, onChange, onFiles };
@@ -140,7 +143,7 @@ export function MailBodyEditor({
 
   // Read once: the editor is made with them.
   const [initial] = useState(() => ({
-    extensions: extensions(),
+    extensions: extensions(placeholder),
     content: draft.html ? editorHtml(draft.html, draft.attachments) : docOfText(draft.body),
   }));
   const editor = useEditor({

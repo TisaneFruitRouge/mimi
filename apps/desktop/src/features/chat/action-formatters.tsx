@@ -134,14 +134,18 @@ export const formatters: Record<string, Formatter> = {
   // every file with its size and where it comes from (looked up by the daemon).
   // `thread_id` only threads the reply.
   mail_send: {
-    keys: ["to", "cc", "bcc", "subject", "body", "thread_id", "attachments", "send_at"],
+    keys: ["to", "cc", "bcc", "subject", "body", "signature", "thread_id", "attachments", "send_at"],
     rows: (a) => {
       const rows: ArgRow[] = [{ label: "To", value: text(a.to) }];
       if (present(a.cc)) rows.push({ label: "Cc", value: text(a.cc) });
       if (present(a.bcc))
         rows.push({ label: "Bcc", value: `${lines(a.bcc)}\nA hidden copy: the others won't see this.` });
       rows.push({ label: "Subject", value: text(a.subject) || "(no subject)" });
-      rows.push({ label: "Message", value: text(a.body) });
+      // The user's signature, added by the daemon (never the model's), under the text.
+      rows.push({
+        label: "Message",
+        value: present(a.signature) ? `${text(a.body)}\n\n-- \n${text(a.signature)}` : text(a.body),
+      });
       if (Array.isArray(a.attachments) && a.attachments.length > 0)
         rows.push({ label: a.attachments.length === 1 ? "File" : "Files", value: a.attachments.map(fileLine).join("\n") });
       // A local date and time ("2026-10-03T09:00"), set by the daemon.

@@ -339,17 +339,21 @@ fn content_type(raw: &str) -> ContentType {
 const MAX_HTML: usize = 1_000_000;
 
 /// Pictures that can be shown in the text. No SVG: it's a document, not a picture.
-const INLINE_TYPES: &[&str] = &["image/png", "image/jpeg", "image/gif", "image/webp"];
+pub(crate) const INLINE_TYPES: &[&str] = &["image/png", "image/jpeg", "image/gif", "image/webp"];
 
 /// An inline picture the HTML may show: a picture, under a content id that is safe in a
 /// header and in an address (the app makes them from a UUID).
 fn is_inline_picture(i: &Inline) -> bool {
-    let id = &i.content_id;
+    is_content_id(&i.content_id)
+        && INLINE_TYPES.contains(&i.file.content_type.to_ascii_lowercase().as_str())
+}
+
+/// A content id that is safe in a header and in an address.
+pub(crate) fn is_content_id(id: &str) -> bool {
     (1..=200).contains(&id.len())
         && id
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"-._@+=".contains(&b))
-        && INLINE_TYPES.contains(&i.file.content_type.to_ascii_lowercase().as_str())
 }
 
 /// Formatting the editor makes, and nothing else.
@@ -386,8 +390,30 @@ const QUOTE_STYLE: &str = "margin:0 0 0 0.8ex;border-left:1px solid #ccc;padding
 /// handlers, scripts, forms, frames or remote pictures, so the message can't run or
 /// load anything, or tell anyone when it's read.
 pub fn outgoing_html(html: &str, pictures: &HashSet<String>) -> (String, HashSet<String>) {
+    let clean = clean_html(html, pictures);
+    let shown = pictures
+        .iter()
+        .filter(|id| clean.contains(&format!("src=\"cid:{id}\"")))
+        .cloned()
+        .collect();
+    // Allowed tags carry no attributes but those above, so this is exactly how ammonia
+    // writes a quote.
+    let clean = clean.replace(
+        "<blockquote>",
+        &format!("<blockquote style=\"{QUOTE_STYLE}\">"),
+    );
+    (
+        format!(
+            "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"></head><body>{clean}</body></html>\n"
+        ),
+        shown,
+    )
+}
+
+/// The cleaning of [`outgoing_html`], as a fragment: what a signature is saved as.
+pub fn clean_html(html: &str, pictures: &HashSet<String>) -> String {
     let allowed = pictures.clone();
-    let clean = ammonia::Builder::empty()
+    ammonia::Builder::empty()
         .tags(HTML_TAGS.iter().copied().collect())
         .clean_content_tags(HTML_DROPPED.iter().copied().collect())
         .tag_attributes(HashMap::from([
@@ -420,24 +446,7 @@ pub fn outgoing_html(html: &str, pictures: &HashSet<String>) -> (String, HashSet
             }
         })
         .clean(html)
-        .to_string();
-    let shown = pictures
-        .iter()
-        .filter(|id| clean.contains(&format!("src=\"cid:{id}\"")))
-        .cloned()
-        .collect();
-    // Allowed tags carry no attributes but those above, so this is exactly how ammonia
-    // writes a quote.
-    let clean = clean.replace(
-        "<blockquote>",
-        &format!("<blockquote style=\"{QUOTE_STYLE}\">"),
-    );
-    (
-        format!(
-            "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"></head><body>{clean}</body></html>\n"
-        ),
-        shown,
-    )
+        .to_string()
 }
 
 /// Who to sign in to SMTP as: the account's username when it has one (iCloud always

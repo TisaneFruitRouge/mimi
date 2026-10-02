@@ -21,6 +21,7 @@ mod events;
 mod hardware;
 mod mail;
 mod mail_outbox;
+mod mail_signature;
 mod mail_unsubscribe;
 mod memory;
 mod people;
@@ -217,6 +218,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             axum::routing::patch(mail_outbox::reschedule).delete(mail_outbox::cancel),
         )
         .route("/mail/outbox/{id}/send", post(mail_outbox::send_now))
+        .route(
+            "/mail/signatures",
+            get(mail_signature::get).put(mail_signature::put),
+        )
         .route("/mail/refresh", post(mail::refresh))
         .route("/mail/older", post(mail::older))
         .route("/mail/folders", post(mail::create_folder))

@@ -2153,6 +2153,7 @@ mod access_flow;
 mod mail_batch;
 mod mail_files;
 mod mail_outbox;
+mod mail_signature;
 mod matrix_live;
 mod unsubscribe_flow;
 mod voice_flow;

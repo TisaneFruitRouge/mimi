@@ -603,3 +603,59 @@ pub struct MailBatchFailure {
     pub ids: Vec<i64>,
     pub reason: String,
 }
+
+/// The user's email signatures (Settings › General › Signature), `GET|PUT
+/// /v1/mail/signatures`. A signature goes at the end of each email the user writes (below
+/// their text, above anything forwarded), after a `-- ` line, and the emails the assistant
+/// writes for them get it too. It's part of the draft: the user can change or delete it
+/// in any one email.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct MailSignatures {
+    /// Every address signs with `all`. Off: an address in `addresses` signs with its own,
+    /// and any other with `all`.
+    pub same_for_all: bool,
+    pub all: MailSignature,
+    /// Signatures of single addresses (the account's own, or an alias), lowercase.
+    pub addresses: Vec<AddressSignature>,
+    /// Whether replies and forwards get it too. Some people leave it out of replies, as
+    /// some mail apps do.
+    pub in_replies: bool,
+}
+
+impl Default for MailSignatures {
+    fn default() -> Self {
+        Self {
+            same_for_all: true,
+            all: MailSignature::default(),
+            addresses: Vec::new(),
+            in_replies: true,
+        }
+    }
+}
+
+/// One signature, written in the mail editor: like a draft's text, a plain-text version
+/// and, with formatting, HTML whose pictures are `cid:` addresses of `pictures`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct MailSignature {
+    /// The plain text, one line per line (a picture reads "[image: name]"). Empty: none.
+    pub text: String,
+    /// With its formatting, cleaned like the HTML of an email when saved. `None`: plain.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub html: Option<String>,
+    /// Small pictures in it (a logo), kept with the setting and sent in the email's text.
+    /// Each has a `content_id` and its data; at most a few, small (see `mail::signature`).
+    pub pictures: Vec<NewMailAttachment>,
+}
+
+/// The signature of one of the user's addresses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AddressSignature {
+    pub address: String,
+    pub signature: MailSignature,
+}

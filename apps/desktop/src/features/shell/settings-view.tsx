@@ -43,6 +43,7 @@ import { ConnectionsView } from "@/features/connections/connections-view";
 import { MemoryView } from "@/features/memory/memory-view";
 import { ModelsView } from "@/features/models/models-view";
 import { UndoSendSetting } from "@/features/mail/send-later";
+import { SignatureSettings } from "@/features/mail/signature-settings";
 import { PermissionsView } from "@/features/permissions/permissions-view";
 import { PersonalityView } from "@/features/personality/personality-view";
 import { NotificationsSettings } from "@/features/reminders/reminders";
@@ -211,6 +212,8 @@ function GeneralSettings({ onSection }: { onSection: (s: Place) => void }) {
       {isTauri && <BackgroundGroup />}
 
       {email && <UndoSendSetting />}
+
+      {email && <SignatureSettings />}
 
       <UpdatesGroup />
 

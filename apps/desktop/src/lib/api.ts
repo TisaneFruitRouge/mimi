@@ -3,6 +3,7 @@ import type { ConversationDetail } from "@/bindings/ConversationDetail";
 import type { CatalogModel } from "@/bindings/CatalogModel";
 import type { Connection } from "@/bindings/Connection";
 import type { ConnectionSetup } from "@/bindings/ConnectionSetup";
+import type { MailSignatures } from "@/bindings/MailSignatures";
 import type { EmailSuggestion } from "@/bindings/EmailSuggestion";
 import type { HardwareInfo } from "@/bindings/HardwareInfo";
 import type { DuplicateSuggestion } from "@/bindings/DuplicateSuggestion";
@@ -297,6 +298,10 @@ export const api = {
   /** Checks the TypeSafe key with TypeSafe, then saves it (Jev as the mail sorter). */
   jevConnect: (api_key: string) => call<null>("PUT", "/mail/jev", { api_key }),
   jevDisconnect: () => call<null>("DELETE", "/mail/jev"),
+  /** The user's email signatures (Settings › General › Signature). */
+  mailSignatures: () => call<MailSignatures>("GET", "/mail/signatures"),
+  /** Saves them; returns them as kept (cleaned like an email's formatting). */
+  saveMailSignatures: (s: MailSignatures) => call<MailSignatures>("PUT", "/mail/signatures", s),
 
   calendars: () => call<CalendarInfo[]>("GET", "/calendars"),
   events: (from: number, to: number) =>
@@ -450,6 +455,8 @@ export const keys = {
   // Not under "mail": each mail change would search the servers again.
   mailOlder: (q: string, account: string | null) => ["mailOlder", q.trim(), account] as const,
   mailOutbox: ["mail", "outbox"] as const,
+  // Not under "mail": they can carry a picture, and don't change with new mail.
+  mailSignatures: ["mailSignatures"] as const,
   // Not under "mail": an email's content never changes, and loading its pictures again at
   // every mail change would tell the sender each time.
   mailContent: (id: number, images: boolean) => ["mailContent", id, images] as const,

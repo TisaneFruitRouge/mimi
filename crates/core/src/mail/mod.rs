@@ -37,6 +37,7 @@ pub mod older;
 pub mod outbox;
 pub mod parse;
 pub mod render;
+pub mod signature;
 pub mod smtp;
 pub mod store;
 pub mod suspicious;
@@ -683,6 +684,64 @@ pub struct Undelivered {
 /// Checks a draft and builds its message without sending anything: the account, the
 /// From address, every file (fetched), the recipients and the sizes.
 pub async fn prepare(state: &AppState, draft: &MailDraft) -> Result<Prepared, String> {
+    let Sender {
+        account,
+        from,
+        main,
+        reply,
+    } = sender(state, draft).await?;
+    // A forward carries the original's attachments along.
+    let mut attachments = match draft.forward_of {
+        Some(message) => forwarded(state, message).await?,
+        None => Vec::new(),
+    };
+    // Pictures placed in the text (with a content id) go inside the formatted message.
+    let (pictures, files): (Vec<_>, Vec<_>) = draft
+        .attachments
+        .iter()
+        .cloned()
+        .partition(|a| a.content_id.is_some());
+    attachments.extend(attached(state, &files).await?);
+    let inline: Vec<smtp::Inline> = attached(state, &pictures)
+        .await?
+        .into_iter()
+        .zip(pictures)
+        .map(|(file, a)| smtp::Inline {
+            content_id: a.content_id.unwrap_or_default(),
+            file,
+        })
+        .collect();
+    let size = attachments.iter().chain(inline.iter().map(|i| &i.file));
+    if size.map(|f| f.data.len()).sum::<usize>() > smtp::MAX_ATTACHMENTS {
+        return Err(match draft.forward_of {
+            Some(_) if draft.attachments.is_empty() => {
+                "The attachments are too large to forward from here.".to_owned()
+            }
+            _ => "Attachments can add up to 20 MB in one email.".to_owned(),
+        });
+    }
+    let built = smtp::build(&from, draft, reply.as_ref(), &attachments, &inline)?;
+    Ok(Prepared {
+        account,
+        from,
+        main,
+        built,
+    })
+}
+
+/// Who a draft goes from: its account, the address, the account's own address, and the
+/// conversation it answers.
+pub(crate) struct Sender {
+    pub account: Account,
+    pub from: String,
+    pub main: String,
+    pub reply: Option<smtp::ReplyHeaders>,
+}
+
+/// Works out who a draft goes from: the account asked for (else the replied-to
+/// conversation's, else the first), and the address asked for, else the one the
+/// conversation arrived at, else the account's.
+pub(crate) async fn sender(state: &AppState, draft: &MailDraft) -> Result<Sender, String> {
     let accounts = accounts(state).await;
     let reply = match draft.reply_to {
         Some(thread) => smtp::reply_headers(state, thread).await?,
@@ -716,42 +775,11 @@ pub async fn prepare(state: &AppState, draft: &MailDraft) -> Result<Prepared, St
             .filter(|r| is_own(r))
             .unwrap_or_else(|| main.clone()),
     };
-    // A forward carries the original's attachments along.
-    let mut attachments = match draft.forward_of {
-        Some(message) => forwarded(state, message).await?,
-        None => Vec::new(),
-    };
-    // Pictures placed in the text (with a content id) go inside the formatted message.
-    let (pictures, files): (Vec<_>, Vec<_>) = draft
-        .attachments
-        .iter()
-        .cloned()
-        .partition(|a| a.content_id.is_some());
-    attachments.extend(attached(state, &files).await?);
-    let inline: Vec<smtp::Inline> = attached(state, &pictures)
-        .await?
-        .into_iter()
-        .zip(pictures)
-        .map(|(file, a)| smtp::Inline {
-            content_id: a.content_id.unwrap_or_default(),
-            file,
-        })
-        .collect();
-    let size = attachments.iter().chain(inline.iter().map(|i| &i.file));
-    if size.map(|f| f.data.len()).sum::<usize>() > smtp::MAX_ATTACHMENTS {
-        return Err(match draft.forward_of {
-            Some(_) if draft.attachments.is_empty() => {
-                "The attachments are too large to forward from here.".to_owned()
-            }
-            _ => "Attachments can add up to 20 MB in one email.".to_owned(),
-        });
-    }
-    let built = smtp::build(&from, draft, reply.as_ref(), &attachments, &inline)?;
-    Ok(Prepared {
+    Ok(Sender {
         account: account.clone(),
         from,
         main,
-        built,
+        reply,
     })
 }
 
