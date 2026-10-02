@@ -134,6 +134,19 @@ pub async fn read(
     Ok(Json(()))
 }
 
+/// Flags (stars) a conversation or takes the flag off. Fails, with nothing changed,
+/// when the mail server doesn't take it.
+pub async fn flag(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(body): Json<mimi_protocol::FlagThread>,
+) -> ApiResult<()> {
+    mail::flags::set_flagged(&state, id, body.flagged)
+        .await
+        .map_err(AppError::bad_request)?;
+    Ok(Json(()))
+}
+
 pub async fn archive(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> ApiResult<()> {
     mail::archive(&state, id)
         .await

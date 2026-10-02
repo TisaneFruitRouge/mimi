@@ -518,6 +518,7 @@ pub fn threads(c: &Connection, q: &Query, me: &[String]) -> rusqlite::Result<Vec
             filters
                 .push("(t.category = 'other' OR (t.category IS NULL AND t.automated))".to_owned());
         }
+        Some(MailBox::Flagged) => filters.push(super::flags::FLAGGED_FILTER.to_owned()),
         None => {}
     }
     if let Some(fts) = q.search.as_deref().and_then(fts_query) {

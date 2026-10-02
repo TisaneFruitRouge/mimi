@@ -22,6 +22,7 @@ use crate::connections::store as connection_store;
 
 pub mod contacts;
 pub mod discover;
+pub mod flags;
 pub mod folders;
 pub mod images;
 pub mod jev;

@@ -688,6 +688,167 @@ async fn read_state_and_archiving_reach_the_server() {
     assert_eq!(archived.len(), 1);
 }
 
+/// The conversations in the Flagged view.
+async fn flagged_threads(state: &AppState) -> Vec<i64> {
+    threads(
+        state,
+        store::Query {
+            view: Some(MailBox::Flagged),
+            limit: 10,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|t| t.id)
+    .collect()
+}
+
+fn mail_changes(events: &mut tokio::sync::broadcast::Receiver<Event>) -> usize {
+    std::iter::from_fn(|| events.try_recv().ok())
+        .filter(|e| matches!(e, Event::MailChanged))
+        .count()
+}
+
+#[tokio::test]
+async fn flags_reach_the_server_and_unflagging_clears_every_message() {
+    let fake = FakeMail::start(ME, PASSWORD).await;
+    let first = fake.deliver(
+        "INBOX",
+        &message(
+            "Sam <sam@example.com>",
+            ME,
+            "Trip",
+            "Where to?",
+            "t1@example.com",
+            "",
+        ),
+        now_ms() - 2 * DAY,
+        &["\\Flagged"],
+    );
+    let second = fake.deliver(
+        "INBOX",
+        &message(
+            "Sam <sam@example.com>",
+            ME,
+            "Re: Trip",
+            "Lisbon?",
+            "t2@example.com",
+            "In-Reply-To: <t1@example.com>\r\nReferences: <t1@example.com>\r\n",
+        ),
+        now_ms() - DAY,
+        &[],
+    );
+    // The user's answer, copied to themselves: one message, in Sent and the Inbox.
+    let reply = message(
+        ME,
+        "Sam <sam@example.com>, me@example.org",
+        "Re: Trip",
+        "Lisbon!",
+        "t3@example.org",
+        "In-Reply-To: <t2@example.com>\r\nReferences: <t1@example.com> <t2@example.com>\r\n",
+    );
+    let reply_in = fake.deliver("INBOX", &reply, now_ms() - 3_600_000, &["\\Seen"]);
+    let reply_sent = fake.deliver("Sent", &reply, now_ms() - 3_600_000, &["\\Seen"]);
+    let (state, account) = account_without_loop(&fake).await;
+    pass(&state, &account).await;
+    let list = all_threads(&state).await;
+    assert_eq!(list.len(), 1);
+    let id = list[0].id;
+    assert!(
+        list[0].flagged,
+        "an older message's flag stars the conversation"
+    );
+    assert_eq!(flagged_threads(&state).await, vec![id]);
+
+    // Taking the flag off clears it from every message, the older one included.
+    let mut events = state.events.subscribe();
+    flags::set_flagged(&state, id, false).await.unwrap();
+    assert!(mail_changes(&mut events) >= 1);
+    assert!(!all_threads(&state).await[0].flagged);
+    assert!(flagged_threads(&state).await.is_empty());
+    for (mailbox, uid) in [
+        ("INBOX", first),
+        ("INBOX", second),
+        ("INBOX", reply_in),
+        ("Sent", reply_sent),
+    ] {
+        assert!(
+            !fake.flags(mailbox, uid).contains("\\Flagged"),
+            "{mailbox} {uid}"
+        );
+    }
+    // Asking again changes nothing.
+    flags::set_flagged(&state, id, false).await.unwrap();
+    assert_eq!(mail_changes(&mut events), 0);
+
+    // Flagging marks the latest message, each copy of it, and nothing older.
+    flags::set_flagged(&state, id, true).await.unwrap();
+    assert!(mail_changes(&mut events) >= 1);
+    assert!(all_threads(&state).await[0].flagged);
+    assert_eq!(flagged_threads(&state).await, vec![id]);
+    assert!(fake.flags("INBOX", reply_in).contains("\\Flagged"));
+    assert!(fake.flags("Sent", reply_sent).contains("\\Flagged"));
+    assert!(!fake.flags("INBOX", first).contains("\\Flagged"));
+    assert!(!fake.flags("INBOX", second).contains("\\Flagged"));
+    // Other flags are left alone.
+    assert!(fake.flags("Sent", reply_sent).contains("\\Seen"));
+
+    // The next pass agrees, and an archived conversation stays in Flagged.
+    pass(&state, &account).await;
+    assert_eq!(flagged_threads(&state).await, vec![id]);
+    archive(&state, id).await.unwrap();
+    pass(&state, &account).await;
+    assert_eq!(flagged_threads(&state).await, vec![id]);
+
+    let err = flags::set_flagged(&state, 999_999, true).await.unwrap_err();
+    assert!(err.contains("isn't here"), "{err}");
+}
+
+#[tokio::test]
+async fn a_flag_the_server_refuses_is_undone() {
+    let fake = FakeMail::start(ME, PASSWORD).await;
+    let uid = fake.deliver(
+        "INBOX",
+        &message(
+            "Sam <sam@example.com>",
+            ME,
+            "Plans",
+            "Hi",
+            "r1@example.com",
+            "",
+        ),
+        now_ms() - DAY,
+        &[],
+    );
+    let (state, account) = account_without_loop(&fake).await;
+    pass(&state, &account).await;
+    let id = all_threads(&state).await[0].id;
+
+    // The password was revoked: the server can't be told.
+    fake.state.lock().unwrap().password = "revoked".to_owned();
+    let mut events = state.events.subscribe();
+    let err = flags::set_flagged(&state, id, true).await.unwrap_err();
+    assert!(err.starts_with("Couldn't flag it"), "{err}");
+    // Shown at once, then taken back: the star doesn't claim what the server lacks.
+    assert_eq!(mail_changes(&mut events), 2);
+    assert!(!all_threads(&state).await[0].flagged);
+    assert!(flagged_threads(&state).await.is_empty());
+    assert!(!fake.flags("INBOX", uid).contains("\\Flagged"));
+
+    // Unflagging is undone the same way.
+    fake.set_flags("INBOX", uid, &["\\Flagged"]);
+    fake.state.lock().unwrap().password = PASSWORD.to_owned();
+    pass(&state, &account).await;
+    assert!(all_threads(&state).await[0].flagged);
+    fake.state.lock().unwrap().password = "revoked".to_owned();
+    let err = flags::set_flagged(&state, id, false).await.unwrap_err();
+    assert!(err.starts_with("Couldn't remove the flag"), "{err}");
+    assert!(all_threads(&state).await[0].flagged);
+    assert!(fake.flags("INBOX", uid).contains("\\Flagged"));
+}
+
 #[tokio::test]
 async fn replies_go_out_from_the_alias_the_mail_arrived_at() {
     let fake = FakeMail::start(ME, PASSWORD).await;

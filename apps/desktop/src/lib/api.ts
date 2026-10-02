@@ -250,6 +250,8 @@ export const api = {
   markMailRead: (id: number, read: boolean) =>
     call<null>("POST", `/mail/threads/${id}/read`, { read }),
   archiveMail: (id: number) => call<null>("POST", `/mail/threads/${id}/archive`),
+  /** Flags (stars) a conversation or takes the flag off, here and on the mail server. */
+  flagMail: (id: number, flagged: boolean) => call<null>("POST", `/mail/threads/${id}/flag`, { flagged }),
   createMailFolder: (f: MailFolderInput) => call<null>("POST", "/mail/folders", f),
   updateMailFolder: (id: number, f: MailFolderInput) => call<null>("PATCH", `/mail/folders/${id}`, f),
   deleteMailFolder: (id: number) => call<null>("DELETE", `/mail/folders/${id}`),

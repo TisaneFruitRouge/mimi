@@ -68,6 +68,8 @@ pub enum MailBox {
     Inbox,
     Sent,
     Archive,
+    /// Conversations the user flagged (starred), wherever they are.
+    Flagged,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -340,4 +342,12 @@ pub struct MailDiscovery {
 #[ts(export)]
 pub struct MailDiscoverRequest {
     pub email: String,
+}
+
+/// Body of `POST /v1/mail/threads/{id}/flag`: flag (star) a conversation or take the
+/// flag off.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct FlagThread {
+    pub flagged: bool,
 }

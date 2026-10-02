@@ -184,6 +184,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/mail/threads/{id}", get(mail::thread).delete(mail::delete))
         .route("/mail/threads/{id}/read", post(mail::read))
         .route("/mail/threads/{id}/archive", post(mail::archive))
+        .route("/mail/threads/{id}/flag", post(mail::flag))
         .route("/mail/threads/{id}/summarize", post(mail::summarize))
         .route("/mail/threads/{id}/draft", post(mail::draft))
         .route(

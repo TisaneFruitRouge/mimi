@@ -4,6 +4,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   Archive,
   AtSign,
+  BadgeAlert,
   ChevronDown,
   CircleAlert,
   Copy,
@@ -63,6 +64,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ConnectDialog } from "@/features/connections/connect-dialogs";
 import { DraftEditor, SendButton, useSendDraft } from "@/features/mail/draft-editor";
+import { FlagStar, RowFlag, useFlagThread } from "@/features/mail/flag";
 import { FolderGlyph } from "@/features/mail/folder-looks";
 import { AddToFolder, FolderChips, FolderHeader, FolderList } from "@/features/mail/folders";
 import { type FrameContext, MailModeSwitch, MessageBody } from "@/features/mail/message-body";
@@ -88,9 +90,10 @@ import { openAttachment, openExternal } from "@/lib/transport";
 
 const views: { id: MailBox; label: string; icon: typeof Inbox; sorted: boolean }[] = [
   { id: "needs_reply", label: "Needs a reply", icon: Reply, sorted: true },
-  { id: "important", label: "Important", icon: Star, sorted: true },
+  { id: "important", label: "Important", icon: BadgeAlert, sorted: true },
   { id: "other", label: "Everything else", icon: Layers, sorted: true },
   { id: "inbox", label: "Inbox", icon: Inbox, sorted: false },
+  { id: "flagged", label: "Flagged", icon: Star, sorted: false },
   { id: "sent", label: "Sent", icon: Send, sorted: false },
   { id: "archive", label: "Archive", icon: Archive, sorted: false },
 ];
@@ -101,6 +104,7 @@ const empty: Record<MailBox, string> = {
   important: "Nothing important right now.",
   other: "No newsletters or notifications.",
   inbox: "Your inbox is empty.",
+  flagged: "Nothing is flagged. Flag a conversation with its star to keep it here.",
   sent: "Nothing sent in the last 90 days.",
   archive: "Nothing archived in the last 90 days.",
 };
@@ -923,12 +927,17 @@ function ThreadMenu({
   children: React.ReactNode;
 }) {
   const fail = (e: unknown) => toast.error((e as Error).message);
+  const flag = useFlagThread();
   const addable = folders.filter((f) => !t.folders.includes(f.id));
   return (
     <ContextMenu>
       {/* A plain element: the row component doesn't pass the trigger's handlers on. */}
       <ContextMenuTrigger asChild>
-        <div className="flex flex-col">{children}</div>
+        <div className="group/row relative flex flex-col">
+          {children}
+          {/* The row's star, beside it rather than in it: a button can't hold a button. */}
+          <RowFlag thread={t} className="absolute top-[34px] left-[3px]" />
+        </div>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-[220px]">
         <ContextMenuItem onSelect={onOpen}>
@@ -943,6 +952,9 @@ function ThreadMenu({
         <ContextMenuSeparator />
         <ContextMenuItem onSelect={() => api.markMailRead(t.id, t.unread).catch(fail)}>
           {t.unread ? <MailOpen /> : <Mail />} {t.unread ? "Mark as read" : "Mark as unread"}
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => void flag(t.id, !t.flagged)}>
+          <FlagStar flagged={false} /> {t.flagged ? "Remove flag" : "Flag"}
         </ContextMenuItem>
         {addable.length > 0 && (
           <ContextMenuSub>
@@ -1044,7 +1056,6 @@ function ThreadRow({
       </span>
       <span className="flex items-center gap-1.5">
         <span className="min-w-0 flex-1 truncate type-subhead">{t.subject || "(no subject)"}</span>
-        {t.flagged && <Star className="size-3 shrink-0 fill-[#ff9f0a] text-[#ff9f0a]" aria-label="Flagged" />}
         {showAddress && t.received_on && !t.last_from_me && (
           <span title={`Received on ${t.received_on}`} className="flex min-w-0 shrink">
             <Pill className="h-[18px] max-w-[130px] bg-fill px-2 text-[11px] text-muted-foreground">
@@ -1118,6 +1129,7 @@ function Reader({
   const [reply, setReply] = useState<MailDraft | null>(null);
   const [archiving, setArchiving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const flag = useFlagThread();
   const d = detail.data;
 
   useEffect(() => {
@@ -1213,6 +1225,9 @@ function Reader({
             </Button>
             <Button variant="secondary" size="sm" onClick={archive} disabled={archiving}>
               {archiving ? <Loader2 className="animate-spin" /> : <Archive />} Archive
+            </Button>
+            <Button variant="secondary" size="sm" aria-pressed={t.flagged} onClick={() => void flag(id, !t.flagged)}>
+              <FlagStar flagged={t.flagged} /> {t.flagged ? "Flagged" : "Flag"}
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

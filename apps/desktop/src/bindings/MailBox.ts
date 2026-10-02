@@ -3,4 +3,4 @@
 /**
  * What part of the mail to show.
  */
-export type MailBox = "needs_reply" | "important" | "other" | "inbox" | "sent" | "archive";
+export type MailBox = "needs_reply" | "important" | "other" | "inbox" | "sent" | "archive" | "flagged";

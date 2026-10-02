@@ -175,7 +175,8 @@ an email becomes a memory.
 ## Suspicious mail
 
 `suspicious.rs`, migration 0015. Instructions addressed to an AI assistant (English and
-French phrasings, in visible or hidden HTML text) flag a message. Flagged conversations:
+French phrasings, in visible or hidden HTML text) mark a message as suspicious. Such
+conversations:
 
 - are never sorted or summarised by the model (filed as "other"), and never filed into
   smart folders;
@@ -345,6 +346,33 @@ and denies; a browser opens a tab. The frame also re-dispatches its right-clicks
 page (with the link or selection under them), so the message's menu opens there (see
 [Design system](design-system.md)).
 
+## Flags
+
+`mail/flags.rs`. A conversation is flagged (starred) when any of its messages has
+`\Flagged` on the server; sync reads flags in its sweep. The user flags from the star in
+a row's margin (shown on hover, filled when flagged), the reader's Flag button or the
+right-click menu; `features/mail/flag.tsx` holds `useFlagThread`, which a keyboard
+shortcut can call.
+
+- `POST /v1/mail/threads/{id}/flag` (`FlagThread { flagged }`). Flagging sets `\Flagged`
+  on the latest message (each stored copy of it: a reply can be in Sent and the Inbox),
+  over `UID STORE +FLAGS.SILENT`; unflagging clears it from every message, so no older
+  flag keeps the star on. Other flags are left alone. Asking for what's already so does
+  nothing.
+- The local copy changes first and `MailChanged` goes out, so the star moves at once;
+  the request then waits for the server (30 s at most). If the server refuses or can't
+  be reached, the local change is undone, `MailChanged` goes out again and the request
+  fails with a message the panel shows: the star never claims something the mail
+  account doesn't have (`a_flag_the_server_refuses_is_undone`). After success the change
+  is written again, in case a sync pass read the server just before it. Changes run one
+  at a time, so a quick flag-unflag can't cross over.
+- The panel is optimistic too: `useFlagThread` changes the cached lists and conversation,
+  and puts them back if the request fails.
+- The Flagged view (`MailBox::Flagged`) lists flagged conversations in Inbox, Sent and
+  Archive alike: archiving keeps the flag.
+- The assistant has no flag tool: flagging changes the mail account, so by the approval
+  rule it would need a card, too heavy for a star.
+
 ## Invitations
 
 Event invitations, updates and cancellations are sent through this mail's SMTP path and
@@ -367,10 +395,11 @@ All under `/v1`. Changes publish `MailChanged` (`mail_changed`).
 - `GET /v1/mail`: accounts, counts, whether sorting is on, the model's locality.
   `?account=` / `?address=` narrow the counts.
 - `GET /v1/mail/presets`.
-- `GET /v1/mail/threads?view=&q=&person=&folder=&account=&address=&before=&limit=`.
+- `GET /v1/mail/threads?view=&q=&person=&folder=&account=&address=&before=&limit=`
+  (`view=flagged`: flagged conversations, wherever they are).
 - `GET /v1/mail/threads/{id}`, `DELETE /v1/mail/threads/{id}` (to Trash).
-- `POST /v1/mail/threads/{id}/read` (`{read}`), `/archive`, `/summarize`, `/draft`
-  (`{instructions}`).
+- `POST /v1/mail/threads/{id}/read` (`{read}`), `/archive`, `/flag` (`{flagged}`, see
+  [Flags](#flags)), `/summarize`, `/draft` (`{instructions}`).
 - `POST /v1/mail/send` (a `MailDraft`): the panel's or a draft card's Send button, which
   is the user's own action and so the approval.
 - `POST /v1/mail/refresh`.
@@ -387,8 +416,9 @@ All under `/v1`. Changes publish `MailChanged` (`mail_changed`).
   Important, Everything else; smart folders; mailboxes: Inbox, Sent, Archive; "Received
   on" addresses; with the sorting model's locality), the conversation list with
   one-line summaries and search across all mail, and the reader (Reply, Summarize,
-  Archive, Mark as unread, Ask the assistant; a reply box that can draft the answer with
-  the model; Send only by the user).
+  Archive, Flag, Mark as unread, Ask the assistant; a reply box that can draft the answer
+  with the model; Send only by the user). Mailboxes also lists Flagged.
+- `flag.tsx`: flagging (`useFlagThread`, the row's star); see [Flags](#flags).
 - `message-body.tsx`: how a message is shown (Text · Formatted · Original).
 - `draft-editor.tsx`: the draft editor; `draft-attachments.tsx`, its files. To, Cc and
   Bcc are chips that suggest people from People by name, address or `@name` (see
@@ -403,7 +433,7 @@ Mail panel reply drafts get the user's custom instructions only, not the persona
 ## Tests
 
 - `mail/fake.rs` is a small IMAP (IDLE, MOVE, APPEND…) and SMTP server. `mail/tests.rs`
-  covers sync, UIDVALIDITY resets, flags, archive, send, hidden text, correspondents and
+  covers sync, UIDVALIDITY resets, flags (and flagging from Mimi), archive, send, hidden text, correspondents and
   sorting with a mock model; also `dropped_idle_connections_are_not_errors`,
   `mail_about_assistants_is_not` and
   `mail_that_only_claims_to_be_from_the_user_is_still_checked`.
