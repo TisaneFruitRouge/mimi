@@ -47,7 +47,7 @@ pnpm web                 # build the frontend and open it in a browser (daemon r
 pnpm dev:daemon          # daemon only (pnpm dev:app for the app only)
 pnpm mimi <args>         # CLI against the .dev/ instance (e.g. pnpm mimi status)
 pnpm mimi open           # open the web UI in a browser, signed in (after a build)
-mimi service status      # background service (install | uninstall | status | start)
+mimi service status      # background service (install | uninstall | status | start | restart)
 pnpm check               # fmt, clippy, tests, typecheck (what CI runs)
 pnpm bundle              # this platform's installers, in target/release/bundle/
 MIMI_HOME=/tmp/h1 ...    # any other isolated instance

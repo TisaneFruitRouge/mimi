@@ -44,7 +44,7 @@ On launch the app (`apps/desktop/src-tauri/src/daemon_process.rs`):
 With `MIMI_DAEMON=external` it only connects.
 
 "Keep Mimi running in the background" in Settings installs or removes the login service
-and hands the daemon over. `mimi service install|uninstall|status|start` does the same
+and hands the daemon over. `mimi service install|uninstall|status|start|restart` does the same
 headless.
 
 ## Finding `mimid`
@@ -98,6 +98,13 @@ The login service may still run the old daemon after an update.
   id (`MIMI_BUILD_ID`, set by `pnpm bundle` and the release workflow; absent in
   development) with its own, and restarts the service when they differ (not under
   `pnpm dev`). The build id means a same-version rebuild restarts the service too.
+- **Restarting is the service manager's job** (`mimi_service::restart`: `systemctl
+  --user restart`, `launchctl kickstart -k`). The daemon stops answering as soon as it
+  starts shutting down, before its process exits, so "stop, wait until it doesn't
+  answer, start" races: the start finds the service still running, does nothing, and
+  the old process then exits cleanly with nothing to replace it. Without a service
+  manager (autostart), and wherever the app takes over a daemon it didn't start,
+  `stop_daemon_and_wait` waits for the process itself to exit.
 - **Hidden app.** An app hidden in the tray when an update is installed would otherwise
   show the old version forever. `relaunch.rs` remembers the file it was started from
   (`$APPIMAGE`, else the executable). When the user opens Mimi again after that file was

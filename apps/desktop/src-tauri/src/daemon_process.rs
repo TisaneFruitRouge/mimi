@@ -97,13 +97,14 @@ fn spec() -> Result<Spec, String> {
         .map_err(|e| e.to_string())
 }
 
-/// Stops the service's daemon and starts it again from the program on disk.
+/// Restarts the service's daemon from the program on disk.
 async fn restart_service(spec: &Spec) {
-    if let Ok(paths) = Paths::resolve() {
-        mimi_service::stop_daemon(&paths);
-    }
-    wait_until(false, Duration::from_secs(10)).await;
-    if let Err(e) = mimi_service::start(spec) {
+    let spec = spec.clone();
+    let restarted = tokio::task::spawn_blocking(move || mimi_service::restart(&spec))
+        .await
+        .map_err(|e| e.to_string())
+        .and_then(|r| r.map_err(|e| e.to_string()));
+    if let Err(e) = restarted {
         eprintln!("mimi: couldn't restart the assistant after an update: {e}");
     }
     wait_until(true, Duration::from_secs(15)).await;
@@ -291,7 +292,11 @@ impl DaemonProcess {
                 Owner::App => self.stop_child(),
                 Owner::External => {
                     if let Ok(paths) = Paths::resolve() {
-                        mimi_service::stop_daemon(&paths);
+                        // Until its process has exited, the new one couldn't start.
+                        let _ = tokio::task::spawn_blocking(move || {
+                            mimi_service::stop_daemon_and_wait(&paths, mimi_service::STOP_TIMEOUT)
+                        })
+                        .await;
                     }
                 }
                 Owner::Service | Owner::Unknown => {}
