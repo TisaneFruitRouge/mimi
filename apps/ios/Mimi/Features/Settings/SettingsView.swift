@@ -36,6 +36,10 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    NavigationLink("Reminders & notifications") { NotificationsSettingsView() }
+                }
+
+                Section {
                     Button("Unpair this phone", role: .destructive) { confirmUnpair = true }
                 } footer: {
                     Text("This phone forgets your computer, and your computer forgets this phone. Your conversations stay on your computer.")
