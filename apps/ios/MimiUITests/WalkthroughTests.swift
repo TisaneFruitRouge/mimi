@@ -59,6 +59,14 @@ final class WalkthroughTests: XCTestCase {
         sleep(1)
         shot(app, "8-approved")
 
+        // A draft the assistant wrote shows as a card to check and send.
+        field.tap()
+        field.typeText("Draft an email to Sam saying yes to dinner")
+        app.buttons["Send"].tap()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'draft is ready'")).firstMatch.waitForExistence(timeout: 20))
+        sleep(1)
+        shot(app, "8b-draft-card")
+
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.tabBars.buttons["Settings"].tap()
         sleep(1)
