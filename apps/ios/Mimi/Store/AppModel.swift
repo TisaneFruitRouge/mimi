@@ -29,7 +29,8 @@ final class AppModel {
     private(set) var api: MimiAPI?
 
     private(set) var settings = Settings()
-    private var settingsJSON: JSONValue = .null
+    /// Every setting as the computer has it, for pages that read fields `Settings` doesn't.
+    private(set) var settingsJSON: JSONValue = .null
     private(set) var providers: [Provider] = []
     private(set) var conversations: [Conversation] = []
     private(set) var details: [UUID: ConversationDetail] = [:]

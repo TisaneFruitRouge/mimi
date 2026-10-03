@@ -54,6 +54,7 @@ struct MainTabs: View {
                 ConversationsView()
             }
             Tab("Calendar", systemImage: "calendar", value: AppTab.calendar) { CalendarView() }
+            Tab("People", systemImage: "person.2", value: AppTab.people) { PeopleView() }
             Tab("Settings", systemImage: "gearshape", value: AppTab.settings) {
                 SettingsView()
             }

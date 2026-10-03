@@ -1,93 +1,74 @@
 import SwiftUI
 
-/// Settings: this phone and its connection, then the assistant's own settings (more pages
-/// join as they come to the phone).
+/// Settings, like System Settings: the assistant on top, then one row per page. The pages
+/// are the desktop's (General, Personality, Connections, Models, Memory, Reminders &
+/// notifications, Permissions, Privacy) plus this phone's.
+///
+/// Adding a page is one line where it belongs:
+/// `SettingsLink("Title", "sf.symbol", tint) { YourPage() }`.
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
-    @State private var renaming = false
-    @State private var newName = ""
-    @State private var confirmUnpair = false
-    @State private var error: String?
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    LabeledContent("Name") {
-                        Button(model.paired?.deviceName ?? "") {
-                            newName = model.paired?.deviceName ?? ""
-                            renaming = true
-                        }
-                    }
-                    LabeledContent("Connection") {
-                        Text(connection).foregroundStyle(.secondary)
-                    }
-                } header: {
-                    Text("This phone")
-                } footer: {
-                    Text(footer)
-                }
-
-                if let locality = model.modelLocality {
-                    Section("Your assistant") {
-                        LabeledContent("Name", value: model.assistantName)
-                        LabeledContent("Model") { LocalityBadge(locality: locality) }
+                    NavigationLink {
+                        PersonalitySettingsView()
+                    } label: {
+                        AssistantCard()
                     }
                 }
 
                 Section {
-                    NavigationLink("Reminders & notifications") { NotificationsSettingsView() }
+                    SettingsLink("General", "gearshape.fill", Color(hex: 0x8E8E93)) { GeneralSettingsView() }
+                    SettingsLink("Personality", "face.smiling.inverse", Color(hex: 0xFF2D55)) { PersonalitySettingsView() }
                 }
 
                 Section {
-                    Button("Unpair this phone", role: .destructive) { confirmUnpair = true }
-                } footer: {
-                    Text("This phone forgets your computer, and your computer forgets this phone. Your conversations stay on your computer.")
+                    SettingsLink("Connections", "square.grid.2x2.fill", Color(hex: 0x0A84FF)) { ConnectionsSettingsView() }
+                    SettingsLink("Models", "sparkles", .lime, foreground: .limeInk) { ModelsSettingsView() }
+                    SettingsLink("Memory", "book.fill", Color(hex: 0xBF5AF2)) { MemorySettingsView() }
+                    SettingsLink("Reminders & notifications", "bell.badge.fill", Color(hex: 0xFF3B30)) { NotificationsSettingsView() }
+                }
+
+                Section {
+                    SettingsLink("Permissions", "hand.raised.fill", Color(hex: 0xFF9F0A)) { PermissionsSettingsView() }
+                    SettingsLink("Privacy", "lock.fill", .privateTone) { PrivacySettingsView() }
+                }
+
+                Section {
+                    SettingsLink("This phone", "iphone", Color(hex: 0x30D158), value: model.paired?.deviceName) {
+                        PhoneSettingsView()
+                    }
                 }
             }
+            .listStyle(.insetGrouped)
             .navigationTitle("Settings")
-            .alert("Rename this phone", isPresented: $renaming) {
-                TextField("Name", text: $newName)
-                Button("Cancel", role: .cancel) {}
-                Button("Save") {
-                    let name = newName.trimmingCharacters(in: .whitespaces)
-                    guard !name.isEmpty else { return }
-                    Task {
-                        do { try await model.renameThisPhone(name) } catch { self.error = error.localizedDescription }
-                    }
+            .refreshable { await model.refresh() }
+        }
+    }
+}
+
+/// The assistant at the top of Settings: its face, its name, and where its model runs.
+private struct AssistantCard: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        HStack(spacing: 14) {
+            AssistantAvatar(size: 56, mood: .idle)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(model.assistantName)
+                    .font(.title3.weight(.semibold))
+                if let locality = model.modelLocality {
+                    LocalityBadge(locality: locality)
+                } else {
+                    Text("Name, personality and what it keeps in mind")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
             }
-            .confirmationDialog("Unpair this phone?", isPresented: $confirmUnpair, titleVisibility: .visible) {
-                Button("Unpair", role: .destructive) { Task { await model.unpair() } }
-            } message: {
-                Text("To use \(model.assistantName) here again, you'll scan a new code on your computer.")
-            }
-            .alert("Something went wrong", isPresented: .constant(error != nil)) {
-                Button("OK") { error = nil }
-            } message: {
-                Text(error ?? "")
-            }
         }
-    }
-
-    private var connection: String {
-        switch model.phase {
-        case .online:
-            switch model.path {
-            case .direct: "Direct"
-            case .relayed: "Through the relay"
-            case nil: "Connected"
-            }
-        case .connecting: "Connecting…"
-        case .offline: "Can't reach your computer"
-        case .unpaired: "Not paired"
-        }
-    }
-
-    private var footer: String {
-        if model.paired?.relay != nil {
-            return "End-to-end encrypted. When your phone can't reach your computer directly, your own relay passes the messages along."
-        }
-        return "End-to-end encrypted. When your phone can't reach your computer directly, a public relay passes the messages along without being able to read them."
+        .padding(.vertical, 4)
     }
 }
