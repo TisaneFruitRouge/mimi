@@ -79,6 +79,10 @@ struct ConversationsView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .mimiNewChat)) { _ in newChat() }
+        // "Ask Mimi about this" from another panel: a new chat, which takes the draft.
+        .onChange(of: model.askDraft) { _, draft in
+            if draft != nil { newChat() }
+        }
     }
 
     private func newChat() {

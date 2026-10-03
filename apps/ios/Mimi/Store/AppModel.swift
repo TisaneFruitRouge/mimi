@@ -2,6 +2,14 @@ import Foundation
 import Observation
 import UIKit
 
+enum AppTab: Hashable { case chats, calendar, mail, people, settings }
+
+/// Text for the composer, with the tags it contains.
+struct Draft: Equatable {
+    var text: String
+    var mentions: [Mention]
+}
+
 /// Everything the app knows, kept in step with the computer by its event feed (like the
 /// desktop's `lib/events.ts`): views read from here and call the API; events, not
 /// refetches, bring most changes in.
@@ -35,6 +43,10 @@ final class AppModel {
     var delivery: JSONValue?
     /// A pairing link opened from outside (the Camera app scanned the code).
     var incomingLink: PairingLink?
+    /// The tab on screen.
+    var tab: AppTab = .chats
+    /// A message to start a new chat with ("Ask Mimi about this"), taken by the chat once.
+    var askDraft: Draft?
 
     private var feed: Task<Void, Never>?
     private var retry: Task<Void, Never>?
@@ -311,6 +323,13 @@ final class AppModel {
         paired.deviceName = name
         paired.save()
         self.paired = paired
+    }
+
+    /// "Ask Mimi about this": a new chat with the thing already tagged, ready to finish
+    /// typing. Every panel offers it (people, events, emails).
+    func ask(about kind: MentionKind, id: String, label: String) {
+        askDraft = Draft(text: "\(kind.sigil)\(label) ", mentions: [Mention(kind: kind, id: id, label: label)])
+        tab = .chats
     }
 
     /// A default name for this phone on the computer's list.

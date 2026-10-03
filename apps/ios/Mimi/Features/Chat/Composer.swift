@@ -65,6 +65,15 @@ struct Composer: View {
             .glassEffect(.regular, in: .rect(cornerRadius: 24))
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: suggestions.isEmpty)
+        .onAppear {
+            // A draft from "Ask Mimi about this", taken once.
+            if let draft = model.askDraft {
+                text = draft.text
+                mentions = draft.mentions
+                model.askDraft = nil
+                focused = true
+            }
+        }
         .task(id: query.map { "\($0.sigil)\($0.text)" }) { await suggest() }
         .alert("Couldn't send", isPresented: .constant(error != nil)) {
             Button("OK") { error = nil }

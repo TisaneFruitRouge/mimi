@@ -48,11 +48,12 @@ struct MainTabs: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        TabView {
-            Tab("Chats", systemImage: "bubble.left.and.bubble.right") {
+        @Bindable var model = model
+        TabView(selection: $model.tab) {
+            Tab("Chats", systemImage: "bubble.left.and.bubble.right", value: AppTab.chats) {
                 ConversationsView()
             }
-            Tab("Settings", systemImage: "gearshape") {
+            Tab("Settings", systemImage: "gearshape", value: AppTab.settings) {
                 SettingsView()
             }
         }
