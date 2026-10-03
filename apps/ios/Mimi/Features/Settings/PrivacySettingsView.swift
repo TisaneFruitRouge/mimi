@@ -50,7 +50,17 @@ struct PrivacySettingsView: View {
                 }
             }
 
-            // Privacy: the mail sorting section (Mail) goes here.
+            if connections.contains(where: { $0.integration == "email" }) {
+                Section("Email") {
+                    NavigationLink {
+                        MailPrivacyView()
+                    } label: {
+                        ExplainedRow(systemImage: "envelope.fill", tint: Color(hex: 0xEFE9FB), foreground: Color(hex: 0x6146AD),
+                                     title: "Sorting new mail",
+                                     detail: "Whether new mail is sorted in the background, and by your own model or a cloud service.")
+                    }
+                }
+            }
 
             Section("Phone") {
                 NavigationLink {

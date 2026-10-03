@@ -47,7 +47,18 @@ struct EventDetailView: View {
                 if !people.isEmpty {
                     Section(people.count == 1 ? "1 person" : "\(people.count) people") {
                         ForEach(people, id: \.person.email) { p in
-                            PersonRow(person: p.person, organizer: p.organizer)
+                            if let id = p.person.personId {
+                                // Someone in People: open their page.
+                                Button {
+                                    dismiss()
+                                    model.show(person: id)
+                                } label: {
+                                    PersonRow(person: p.person, organizer: p.organizer)
+                                }
+                                .tint(.primary)
+                            } else {
+                                PersonRow(person: p.person, organizer: p.organizer)
+                            }
                         }
                     }
                 }

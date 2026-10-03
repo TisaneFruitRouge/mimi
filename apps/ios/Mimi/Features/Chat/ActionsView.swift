@@ -20,10 +20,12 @@ struct ActionsView: View {
     var body: some View {
         let remembered = actions.filter { Self.memoryWrites.contains($0.tool) && $0.status == .done && $0.memoryRevision != nil }
         let scheduled = actions.filter { Self.scheduleWrites.contains($0.tool) && $0.status == .done && $0.scheduleRevision != nil }
+        // Email drafts show as the draft itself, to check and send.
+        let drafts = actions.filter { MailDrafts.draft(of: $0) != nil }
         let automatic = actions.filter { !$0.requiresApproval && Self.mayBeAutomatic.contains($0.tool) }
         let reads = actions.filter { a in
             !a.requiresApproval && !Self.memoryReads.contains(a.tool) && !Self.memoryWrites.contains(a.tool)
-                && !scheduled.contains(a) && !automatic.contains(a)
+                && !scheduled.contains(a) && !drafts.contains(a) && !automatic.contains(a)
         }
         // An approved reminder becomes its Undo line.
         let asks = actions.filter { $0.requiresApproval && !scheduled.contains($0) }
@@ -40,6 +42,7 @@ struct ActionsView: View {
             ForEach(scheduled) { a in
                 UndoLine(action: a, icon: "bell.fill") { api in try await api.undoSchedule(a.scheduleRevision ?? 0) }
             }
+            ForEach(drafts) { MailDraftCard(action: $0) }
             ForEach(automatic) { DecidedCard(action: $0, automatic: true) }
             ForEach(asks) { a in
                 if a.status == .pendingApproval {

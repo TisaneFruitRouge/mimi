@@ -83,6 +83,12 @@ struct ConversationsView: View {
         .onChange(of: model.askDraft) { _, draft in
             if draft != nil { newChat() }
         }
+        // A routine's result opened from the banner or Calendar.
+        .onChange(of: model.openConversation) { _, id in
+            guard let id else { return }
+            model.openConversation = nil
+            path = [id]
+        }
     }
 
     private func newChat() {
