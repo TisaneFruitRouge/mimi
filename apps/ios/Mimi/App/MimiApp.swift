@@ -53,6 +53,7 @@ struct MainTabs: View {
             Tab("Chats", systemImage: "bubble.left.and.bubble.right", value: AppTab.chats) {
                 ConversationsView()
             }
+            Tab("Calendar", systemImage: "calendar", value: AppTab.calendar) { CalendarView() }
             Tab("Settings", systemImage: "gearshape", value: AppTab.settings) {
                 SettingsView()
             }
