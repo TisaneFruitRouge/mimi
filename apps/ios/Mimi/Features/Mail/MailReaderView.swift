@@ -381,8 +381,30 @@ struct MailMessageCard: View {
     let detail: MailThreadDetail
     @Environment(AppModel.self) private var model
     @Environment(MailStore.self) private var store
+    @State private var notInPeople: String?
+
+    /// Opens the sender in People, found by their address, like the desktop's panel.
+    private func showInPeople(_ email: String) {
+        Task {
+            guard let api = model.api else { return }
+            if let hit = try? await api.people(email).first {
+                model.show(person: hit.id)
+            } else {
+                notInPeople = email
+            }
+        }
+    }
 
     var body: some View {
+        card
+            .alert("Not in your contacts", isPresented: .constant(notInPeople != nil)) {
+                Button("OK") { notInPeople = nil }
+            } message: {
+                Text("\(notInPeople ?? "") isn't in People yet.")
+            }
+    }
+
+    @ViewBuilder private var card: some View {
         let m = message
         let recipients = m.to + m.cc
         VStack(alignment: .leading, spacing: 12) {
@@ -394,6 +416,7 @@ struct MailMessageCard: View {
                         } else {
                             Menu {
                                 Text(m.from.email)
+                                Button("Show in People", systemImage: "person.crop.circle") { showInPeople(m.from.email) }
                                 Button("New message", systemImage: "square.and.pencil") {
                                     store.compose = MailComposeRequest(draft: MailDraft(connectionId: detail.thread.connectionId, to: [m.from.email]))
                                 }

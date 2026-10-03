@@ -53,9 +53,6 @@ struct CalendarView: View {
             .navigationTitle(title)
             .toolbarTitleDisplayMode(.inlineLarge)
             .toolbar { toolbar }
-            .overlay(alignment: .top) {
-                DeliveryBanner { router.conversation = $0 }
-            }
             .overlay(alignment: .bottom) { CalendarToastView(store: store) }
             .navigationDestination(item: $router.conversation) { ChatView(conversationId: $0) }
             .navigationDestination(isPresented: $router.showReminders) { RemindersView() }

@@ -48,6 +48,11 @@ final class AppModel {
     var tab: AppTab = .chats
     /// A message to start a new chat with ("Ask Mimi about this"), taken by the chat once.
     var askDraft: Draft?
+    /// Someone to open in People (a guest on an event, the sender of an email), taken by
+    /// the People tab once.
+    var openPerson: UUID?
+    /// A conversation to open in Chats (a routine's result), taken by Chats once.
+    var openConversation: UUID?
 
     private var feed: Task<Void, Never>?
     private var retry: Task<Void, Never>?
@@ -331,6 +336,18 @@ final class AppModel {
     func ask(about kind: MentionKind, id: String, label: String) {
         askDraft = Draft(text: "\(kind.sigil)\(label) ", mentions: [Mention(kind: kind, id: id, label: label)])
         tab = .chats
+    }
+
+    /// Opens a conversation in Chats, from any panel.
+    func show(conversation id: UUID) {
+        openConversation = id
+        tab = .chats
+    }
+
+    /// Opens someone's page in People, from any panel.
+    func show(person id: UUID) {
+        openPerson = id
+        tab = .people
     }
 
     /// A default name for this phone on the computer's list.

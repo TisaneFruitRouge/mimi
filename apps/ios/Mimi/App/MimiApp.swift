@@ -61,7 +61,11 @@ struct MainTabs: View {
             }
         }
         .overlay(alignment: .top) {
-            ConnectionBanner()
+            VStack(spacing: 8) {
+                ConnectionBanner()
+                // A reminder going off, or a routine's result, on whichever tab is open.
+                DeliveryBanner { model.show(conversation: $0) }
+            }
         }
     }
 }

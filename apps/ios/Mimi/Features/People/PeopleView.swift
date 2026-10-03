@@ -80,6 +80,15 @@ struct PeopleView: View {
         }
         .environment(flow)
         .modifier(PeopleFlowSheets(flow: flow))
+        // Someone opened from another panel (a guest, a sender).
+        .onAppear { takeOpenPerson() }
+        .onChange(of: model.openPerson) { _, _ in takeOpenPerson() }
+    }
+
+    private func takeOpenPerson() {
+        guard let id = model.openPerson else { return }
+        model.openPerson = nil
+        flow.open(id)
     }
 
     private var selectionTitle: String {
