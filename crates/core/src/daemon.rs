@@ -86,6 +86,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         scheduler: Default::default(),
         mail: Default::default(),
         updates: Default::default(),
+        remote: Default::default(),
     });
     #[cfg(debug_assertions)]
     if std::env::var(crate::tools::dev::ENV).is_ok_and(|v| v == "1") {
@@ -109,6 +110,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
     crate::schedule::install(&state);
     crate::mail::install(&state);
     tokio::spawn(crate::updates::run(state.clone()));
+    crate::remote::install(&state);
 
     match crate::runtime::find_binary() {
         Some(path) => tracing::info!(path = %path.display(), "built-in model runtime found"),
@@ -130,6 +132,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
     let served = axum::serve(listener, api::router(state.clone()))
         .with_graceful_shutdown(shutdown_signal())
         .await;
+    crate::remote::stop(&state).await;
     // The runtime is a child process: take it down with the daemon.
     state.runtime.stop(&state).await;
     state.semantic.stop().await;
@@ -143,7 +146,7 @@ pub const DEFAULT_PORT: u16 = 7437;
 /// Overrides the port.
 pub const PORT_ENV: &str = "MIMI_PORT";
 
-/// Binds loopback only; remote access will be a separate, explicitly enabled listener.
+/// Binds loopback only. Phones reach the daemon over iroh (`remote`), never through this.
 /// Falls back to a random port if the preferred one is taken.
 async fn bind() -> anyhow::Result<TcpListener> {
     let preferred = match std::env::var(PORT_ENV) {

@@ -24,6 +24,7 @@ mod memory;
 mod people;
 mod permissions;
 mod providers;
+mod remote;
 mod schedule;
 mod settings;
 mod updates;
@@ -191,7 +192,20 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/mail/messages/{id}/images", post(mail::images))
         .route("/web/login-link", post(web::login_link))
         .route("/web/logout", post(web::logout))
-        .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
+        .route("/remote", get(remote::status))
+        .route(
+            "/remote/pairing",
+            post(remote::offer).delete(remote::cancel_offers),
+        )
+        .route("/remote/relay", axum::routing::put(remote::set_relay))
+        .route(
+            "/remote/devices/{id}",
+            axum::routing::patch(remote::rename).delete(remote::remove),
+        )
+        .route_layer(middleware::from_fn_with_state(state.clone(), require_auth))
+        // Outside the token check: a phone has no token yet when it pairs. The handler
+        // only answers requests that came in over iroh.
+        .route("/remote/pair", post(remote::pair));
 
     Router::new()
         .route("/health", get(health))
@@ -225,11 +239,15 @@ pub enum Auth {
     Bearer,
     /// A browser session cookie.
     Session,
+    /// A paired phone, over iroh (`remote`).
+    Device(uuid::Uuid),
 }
 
 /// Accepts the bearer token, or a browser session cookie. Cookie requests must also
 /// come from our own origin: the Host check defeats DNS rebinding, and the Origin check
 /// on anything that changes state (and on the event socket) defeats cross-site requests.
+/// Requests from phones (over iroh) accept only a phone's own token, issued to the very
+/// key the connection proved.
 async fn require_auth(
     State(state): State<Arc<AppState>>,
     mut req: Request,
@@ -240,6 +258,19 @@ async fn require_auth(
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "));
+    if let Some(peer) = req.extensions().get::<crate::remote::Peer>() {
+        let Some(token) = bearer else {
+            return StatusCode::UNAUTHORIZED.into_response();
+        };
+        return match crate::remote::store::authenticate(&state.db, token, &peer.endpoint_id).await {
+            Ok(Some(device)) => {
+                req.extensions_mut().insert(Auth::Device(device));
+                next.run(req).await
+            }
+            Ok(None) => StatusCode::UNAUTHORIZED.into_response(),
+            Err(e) => error::AppError::from(e).into_response(),
+        };
+    }
     if let Some(token) = bearer {
         if !constant_time_eq(token.as_bytes(), state.token.as_bytes()) {
             return StatusCode::UNAUTHORIZED.into_response();

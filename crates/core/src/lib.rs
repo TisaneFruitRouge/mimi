@@ -20,6 +20,7 @@ pub mod memory;
 pub mod people;
 pub mod persona;
 pub mod providers;
+pub mod remote;
 pub mod runtime;
 pub mod schedule;
 pub mod settings;
@@ -65,6 +66,8 @@ pub struct AppState {
     pub mail: mail::Mail,
     /// "Check for new versions": the test endpoint and the loop's wake-up.
     pub updates: updates::Updates,
+    /// Using Mimi from a phone: the iroh endpoint, pairing codes, open connections.
+    pub remote: remote::Remote,
 }
 
 impl AppState {
@@ -101,6 +104,7 @@ impl AppState {
             scheduler: Default::default(),
             mail: Default::default(),
             updates: Default::default(),
+            remote: Default::default(),
         }
     }
 }

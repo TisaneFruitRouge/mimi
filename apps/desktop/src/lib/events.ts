@@ -128,6 +128,9 @@ function apply(qc: QueryClient, event: Event) {
     case "update_changed":
       qc.setQueryData(keys.updates, event.update);
       break;
+    case "remote_changed":
+      qc.setQueryData(keys.remote, event.remote);
+      break;
     case "runtime_changed":
       qc.setQueryData(keys.runtime, event.runtime);
       break;

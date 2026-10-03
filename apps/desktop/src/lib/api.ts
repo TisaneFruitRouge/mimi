@@ -19,6 +19,9 @@ import type { Person } from "@/bindings/Person";
 import type { PersonSummary } from "@/bindings/PersonSummary";
 import type { PersonUpdate } from "@/bindings/PersonUpdate";
 import type { RemovedPerson } from "@/bindings/RemovedPerson";
+import type { PairingOffer } from "@/bindings/PairingOffer";
+import type { Relay } from "@/bindings/Relay";
+import type { RemoteAccess } from "@/bindings/RemoteAccess";
 import type { ModelPull } from "@/bindings/ModelPull";
 import type { RuntimeStatus } from "@/bindings/RuntimeStatus";
 import type { UpdateStatus } from "@/bindings/UpdateStatus";
@@ -127,6 +130,14 @@ export const api = {
   putSettings: (s: Settings) => call<Settings>("PUT", "/settings", s),
   updates: () => call<UpdateStatus>("GET", "/updates"),
   checkForUpdates: () => call<UpdateStatus>("POST", "/updates/check"),
+  /** Phones paired with this computer, and how they reach it. */
+  remote: () => call<RemoteAccess>("GET", "/remote"),
+  /** A one-time code for a phone to scan; starts phone access if needed. */
+  pairPhone: () => call<PairingOffer>("POST", "/remote/pairing"),
+  cancelPairing: () => call<null>("DELETE", "/remote/pairing"),
+  setRelay: (relay: Relay) => call<RemoteAccess>("PUT", "/remote/relay", relay),
+  renamePhone: (id: string, name: string) => call<RemoteAccess>("PATCH", `/remote/devices/${id}`, { name }),
+  removePhone: (id: string) => call<null>("DELETE", `/remote/devices/${id}`),
   /** What the assistant may do without asking, kind by kind, with the user's choices. */
   permissions: () => call<PermissionKind[]>("GET", "/permissions"),
   setPermission: (kind: string, choice: KindPermission) =>
@@ -332,6 +343,7 @@ export const api = {
 export const keys = {
   settings: ["settings"] as const,
   updates: ["updates"] as const,
+  remote: ["remote"] as const,
   permissions: ["permissions"] as const,
   status: ["status"] as const,
   providers: ["providers"] as const,

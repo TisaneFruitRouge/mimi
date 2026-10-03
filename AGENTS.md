@@ -14,7 +14,11 @@ find-and-replace (it was renamed from Hearth once already).
    client ID, a Telegram api_id) are just identifiers shown on consent screens; they
    never route data through the project. The one exception to "nothing unasked":
    "Check for new versions" asks GitHub's public releases API directly, once a day, and
-   only after the user turns it on (off by default).
+   only after the user turns it on (off by default). The other exception is phone access
+   (Settings › Phone, only once a phone is paired): iroh's public relays and address
+   lookup, run by number 0, help the phone find the computer and pass on end-to-end
+   encrypted traffic they can't read when no direct path exists. Disclosed in Settings,
+   replaceable with the user's own relay.
 1. **Self-hosting, privacy and security by default.** Prefer local processing. Data
    leaves the machine only when the task needs it (sending a Telegram message, creating
    a calendar event), or when the user has explicitly chosen a cloud model.
@@ -85,7 +89,7 @@ features go in the daemon plus the protocol types. Frontends only render them.
   in the translucent top bar, ⌘/Ctrl 1–4. Everything set up once lives in the Settings
   window (gear button or ⌘/Ctrl ,): a System-Settings-style sidebar with General,
   Personality, Connections, Models, Memory, Reminders & notifications, Permissions,
-  Privacy. Conversations are behind Search (⌘/Ctrl K), which also jumps to every panel
+  Privacy, Phone. Conversations are behind Search (⌘/Ctrl K), which also jumps to every panel
   and settings page. ⌘/Ctrl N is a new chat. The URL hash holds the route: `#/chat/<id>`, `#/calendar`, `#/mail`,
   `#/people/<id>`, `#/settings/<page>` (types `Tab`, `SettingsPage` in `top-bar.tsx`);
   old addresses (`#/models`, `#/reminders`, …) are rewritten to their new place. Chat
@@ -395,6 +399,21 @@ than inventing their own.
   `imap.`/`mail.` hosts. Never a third-party lookup service. The password field only
   says "App password" for services that require one. Add new hosts to `known_mx` /
   `known_domain`; `cargo test -p mimi-core live_discovery -- --ignored` checks real domains.
+
+## Phone access
+
+- `crates/core/src/remote/`; full design in `docs/architecture.md` › Using Mimi from a
+  phone. Phones connect peer to peer with iroh (ALPN `mimi/1`): one QUIC stream per API
+  request (`remote/wire.rs`), events as NDJSON lines (`GET /v1/events` with `Accept:
+  application/x-ndjson`). The endpoint runs only while a phone is paired or a pairing code
+  waits.
+- Pairing is a QR code from Settings › Phone (`POST /v1/remote/pairing`, this computer
+  only); the phone trades its code for a token bound to its key (`POST /v1/remote/pair`,
+  only over iroh). Requests over iroh accept only that token from that key
+  (`Auth::Device`), never the local token or cookies. Keep anything that changes how
+  phones reach the computer (relay, codes, login links) refused to `Auth::Device`.
+- Tests: `remote/tests.rs` (real endpoint, fake phones, relays off). Never point tests at
+  number 0's relays except the ignored `live_pairing`.
 
 ## People and @ mentions
 

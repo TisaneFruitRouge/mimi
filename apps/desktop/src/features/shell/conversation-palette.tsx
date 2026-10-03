@@ -9,6 +9,7 @@ import {
   Mail,
   MessageSquare,
   Settings,
+  Smartphone,
   Smile,
   Sparkles,
   SquarePen,
@@ -126,6 +127,9 @@ export function ConversationPalette({
           </CommandItem>
           <CommandItem onSelect={run(() => onSection("privacy"))}>
             <Lock /> Privacy
+          </CommandItem>
+          <CommandItem keywords={["iphone", "mobile", "pair", "qr", "relay"]} onSelect={run(() => onSection("phone"))}>
+            <Smartphone /> Phone
           </CommandItem>
         </CommandGroup>
       </CommandList>
