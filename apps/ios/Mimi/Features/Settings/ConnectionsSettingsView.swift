@@ -53,12 +53,12 @@ struct ConnectionsSettingsView: View {
 
     var body: some View {
         List {
-            Section {
+            // A header, not a row: a row's narrow insets clip wrapped text at the edge.
+            Section {} header: {
                 Text("Let \(model.assistantName) help with the apps you use. It only sees what you connect, and always asks before it sends or changes anything.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                    .listRowBackground(Color.clear)
-                    .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
+                    .textCase(nil)
             }
 
             Section {

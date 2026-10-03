@@ -11,12 +11,12 @@ struct PermissionsSettingsView: View {
 
     var body: some View {
         List {
-            Section {
+            // A header, not a row: a row's narrow insets clip wrapped text at the edge.
+            Section {} header: {
                 Text("What \(model.assistantName) may do for you without asking first.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                    .listRowBackground(Color.clear)
-                    .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
+                    .textCase(nil)
             }
             ForEach(kinds) { k in
                 Section {
