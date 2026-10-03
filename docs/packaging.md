@@ -53,6 +53,12 @@ driver it runs on the CPU. macOS uses Metal.
 An AppImage runs from a temporary mount, so a background service installed from one runs
 the AppImage file itself; see [Daemon lifecycle › AppImage](daemon-lifecycle.md#appimage).
 
+The AppImage also carries GStreamer's plugins (`bundleMediaFramework: true`). The
+webview opens the microphone and plays sound through them, and the AppImage points
+GStreamer at its own folder only, so without them voice finds no microphone. They are
+copied from the build machine: the release workflow installs the base, good, PulseAudio
+and ALSA plugins first. The .deb and .rpm use the system's GStreamer.
+
 ## Building locally
 
 `pnpm bundle` = `scripts/prepare-bundle.sh` (the frontend, release `mimid` for the target
