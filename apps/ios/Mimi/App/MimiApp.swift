@@ -54,6 +54,7 @@ struct MainTabs: View {
                 ConversationsView()
             }
             Tab("Calendar", systemImage: "calendar", value: AppTab.calendar) { CalendarView() }
+            Tab("Mail", systemImage: "envelope", value: AppTab.mail) { MailView() }
             Tab("People", systemImage: "person.2", value: AppTab.people) { PeopleView() }
             Tab("Settings", systemImage: "gearshape", value: AppTab.settings) {
                 SettingsView()
