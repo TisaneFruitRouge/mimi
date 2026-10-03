@@ -1,0 +1,738 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0F77E266D56004CC38FAD586 /* MessageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CB6B548EC877A3B87C728AB /* MessageView.swift */; };
+		1DA626A80FFAB78F78466915 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 991BBBF73F27B6F3675F7F08 /* AppModel.swift */; };
+		237E79C300C99439B4CA7A39 /* MimiAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E2E121E2F7913C46E569184 /* MimiAPI.swift */; };
+		38AEC94DFD121AAC5D345C62 /* AssistantAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A983717395C201A71211196 /* AssistantAvatar.swift */; };
+		400D01E6C1980737F95FBC9E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 974CD88FA4A66803E01BED12 /* Assets.xcassets */; };
+		4679EEA90DA843FF808F09B6 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83B6958E8EA884747E0DF12B /* ChatView.swift */; };
+		47046C7F11C4A4DC6B588E65 /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = C90A8CEE9691A565B2C1F822 /* Keychain.swift */; };
+		65048B5AEAF79AEB26C8086E /* MimiApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = E32D0782CC29C8F9E3BCA1D7 /* MimiApp.swift */; };
+		669650368F626441627B172E /* SystemConfiguration.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9EB49058F70487BB0BF77240 /* SystemConfiguration.framework */; };
+		74EC5F055AF54A216E0277C9 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5AB989E8F33AAAD708557CE /* Theme.swift */; };
+		76A63BAA65E1166DE8C08262 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F4E040DCD4E20E7AF9DD012 /* SettingsView.swift */; };
+		78246481DC7CA8B6F6A117AC /* Network.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DDC0F46DEA99D7E088C5D5A0 /* Network.framework */; };
+		808B9ADFE9B836E90C1BAFE5 /* ConversationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28CAAAA64769C20F7E2FA480 /* ConversationsView.swift */; };
+		8EE19E9A28D1C1D9F0D436AF /* MarkdownText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BF4C0CBD5260865DE31FAF5 /* MarkdownText.swift */; };
+		8F111D647B6C77E131AC8090 /* IrohLib in Frameworks */ = {isa = PBXBuildFile; productRef = 2893CA7AE6D79ED65264ADAE /* IrohLib */; };
+		94E621B047A3C263FB97EB0B /* WalkthroughTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AC04CE41B1F05C9EBF37655 /* WalkthroughTests.swift */; };
+		9C7CCC82605B7876B07DF90D /* Remote.swift in Sources */ = {isa = PBXBuildFile; fileRef = F95B54A0EF59A7B079462487 /* Remote.swift */; };
+		A29093969A3598222B21D9F8 /* ActionArguments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D243A1C23A2E25DF4304B92 /* ActionArguments.swift */; };
+		A69837181E7A1B1F6ACA46C8 /* JSONValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E01C5D443BE8E8B49BA5154 /* JSONValue.swift */; };
+		B93416B1AA52F3F1111B52CA /* DaemonLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C44E04DF9F1F2CF7899660C /* DaemonLink.swift */; };
+		BD679C384F255B4A71BA2F19 /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9C17D0D8C8E223E3FEE8291 /* WelcomeView.swift */; };
+		C0A3B1F1F1773C47EBE37115 /* ActionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F98F7E51564F8F806E8DDDFF /* ActionsView.swift */; };
+		E20B695F0B42467D37324D93 /* MimiTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34D290F57CAF5F711269C458 /* MimiTests.swift */; };
+		E28FC9FB29BBE5260173D7F8 /* Composer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B018ED2B903AA1FEB8A80BE6 /* Composer.swift */; };
+		EB528EDB0E3307DC76848D89 /* Chat.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB154F39B13BDF3749744D35 /* Chat.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		D5948B197CF732D53E67932F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5041304FDC84EBE759FC7EA6 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 221CA24A547DE24235BA5178;
+			remoteInfo = Mimi;
+		};
+		FCBF5C67EBF3469A4FC432F2 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5041304FDC84EBE759FC7EA6 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 221CA24A547DE24235BA5178;
+			remoteInfo = Mimi;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		0A983717395C201A71211196 /* AssistantAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantAvatar.swift; sourceTree = "<group>"; };
+		0C44E04DF9F1F2CF7899660C /* DaemonLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DaemonLink.swift; sourceTree = "<group>"; };
+		0E4DC312712BAF6740119236 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		1D243A1C23A2E25DF4304B92 /* ActionArguments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActionArguments.swift; sourceTree = "<group>"; };
+		28CAAAA64769C20F7E2FA480 /* ConversationsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationsView.swift; sourceTree = "<group>"; };
+		2C30D7C0D2554C5520809D27 /* Mimi.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Mimi.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		34D290F57CAF5F711269C458 /* MimiTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MimiTests.swift; sourceTree = "<group>"; };
+		3F4E040DCD4E20E7AF9DD012 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		4E2E121E2F7913C46E569184 /* MimiAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MimiAPI.swift; sourceTree = "<group>"; };
+		6B94FABD767B5D79EA1840DD /* MimiTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MimiTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		6CB6B548EC877A3B87C728AB /* MessageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageView.swift; sourceTree = "<group>"; };
+		83B6958E8EA884747E0DF12B /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
+		8BF4C0CBD5260865DE31FAF5 /* MarkdownText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownText.swift; sourceTree = "<group>"; };
+		8E01C5D443BE8E8B49BA5154 /* JSONValue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONValue.swift; sourceTree = "<group>"; };
+		952B58D9FDFA3BFA4B9C5761 /* MimiUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MimiUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		974CD88FA4A66803E01BED12 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		991BBBF73F27B6F3675F7F08 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		9AC04CE41B1F05C9EBF37655 /* WalkthroughTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalkthroughTests.swift; sourceTree = "<group>"; };
+		9EB49058F70487BB0BF77240 /* SystemConfiguration.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SystemConfiguration.framework; path = System/Library/Frameworks/SystemConfiguration.framework; sourceTree = SDKROOT; };
+		B018ED2B903AA1FEB8A80BE6 /* Composer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Composer.swift; sourceTree = "<group>"; };
+		B5AB989E8F33AAAD708557CE /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		C90A8CEE9691A565B2C1F822 /* Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keychain.swift; sourceTree = "<group>"; };
+		D9C17D0D8C8E223E3FEE8291 /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
+		DB154F39B13BDF3749744D35 /* Chat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Chat.swift; sourceTree = "<group>"; };
+		DDC0F46DEA99D7E088C5D5A0 /* Network.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Network.framework; path = System/Library/Frameworks/Network.framework; sourceTree = SDKROOT; };
+		DF0555E83932D36046B4501D /* App.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = App.xcconfig; sourceTree = "<group>"; };
+		E32D0782CC29C8F9E3BCA1D7 /* MimiApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MimiApp.swift; sourceTree = "<group>"; };
+		F95B54A0EF59A7B079462487 /* Remote.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Remote.swift; sourceTree = "<group>"; };
+		F98F7E51564F8F806E8DDDFF /* ActionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActionsView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		2BBDF19F4436F78255E125C6 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8F111D647B6C77E131AC8090 /* IrohLib in Frameworks */,
+				669650368F626441627B172E /* SystemConfiguration.framework in Frameworks */,
+				78246481DC7CA8B6F6A117AC /* Network.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0533B32FDEE081C11C7C4CA5 /* MimiTests */ = {
+			isa = PBXGroup;
+			children = (
+				34D290F57CAF5F711269C458 /* MimiTests.swift */,
+			);
+			path = MimiTests;
+			sourceTree = "<group>";
+		};
+		1101140AA59675C52B7F8BA7 /* Connection */ = {
+			isa = PBXGroup;
+			children = (
+				0C44E04DF9F1F2CF7899660C /* DaemonLink.swift */,
+				C90A8CEE9691A565B2C1F822 /* Keychain.swift */,
+				4E2E121E2F7913C46E569184 /* MimiAPI.swift */,
+			);
+			path = Connection;
+			sourceTree = "<group>";
+		};
+		3587FBFD3CFFA0613ABE1ABB /* Store */ = {
+			isa = PBXGroup;
+			children = (
+				991BBBF73F27B6F3675F7F08 /* AppModel.swift */,
+			);
+			path = Store;
+			sourceTree = "<group>";
+		};
+		5762DDC39903755C3DBD67FC = {
+			isa = PBXGroup;
+			children = (
+				E435C386DA8803C4F895FC2D /* Config */,
+				EE309BB3F16D58129E4220ED /* Mimi */,
+				0533B32FDEE081C11C7C4CA5 /* MimiTests */,
+				F9655301DB0283531EC864CE /* MimiUITests */,
+				9B6371A3834271ECC0FD5437 /* Frameworks */,
+				9FD12BC5412CC3E7E7EACFDA /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		7FF1B17C51F336283B7FE318 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				DB154F39B13BDF3749744D35 /* Chat.swift */,
+				8E01C5D443BE8E8B49BA5154 /* JSONValue.swift */,
+				F95B54A0EF59A7B079462487 /* Remote.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		8BFC8469AE0131086104EB5C /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				3F4E040DCD4E20E7AF9DD012 /* SettingsView.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+		914DD07D83F966D195A231E3 /* Design */ = {
+			isa = PBXGroup;
+			children = (
+				0A983717395C201A71211196 /* AssistantAvatar.swift */,
+				8BF4C0CBD5260865DE31FAF5 /* MarkdownText.swift */,
+				B5AB989E8F33AAAD708557CE /* Theme.swift */,
+			);
+			path = Design;
+			sourceTree = "<group>";
+		};
+		985299994C7A414F863FAF92 /* Pairing */ = {
+			isa = PBXGroup;
+			children = (
+				D9C17D0D8C8E223E3FEE8291 /* WelcomeView.swift */,
+			);
+			path = Pairing;
+			sourceTree = "<group>";
+		};
+		9B6371A3834271ECC0FD5437 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				DDC0F46DEA99D7E088C5D5A0 /* Network.framework */,
+				9EB49058F70487BB0BF77240 /* SystemConfiguration.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		9FD12BC5412CC3E7E7EACFDA /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				2C30D7C0D2554C5520809D27 /* Mimi.app */,
+				6B94FABD767B5D79EA1840DD /* MimiTests.xctest */,
+				952B58D9FDFA3BFA4B9C5761 /* MimiUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		B0B7C087B15FB11B0583AF34 /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				EFDDCC96A3C6DE255C0B6D41 /* Chat */,
+				985299994C7A414F863FAF92 /* Pairing */,
+				8BFC8469AE0131086104EB5C /* Settings */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		BA755654D77BB5EF6513DDB7 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				E32D0782CC29C8F9E3BCA1D7 /* MimiApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		E435C386DA8803C4F895FC2D /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				DF0555E83932D36046B4501D /* App.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		EE309BB3F16D58129E4220ED /* Mimi */ = {
+			isa = PBXGroup;
+			children = (
+				974CD88FA4A66803E01BED12 /* Assets.xcassets */,
+				0E4DC312712BAF6740119236 /* Info.plist */,
+				BA755654D77BB5EF6513DDB7 /* App */,
+				1101140AA59675C52B7F8BA7 /* Connection */,
+				914DD07D83F966D195A231E3 /* Design */,
+				B0B7C087B15FB11B0583AF34 /* Features */,
+				7FF1B17C51F336283B7FE318 /* Models */,
+				3587FBFD3CFFA0613ABE1ABB /* Store */,
+			);
+			path = Mimi;
+			sourceTree = "<group>";
+		};
+		EFDDCC96A3C6DE255C0B6D41 /* Chat */ = {
+			isa = PBXGroup;
+			children = (
+				1D243A1C23A2E25DF4304B92 /* ActionArguments.swift */,
+				F98F7E51564F8F806E8DDDFF /* ActionsView.swift */,
+				83B6958E8EA884747E0DF12B /* ChatView.swift */,
+				B018ED2B903AA1FEB8A80BE6 /* Composer.swift */,
+				28CAAAA64769C20F7E2FA480 /* ConversationsView.swift */,
+				6CB6B548EC877A3B87C728AB /* MessageView.swift */,
+			);
+			path = Chat;
+			sourceTree = "<group>";
+		};
+		F9655301DB0283531EC864CE /* MimiUITests */ = {
+			isa = PBXGroup;
+			children = (
+				9AC04CE41B1F05C9EBF37655 /* WalkthroughTests.swift */,
+			);
+			path = MimiUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		221CA24A547DE24235BA5178 /* Mimi */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 2D059E2C72C6FA42F7F5B941 /* Build configuration list for PBXNativeTarget "Mimi" */;
+			buildPhases = (
+				BB5519C2AC84E9EE53BD1391 /* Sources */,
+				F42FF0D863F48E53F55C3A87 /* Resources */,
+				2BBDF19F4436F78255E125C6 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Mimi;
+			packageProductDependencies = (
+				2893CA7AE6D79ED65264ADAE /* IrohLib */,
+			);
+			productName = Mimi;
+			productReference = 2C30D7C0D2554C5520809D27 /* Mimi.app */;
+			productType = "com.apple.product-type.application";
+		};
+		EDCA444145B7BE6B300B6D19 /* MimiTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 03E5BFB5FA0194A5FC04B387 /* Build configuration list for PBXNativeTarget "MimiTests" */;
+			buildPhases = (
+				A811D95182602166BD321425 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				724B0958CCA34A5F1AA9199D /* PBXTargetDependency */,
+			);
+			name = MimiTests;
+			packageProductDependencies = (
+			);
+			productName = MimiTests;
+			productReference = 6B94FABD767B5D79EA1840DD /* MimiTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		F19A3556619684179D667A58 /* MimiUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 02EF77CDB92586C458253EF1 /* Build configuration list for PBXNativeTarget "MimiUITests" */;
+			buildPhases = (
+				957DBD2619101F4C1A922B61 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B286AB0A475D0EFCD0260B03 /* PBXTargetDependency */,
+			);
+			name = MimiUITests;
+			packageProductDependencies = (
+			);
+			productName = MimiUITests;
+			productReference = 952B58D9FDFA3BFA4B9C5761 /* MimiUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		5041304FDC84EBE759FC7EA6 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					221CA24A547DE24235BA5178 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+					EDCA444145B7BE6B300B6D19 = {
+						DevelopmentTeam = "";
+					};
+					F19A3556619684179D667A58 = {
+						DevelopmentTeam = "";
+						TestTargetID = 221CA24A547DE24235BA5178;
+					};
+				};
+			};
+			buildConfigurationList = 443F99B2BD21C86C754974BC /* Build configuration list for PBXProject "Mimi" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 5762DDC39903755C3DBD67FC;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				24D525E12580550A743A2EAB /* XCRemoteSwiftPackageReference "iroh-ffi" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 9FD12BC5412CC3E7E7EACFDA /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				221CA24A547DE24235BA5178 /* Mimi */,
+				EDCA444145B7BE6B300B6D19 /* MimiTests */,
+				F19A3556619684179D667A58 /* MimiUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		F42FF0D863F48E53F55C3A87 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				400D01E6C1980737F95FBC9E /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		957DBD2619101F4C1A922B61 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				94E621B047A3C263FB97EB0B /* WalkthroughTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A811D95182602166BD321425 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E20B695F0B42467D37324D93 /* MimiTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BB5519C2AC84E9EE53BD1391 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A29093969A3598222B21D9F8 /* ActionArguments.swift in Sources */,
+				C0A3B1F1F1773C47EBE37115 /* ActionsView.swift in Sources */,
+				1DA626A80FFAB78F78466915 /* AppModel.swift in Sources */,
+				38AEC94DFD121AAC5D345C62 /* AssistantAvatar.swift in Sources */,
+				EB528EDB0E3307DC76848D89 /* Chat.swift in Sources */,
+				4679EEA90DA843FF808F09B6 /* ChatView.swift in Sources */,
+				E28FC9FB29BBE5260173D7F8 /* Composer.swift in Sources */,
+				808B9ADFE9B836E90C1BAFE5 /* ConversationsView.swift in Sources */,
+				B93416B1AA52F3F1111B52CA /* DaemonLink.swift in Sources */,
+				A69837181E7A1B1F6ACA46C8 /* JSONValue.swift in Sources */,
+				47046C7F11C4A4DC6B588E65 /* Keychain.swift in Sources */,
+				8EE19E9A28D1C1D9F0D436AF /* MarkdownText.swift in Sources */,
+				0F77E266D56004CC38FAD586 /* MessageView.swift in Sources */,
+				237E79C300C99439B4CA7A39 /* MimiAPI.swift in Sources */,
+				65048B5AEAF79AEB26C8086E /* MimiApp.swift in Sources */,
+				9C7CCC82605B7876B07DF90D /* Remote.swift in Sources */,
+				76A63BAA65E1166DE8C08262 /* SettingsView.swift in Sources */,
+				74EC5F055AF54A216E0277C9 /* Theme.swift in Sources */,
+				BD679C384F255B4A71BA2F19 /* WelcomeView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		724B0958CCA34A5F1AA9199D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 221CA24A547DE24235BA5178 /* Mimi */;
+			targetProxy = D5948B197CF732D53E67932F /* PBXContainerItemProxy */;
+		};
+		B286AB0A475D0EFCD0260B03 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 221CA24A547DE24235BA5178 /* Mimi */;
+			targetProxy = FCBF5C67EBF3469A4FC432F2 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		205B580D140688C6D867CE98 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(MIMI_BUNDLE_ID).tests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Mimi.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Mimi";
+			};
+			name = Release;
+		};
+		30FB3B8B206EC5B276767406 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(MIMI_BUNDLE_ID).uitests";
+				SDKROOT = iphoneos;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Mimi;
+			};
+			name = Debug;
+		};
+		6E31526895A32E6F4B5F93D5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(MIMI_BUNDLE_ID).tests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Mimi.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Mimi";
+			};
+			name = Debug;
+		};
+		9899B12F1769F368816B5E4C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = Mimi/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"-framework",
+					Network,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(MIMI_BUNDLE_ID)";
+				PRODUCT_NAME = Mimi;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		A4699171FF94A60DC26A5B54 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = DF0555E83932D36046B4501D /* App.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		BD53DA77B4597763A6326A9E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(MIMI_BUNDLE_ID).uitests";
+				SDKROOT = iphoneos;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Mimi;
+			};
+			name = Release;
+		};
+		C966BFC7AC03C55C06CC0442 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = DF0555E83932D36046B4501D /* App.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		F3117DCCC2F13668D63AD636 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = Mimi/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"-framework",
+					Network,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(MIMI_BUNDLE_ID)";
+				PRODUCT_NAME = Mimi;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		02EF77CDB92586C458253EF1 /* Build configuration list for PBXNativeTarget "MimiUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				30FB3B8B206EC5B276767406 /* Debug */,
+				BD53DA77B4597763A6326A9E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		03E5BFB5FA0194A5FC04B387 /* Build configuration list for PBXNativeTarget "MimiTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6E31526895A32E6F4B5F93D5 /* Debug */,
+				205B580D140688C6D867CE98 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		2D059E2C72C6FA42F7F5B941 /* Build configuration list for PBXNativeTarget "Mimi" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F3117DCCC2F13668D63AD636 /* Debug */,
+				9899B12F1769F368816B5E4C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		443F99B2BD21C86C754974BC /* Build configuration list for PBXProject "Mimi" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A4699171FF94A60DC26A5B54 /* Debug */,
+				C966BFC7AC03C55C06CC0442 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		24D525E12580550A743A2EAB /* XCRemoteSwiftPackageReference "iroh-ffi" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/n0-computer/iroh-ffi";
+			requirement = {
+				kind = exactVersion;
+				version = 1.1.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		2893CA7AE6D79ED65264ADAE /* IrohLib */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 24D525E12580550A743A2EAB /* XCRemoteSwiftPackageReference "iroh-ffi" */;
+			productName = IrohLib;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 5041304FDC84EBE759FC7EA6 /* Project object */;
+}

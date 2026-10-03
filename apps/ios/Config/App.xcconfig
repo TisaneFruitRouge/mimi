@@ -1,0 +1,6 @@
+// Shared build settings. Your own signing team and bundle id go in Local.xcconfig
+// (not committed): copy Local.example.xcconfig.
+MIMI_BUNDLE_ID = dev.mimi.ios
+DEVELOPMENT_TEAM =
+
+#include? "Local.xcconfig"

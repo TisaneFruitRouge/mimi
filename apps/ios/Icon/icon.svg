@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!--
+    The iPhone app icon: the desktop icon's character (icons/source/icon.svg in
+    apps/desktop/src-tauri) on a full-bleed tile, since iOS rounds the corners itself.
+    Keep them in step. Regenerate with apps/ios/Icon/regenerate.sh.
+  -->
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e0f98f"/>
+      <stop offset="1" stop-color="#b4e140"/>
+    </linearGradient>
+    <radialGradient id="blush">
+      <stop offset=".35" stop-color="#ff8aa5" stop-opacity=".8"/>
+      <stop offset="1" stop-color="#ff8aa5" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fffefa"/>
+      <stop offset="1" stop-color="#f1efe6"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000" flood-opacity=".2"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#tile)"/>
+  <g transform="translate(112 96) scale(8)">
+      <ellipse cx="50" cy="91" rx="28" ry="3" fill="#000" fill-opacity=".08"/>
+      <path d="M50 19.5C50.4 14 49.4 10.5 47 7.5" fill="none" stroke="#6f9a1c" stroke-width="2.6" stroke-linecap="round"/>
+      <path d="M47.6 9.2C43 3 35 3 32 6C35.5 11.5 42.5 12 47.6 9.2Z" fill="#9ccc2e"/>
+      <path d="M48.6 10.4C51.6 3.6 59.4 2.2 62.8 4.6C60.4 10.8 53.6 12.6 48.6 10.4Z" fill="#b8e24a"/>
+      <path d="M50 18C76 18 91 38 91 60C91 80 74 88 50 88C26 88 9 80 9 60C9 38 24 18 50 18Z" fill="url(#body)"/>
+      <ellipse cx="33" cy="30" rx="10.5" ry="5.2" fill="#fff" fill-opacity=".6" transform="rotate(-22 33 30)"/>
+      <g fill="url(#blush)" opacity=".85"><ellipse cx="24.5" cy="64" rx="8" ry="5"/><ellipse cx="75.5" cy="64" rx="8" ry="5"/></g>
+      <g transform="translate(37.5 54.75)">
+        <path d="M -5 0 C -5 -9 5 -9 5 0 C 5 9 -5 9 -5 0 Z" fill="#1d1d1f" stroke="#1d1d1f" stroke-width="1.2" stroke-linejoin="round"/>
+        <circle cx="1.9" cy="-3.2" r="1.9" fill="#fff"/>
+      </g>
+      <g transform="translate(62.5 54.75)">
+        <path d="M -5 0 C -5 -9 5 -9 5 0 C 5 9 -5 9 -5 0 Z" fill="#1d1d1f" stroke="#1d1d1f" stroke-width="1.2" stroke-linejoin="round"/>
+        <circle cx="1.9" cy="-3.2" r="1.9" fill="#fff"/>
+      </g>
+      <path d="M46.2 66Q50 69.4 53.8 66" fill="none" stroke="#1d1d1f" stroke-width="2.3" stroke-linecap="round"/>
+  </g>
+</svg>
