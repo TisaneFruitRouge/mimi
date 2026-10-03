@@ -28,6 +28,7 @@
 | `crates/service` | `mimi-service` | Finds `mimid` and runs it as a login service (systemd, launchd, XDG autostart). Shared by the app and the CLI. |
 | `apps/desktop/src-tauri` | `mimi-desktop` | Tauri shell. Exposes Tauri commands that call `mimi-client`. |
 | `apps/desktop/src` | `@mimi/desktop` | React + Tailwind + shadcn/ui frontend. |
+| `apps/ios` | Mimi for iPhone | SwiftUI client over iroh (see "Using Mimi from a phone"). |
 
 ## Web interface
 

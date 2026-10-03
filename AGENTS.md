@@ -415,6 +415,23 @@ than inventing their own.
 - Tests: `remote/tests.rs` (real endpoint, fake phones, relays off). Never point tests at
   number 0's relays except the ignored `live_pairing`.
 
+## The iPhone app
+
+- `apps/ios/` (SwiftUI, iOS 26; `apps/ios/README.md`). A client like the desktop app: it
+  uses the same `/v1` API over iroh (`DaemonLink`) and renders; features live in the
+  daemon. Same look (`Mimi/Design/`: the desktop's tokens, lime used sparingly, the
+  mochi), same copy rules, same visible cloud use (`LocalityBadge`; on the phone a
+  local model is "On your computer").
+- Swift models in `Mimi/Models/` mirror `crates/protocol` by hand: when a protocol type
+  the app reads changes, change its mirror (explicit `CodingKeys`, decode only what's
+  read, tolerate unknown fields and events). Approval cards use `ActionArguments`, a
+  port of `action-formatters.tsx`: keep them in step.
+- `project.yml` → `Mimi.xcodeproj` with XcodeGen; commit both. Personal signing lives in
+  the ignored `Config/Local.xcconfig`.
+- Push notifications aren't there yet (Apple's push needs a key per developer account,
+  which doesn't fit "no Mimi server" for everyone). Telegram covers reminders away from
+  the app meanwhile.
+
 ## People and @ mentions
 
 - `crates/core/src/people/`: one directory of people. A person has contact cards

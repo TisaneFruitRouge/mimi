@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle2, Globe, Loader2, MoreHorizontal, Plus, ShieldCheck, Smartphone, Wifi } from "lucide-react";
+import { CheckCircle2, Copy, Globe, Loader2, MoreHorizontal, Plus, ShieldCheck, Smartphone, Wifi } from "lucide-react";
 import { toast } from "sonner";
 
 import { Grouped, IconTile, Page, PageHeader, Row, Section } from "@/components/page";
@@ -272,6 +272,21 @@ function PairDialog({ open, onClose, known }: { open: boolean; onClose: () => vo
             <Loader2 className="size-6 animate-spin text-muted-foreground" />
           )}
         </div>
+        {!paired && offer && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="-mt-2 self-center text-muted-foreground"
+            onClick={() =>
+              navigator.clipboard
+                .writeText(offer.link)
+                .then(() => toast.success("Link copied. Paste it in Mimi on your phone."))
+                .catch(() => toast.error("Couldn't copy the link."))
+            }
+          >
+            <Copy /> Copy as a link
+          </Button>
+        )}
         {!paired && (
           <p className="text-center type-footnote text-muted-foreground">
             The code works once and changes every few minutes. Keep it to yourself: anyone who scans it can
