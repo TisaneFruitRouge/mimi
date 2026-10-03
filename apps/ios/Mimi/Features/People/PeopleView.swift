@@ -54,6 +54,10 @@ struct PeopleView: View {
             .toolbar { toolbar }
             .refreshable { await sync() }
             .overlay { emptyState }
+            // Above the tab bar: a bottom toolbar would sit behind it and never show.
+            .safeAreaInset(edge: .bottom) {
+                if selecting { mergeBar }
+            }
             .navigationDestination(for: PeopleRoute.self) { route in
                 switch route {
                 case .person(let id): PersonView(id: id)
@@ -122,17 +126,6 @@ struct PeopleView: View {
             ToolbarItem(placement: .topBarLeading) {
                 Button("Cancel") { withAnimation { editMode = .inactive } }
             }
-            ToolbarItem(placement: .bottomBar) {
-                Button {
-                    guard let keep = chosenOrder.first else { return }
-                    flow.plan = MergePlan(keep: keep, others: Array(chosenOrder.dropFirst()))
-                    withAnimation { editMode = .inactive }
-                } label: {
-                    Label(selection.count > 1 ? "Merge \(selection.count) contacts" : "Merge contacts", systemImage: "arrow.triangle.merge")
-                        .labelStyle(.titleAndIcon)
-                }
-                .disabled(selection.count < 2)
-            }
         } else {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -152,6 +145,29 @@ struct PeopleView: View {
                     .disabled(model.phase != .online)
             }
         }
+    }
+
+    private var mergeBar: some View {
+        VStack(spacing: 6) {
+            Button {
+                guard let keep = chosenOrder.first else { return }
+                flow.plan = MergePlan(keep: keep, others: Array(chosenOrder.dropFirst()))
+                withAnimation { editMode = .inactive }
+            } label: {
+                Label(selection.count > 1 ? "Merge \(selection.count) contacts" : "Merge contacts", systemImage: "arrow.triangle.merge")
+            }
+            .buttonStyle(.lime)
+            .disabled(selection.count < 2)
+            if selection.count < 2 {
+                Text("Choose two or more people who are the same person.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
     @ViewBuilder
