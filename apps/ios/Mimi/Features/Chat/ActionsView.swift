@@ -255,7 +255,7 @@ private struct DecidedCard: View {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 icon
                 Group {
-                    Text(text) + (automatic ? Text(" · automatic").foregroundStyle(.secondary) : Text(""))
+                    Text("\(text)\(automatic ? Text(" · automatic").foregroundStyle(.secondary) : Text(""))")
                 }
                 .foregroundStyle(action.status == .failed ? Color.danger : action.status == .done ? Color.primary : Color.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
