@@ -78,8 +78,7 @@ struct MailPrivacyView: View {
                 }
                 .pickerStyle(.segmented)
                 .disabled(busy)
-                .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets())
+                .padding(.vertical, 4)
                 HStack {
                     Text("Where it runs")
                     Spacer()

@@ -16,6 +16,7 @@
 		16879E0435D4D3F9D22191B9 /* MailFolderEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E35EC5579E5E974AFC57021 /* MailFolderEditor.swift */; };
 		1DA626A80FFAB78F78466915 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 991BBBF73F27B6F3675F7F08 /* AppModel.swift */; };
 		237E79C300C99439B4CA7A39 /* MimiAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E2E121E2F7913C46E569184 /* MimiAPI.swift */; };
+		26A594DF5F74C6EC28877B9F /* MailWebPageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4792732E6C2761C6D55E6056 /* MailWebPageTests.swift */; };
 		26E9F4E758FB4DCCA137E706 /* CalendarWalkthroughTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B16D540B1566C1028F25B0B2 /* CalendarWalkthroughTests.swift */; };
 		32A9FA15BBEBBCBBC685CD60 /* MergeViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82B9E989720EDD9A863CD823 /* MergeViews.swift */; };
 		36FFAAD356E811BBD3D6A345 /* MailDraftCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = C05CC12A5AA3A10F26C290E1 /* MailDraftCard.swift */; };
@@ -135,6 +136,7 @@
 		3F4E040DCD4E20E7AF9DD012 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		41115A3C5078E002F58523B0 /* PersonForms.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonForms.swift; sourceTree = "<group>"; };
 		45F38157687CD64266857F07 /* MailWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailWebView.swift; sourceTree = "<group>"; };
+		4792732E6C2761C6D55E6056 /* MailWebPageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailWebPageTests.swift; sourceTree = "<group>"; };
 		4859FE9877C3B9DF56B4A868 /* MimiAPI+Calendar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MimiAPI+Calendar.swift"; sourceTree = "<group>"; };
 		4E2E121E2F7913C46E569184 /* MimiAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MimiAPI.swift; sourceTree = "<group>"; };
 		53769EFA7005630ADB50D3A9 /* MailListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailListView.swift; sourceTree = "<group>"; };
@@ -220,6 +222,7 @@
 			children = (
 				CB64C938A0531D399045C0BB /* CalendarTests.swift */,
 				0E51774B4A852AE5C12BD110 /* MailTests.swift */,
+				4792732E6C2761C6D55E6056 /* MailWebPageTests.swift */,
 				34D290F57CAF5F711269C458 /* MimiTests.swift */,
 				A113282FB863BE461F768D01 /* PeopleSettingsTests.swift */,
 			);
@@ -587,6 +590,7 @@
 			files = (
 				79A4BEE9B7EBE8ABF216FECF /* CalendarTests.swift in Sources */,
 				58DBA81A8204A02D70756A5D /* MailTests.swift in Sources */,
+				26A594DF5F74C6EC28877B9F /* MailWebPageTests.swift in Sources */,
 				E20B695F0B42467D37324D93 /* MimiTests.swift in Sources */,
 				0362A64DE62228C1507EBA19 /* PeopleSettingsTests.swift in Sources */,
 			);

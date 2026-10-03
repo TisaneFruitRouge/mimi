@@ -27,6 +27,13 @@ nonisolated enum MailText {
         return one.count > 60 ? String(one.prefix(60)) + "…" : one
     }
 
+    /// The start of a message for the list, without the rules and dividers newsletters
+    /// draw with characters ("─────", "=====").
+    static func tidySnippet(_ s: String) -> String {
+        let cleaned = s.replacingOccurrences(of: "([^\\p{L}\\p{N}\\s])\\1{2,}", with: " ", options: .regularExpression)
+        return cleaned.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+
     /// "14:05", "Tue", "12 Mar".
     static func listDate(_ ms: Int64, now: Date = .now) -> String {
         let date = Date(timeIntervalSince1970: Double(ms) / 1000)

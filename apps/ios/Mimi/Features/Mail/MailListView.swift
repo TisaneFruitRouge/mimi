@@ -385,7 +385,7 @@ struct MailThreadRow: View {
         if let s = thread.summary, !s.isEmpty {
             return Text("\(Text(Image(systemName: "sparkles")).foregroundStyle(.tertiary)) \(s)")
         }
-        return Text(verbatim: thread.snippet)
+        return Text(verbatim: MailText.tidySnippet(thread.snippet))
     }
 
     private var pill: (String, Color, Color)? {

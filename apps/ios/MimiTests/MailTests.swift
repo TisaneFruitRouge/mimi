@@ -186,6 +186,11 @@ struct MailTextTests {
         #expect(MailText.safeFileName(long).count == 104 && MailText.safeFileName(long).hasSuffix(".pdf"))
     }
 
+    @Test func snippetsLoseTheirDividers() {
+        #expect(MailText.tidySnippet("──────── [Green Grocer] # This week ==== Hello… ok") == "[Green Grocer] # This week Hello… ok")
+        #expect(MailText.tidySnippet("Hi!! See you...") == "Hi!! See you")
+    }
+
     @Test func labelsAreOneShortLine() {
         #expect(MailText.label("  Q3\n budget  review ") == "Q3 budget review")
         #expect(MailText.label("") == "(no subject)")

@@ -17,12 +17,12 @@ final class MailWalkthroughTests: XCTestCase {
         pairIfNeeded(app, link: link)
 
         let mailTab = app.tabBars.buttons["Mail"]
-        XCTAssertTrue(mailTab.waitForExistence(timeout: 30))
-        mailTab.tap()
+        // Reaching the computer the first time can take a while through a relay.
+        XCTAssertTrue(mailTab.waitForExistence(timeout: 180))
+        select(mailTab)
 
         // It opens on a view with the mailboxes one step back.
-        let row = app.staticTexts["Dinner on Thursday?"]
-        XCTAssertTrue(row.waitForExistence(timeout: 30))
+        XCTAssertTrue(row(app, "Dinner on Thursday?").waitForExistence(timeout: 60))
         sleep(1)
         shot(app, "mail-1-needs-reply")
 
@@ -31,23 +31,21 @@ final class MailWalkthroughTests: XCTestCase {
         sleep(1)
         shot(app, "mail-2-mailboxes")
 
-        app.staticTexts["Inbox"].firstMatch.tap()
-        XCTAssertTrue(app.staticTexts["Weekend plans"].waitForExistence(timeout: 15))
+        open(row(app, "Inbox"), until: row(app, "Weekend plans"))
         sleep(1)
         shot(app, "mail-3-inbox")
 
         // A newsletter as it was sent, then the conversation with a reply in each mode.
-        app.staticTexts["This week's baskets"].tap()
         let mode = app.segmentedControls["mail-mode"]
-        XCTAssertTrue(mode.waitForExistence(timeout: 15))
+        open(row(app, "This week's baskets"), until: mode)
         mode.buttons["Original"].tap()
-        sleep(3)
+        // The first email takes a moment to draw while the web content starts.
+        sleep(8)
         shot(app, "mail-4-original-newsletter")
         app.navigationBars.buttons.element(boundBy: 0).tap()
 
-        XCTAssertTrue(app.staticTexts["Weekend plans"].waitForExistence(timeout: 10))
-        app.staticTexts["Weekend plans"].tap()
-        XCTAssertTrue(mode.waitForExistence(timeout: 15))
+        XCTAssertTrue(row(app, "Weekend plans").waitForExistence(timeout: 30))
+        open(row(app, "Weekend plans"), until: mode)
         sleep(3)
         shot(app, "mail-5-original")
         mode.buttons["Formatted"].tap()
@@ -60,18 +58,17 @@ final class MailWalkthroughTests: XCTestCase {
         app.navigationBars.buttons.element(boundBy: 0).tap()
 
         // The suspicious one.
-        XCTAssertTrue(app.staticTexts["Quick favour"].waitForExistence(timeout: 10))
-        app.staticTexts["Quick favour"].tap()
-        XCTAssertTrue(app.staticTexts["This email looks suspicious"].waitForExistence(timeout: 15))
+        reveal(app, row(app, "Quick favour"))
+        open(row(app, "Quick favour"), until: app.staticTexts["This email looks suspicious"])
         sleep(1)
         shot(app, "mail-8-suspicious")
         app.navigationBars.buttons.element(boundBy: 0).tap()
 
         // A reply drafted by the assistant, then sent.
-        XCTAssertTrue(app.staticTexts["Dinner on Thursday?"].waitForExistence(timeout: 10))
-        app.staticTexts["Dinner on Thursday?"].tap()
+        for _ in 0..<3 where !row(app, "Dinner on Thursday?").isHittable { app.swipeDown() }
+        XCTAssertTrue(row(app, "Dinner on Thursday?").waitForExistence(timeout: 10))
         let more = app.navigationBars.buttons["More"]
-        XCTAssertTrue(more.waitForExistence(timeout: 15))
+        open(row(app, "Dinner on Thursday?"), until: more)
         sleep(2)
         shot(app, "mail-9-conversation")
         more.tap()
@@ -80,6 +77,7 @@ final class MailWalkthroughTests: XCTestCase {
         more.tap()
         let draft = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Draft a reply with'")).firstMatch
         XCTAssertTrue(draft.waitForExistence(timeout: 5))
+        sleep(1) // let the menu finish opening
         draft.tap()
         let body = app.textViews["compose-body"].exists ? app.textViews["compose-body"] : app.textFields["compose-body"]
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Chez Léon at 19:30 sounds lovely'")).firstMatch
@@ -109,7 +107,7 @@ final class MailWalkthroughTests: XCTestCase {
 
         // A smart folder.
         app.navigationBars.buttons.element(boundBy: 0).tap()
-        let folder = app.staticTexts["Bills & orders"]
+        let folder = row(app, "Bills & orders")
         if folder.waitForExistence(timeout: 10) {
             folder.tap()
             sleep(2)
@@ -123,7 +121,7 @@ final class MailWalkthroughTests: XCTestCase {
         }
 
         // A draft in the chat.
-        app.tabBars.buttons["Chats"].tap()
+        select(app.tabBars.buttons["Chats"])
         let newChat = app.buttons["New chat"]
         XCTAssertTrue(newChat.waitForExistence(timeout: 10))
         newChat.tap()
@@ -133,6 +131,7 @@ final class MailWalkthroughTests: XCTestCase {
         field.typeText("Draft an email to Sam saying yes to dinner")
         app.buttons["Send"].tap()
         XCTAssertTrue(app.staticTexts["Draft email · not sent"].waitForExistence(timeout: 30))
+        app.scrollViews.firstMatch.swipeDown()
         sleep(2)
         shot(app, "mail-15-chat-draft")
         app.buttons["Edit"].tap()
@@ -146,23 +145,63 @@ final class MailWalkthroughTests: XCTestCase {
 
         // Privacy.
         app.navigationBars.buttons.element(boundBy: 0).tap()
-        app.tabBars.buttons["Settings"].tap()
+        select(app.tabBars.buttons["Settings"])
         app.buttons["Email sorting"].tap()
         sleep(2)
         shot(app, "mail-18-privacy")
+    }
+
+    /// Taps a tab until it's the one shown (taps can get lost while the app is busy).
+    @MainActor
+    private func select(_ tab: XCUIElement) {
+        for _ in 0..<4 where !tab.isSelected {
+            tab.tap()
+            let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isSelected == true"), object: tab)
+            _ = XCTWaiter.wait(for: [selected], timeout: 8)
+        }
+        XCTAssertTrue(tab.isSelected)
+    }
+
+    /// Scrolls the list until the element is on screen.
+    @MainActor
+    private func reveal(_ app: XCUIApplication, _ element: XCUIElement) {
+        for _ in 0..<6 where !(element.exists && element.isHittable) {
+            app.swipeUp()
+        }
+    }
+
+    /// Taps something until what it opens is there (taps can get lost while the app is busy).
+    @MainActor
+    private func open(_ element: XCUIElement, until shown: XCUIElement) {
+        for _ in 0..<4 where !shown.exists {
+            if element.exists { element.tap() }
+            _ = shown.waitForExistence(timeout: 10)
+        }
+        XCTAssertTrue(shown.exists)
+    }
+
+    /// A row (conversation, mailbox, folder) by the text it shows.
+    @MainActor
+    private func row(_ app: XCUIApplication, _ text: String) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
     }
 
     @MainActor
     private func pairIfNeeded(_ app: XCUIApplication, link: String) {
         let paste = app.buttons["Paste a pairing link instead"]
         guard paste.waitForExistence(timeout: 5) else { return }
-        paste.tap()
         let field = app.textFields.firstMatch
-        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        // The machine may be slow: tap again if the alert didn't come.
+        for _ in 0..<3 where !field.exists {
+            paste.tap()
+            _ = field.waitForExistence(timeout: 10)
+        }
+        XCTAssertTrue(field.exists)
+        field.tap()
         field.typeText(link)
         app.alerts.buttons["Continue"].tap()
         let pair = app.buttons["Pair"]
-        XCTAssertTrue(pair.waitForExistence(timeout: 5))
+        XCTAssertTrue(pair.waitForExistence(timeout: 15))
         pair.tap()
     }
 

@@ -1,5 +1,8 @@
+import OSLog
 import SwiftUI
 import WebKit
+
+private let log = Logger(subsystem: "dev.mimi.ios", category: "mail-web")
 
 /// The page an email's own HTML is shown in. The computer has already made the HTML safe
 /// (no scripts, forms, frames, hidden text or anything loaded from elsewhere); this is the
@@ -22,6 +25,29 @@ nonisolated enum MailHTML {
     pre{white-space:pre-wrap}
     a{color:#0b63ce}
     blockquote{margin:0 0 0 .6em;padding-left:.8em;border-left:2px solid #e3e3e8;color:#6e6e73}
+    """
+
+    /// Measures the email, scaling a layout wider than the card down to fit (as mail apps
+    /// do). Run in the app's own script world: the email's scripts stay off, and the
+    /// page's policy doesn't apply to it.
+    static let fitScript = """
+    (() => {
+      const box = document.querySelector('.mimi-mail');
+      if (!box) return document.documentElement.scrollHeight;
+      box.style.cssText = '';
+      document.body.style.overflow = '';
+      const view = document.documentElement.clientWidth;
+      const wide = box.scrollWidth;
+      if (wide > view + 1) {
+        const z = Math.max(view / wide, 0.35);
+        document.body.style.overflow = 'hidden';
+        box.style.width = wide + 'px';
+        box.style.overflow = 'visible';
+        box.style.transformOrigin = '0 0';
+        box.style.transform = 'scale(' + z + ')';
+      }
+      return Math.ceil(box.getBoundingClientRect().height);
+    })()
     """
 
     static func document(_ body: String) -> String {
@@ -84,7 +110,8 @@ private enum MailBlockRules {
             WKContentRuleListStore.default().compileContentRuleList(
                 forIdentifier: "mimi-mail-block",
                 encodedContentRuleList: MailHTML.blockRules
-            ) { list, _ in
+            ) { list, error in
+                if let error { log.error("block rules didn't compile: \(error.localizedDescription)") }
                 Task { @MainActor in
                     compiled = list
                     compiling = false
@@ -97,38 +124,20 @@ private enum MailBlockRules {
     }
 }
 
-/// An email as it was sent, in a web view that runs no JavaScript from the email, loads
-/// nothing from the network, keeps no cookies or storage, and opens links in the browser.
-/// It's as tall as its content; a layout wider than the card is scaled down to fit.
-struct MailWebView: View {
-    let html: String
-    var onMailTo: (String) -> Void = { _ in }
-    @State private var height: CGFloat = 1
-    @Environment(\.openURL) private var openURL
+/// One email's page: a web view that runs no JavaScript from the email, loads nothing
+/// from the network, keeps no cookies or storage, and hands link taps back. It reports
+/// the email's height once it's laid out.
+final class MailWebPage: NSObject, WKNavigationDelegate {
+    let webView: MailWKWebView
+    var onHeight: (CGFloat) -> Void = { _ in }
+    var onLink: (URL?) -> Void = { _ in }
+    private(set) var loaded: String?
+    /// Only the page this view loads itself may be navigated to.
+    private var allowNext = false
+    private var finished = false
+    private var measuredWidth: CGFloat = 0
 
-    var body: some View {
-        MailWebViewRepresentable(html: html, height: $height) { url in
-            switch MailHTML.target(of: url) {
-            case .web(let url): openURL(url)
-            case .mail(let address): onMailTo(address)
-            case .none: break
-            }
-        }
-        // Capped, so an email can't stretch the reader without end.
-        .frame(height: min(max(height, 24), 30_000))
-        .opacity(height > 1 ? 1 : 0)
-        .accessibilityLabel("Email")
-    }
-}
-
-private struct MailWebViewRepresentable: UIViewRepresentable {
-    let html: String
-    @Binding var height: CGFloat
-    let onLink: (URL?) -> Void
-
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    func makeUIView(context: Context) -> MailWKWebView {
+    override init() {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         config.defaultWebpagePreferences.allowsContentJavaScript = false
@@ -136,119 +145,139 @@ private struct MailWebViewRepresentable: UIViewRepresentable {
         config.dataDetectorTypes = []
         config.allowsInlineMediaPlayback = false
         config.mediaTypesRequiringUserActionForPlayback = .all
-        config.suppressesIncrementalRendering = true
-        let web = MailWKWebView(frame: CGRect(x: 0, y: 0, width: 320, height: 1), configuration: config)
-        web.onWidthChange = { [weak coordinator = context.coordinator, weak web] in
-            if let web { coordinator?.widthChanged(web) }
+        webView = MailWKWebView(frame: CGRect(x: 0, y: 0, width: 320, height: 1), configuration: config)
+        super.init()
+        webView.navigationDelegate = self
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
+        webView.scrollView.isScrollEnabled = false
+        webView.scrollView.bounces = false
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
+        webView.allowsLinkPreview = false
+        webView.allowsBackForwardNavigationGestures = false
+        webView.onWidthChange = { [weak self] in self?.widthChanged() }
+    }
+
+    func load(_ html: String) {
+        loaded = html
+        finished = false
+        Task { @MainActor in
+            if let rules = await MailBlockRules.get() {
+                webView.configuration.userContentController.removeAllContentRuleLists()
+                webView.configuration.userContentController.add(rules)
+            }
+            guard loaded == html else { return }
+            allowNext = true
+            webView.loadHTMLString(MailHTML.document(html), baseURL: nil)
         }
-        web.navigationDelegate = context.coordinator
-        web.isOpaque = false
-        web.backgroundColor = .clear
-        web.scrollView.backgroundColor = .clear
-        web.scrollView.isScrollEnabled = false
-        web.scrollView.bounces = false
-        web.scrollView.contentInsetAdjustmentBehavior = .never
-        web.allowsLinkPreview = false
-        web.allowsBackForwardNavigationGestures = false
-        context.coordinator.load(html, in: web)
-        return web
+    }
+
+    func stop() {
+        webView.navigationDelegate = nil
+        webView.stopLoading()
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
+        if allowNext, action.navigationType == .other, action.request.url?.scheme == "about" || action.request.url == nil {
+            allowNext = false
+            decisionHandler(.allow)
+            return
+        }
+        if action.navigationType == .linkActivated {
+            onLink(action.request.url)
+        }
+        decisionHandler(.cancel)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
+        log.error("failed: \(error.localizedDescription)")
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
+        log.error("failed early: \(error.localizedDescription)")
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        log.error("web content process ended")
+        if let loaded { load(loaded) }
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        finished = true
+        measure()
+    }
+
+    /// The card's width changed (layout settled, rotation): measure again.
+    private func widthChanged() {
+        guard finished, abs(webView.bounds.width - measuredWidth) > 0.5 else { return }
+        measure()
+    }
+
+    private func measure() {
+        measuredWidth = webView.bounds.width
+        webView.evaluateJavaScript(MailHTML.fitScript, in: nil, in: .defaultClient) { [weak self] result in
+            guard let self else { return }
+            if case .success(let value) = result, let h = value as? Double, h > 0 {
+                onHeight(CGFloat(h))
+            } else {
+                onHeight(ceil(webView.scrollView.contentSize.height))
+            }
+        }
+    }
+}
+
+/// An email as it was sent (see `MailWebPage`). It's as tall as its content; a layout
+/// wider than the card is scaled down to fit. Links open in the browser.
+struct MailWebView: View {
+    let html: String
+    var onMailTo: (String) -> Void = { _ in }
+    @State private var height: CGFloat = 0
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        MailWebViewRepresentable(html: html) { h in
+            if abs(h - height) > 0.5 { height = h }
+        } onLink: { url in
+            switch MailHTML.target(of: url) {
+            case .web(let url): openURL(url)
+            case .mail(let address): onMailTo(address)
+            case .none: break
+            }
+        }
+        // Capped, so an email can't stretch the reader without end.
+        .frame(height: min(max(height, 40), 30_000))
+        .overlay {
+            if height == 0 { ProgressView() }
+        }
+        .accessibilityLabel("Email")
+    }
+}
+
+private struct MailWebViewRepresentable: UIViewRepresentable {
+    let html: String
+    let onHeight: (CGFloat) -> Void
+    let onLink: (URL?) -> Void
+
+    func makeCoordinator() -> MailWebPage { MailWebPage() }
+
+    func makeUIView(context: Context) -> MailWKWebView {
+        let page = context.coordinator
+        page.onHeight = onHeight
+        page.onLink = onLink
+        page.load(html)
+        return page.webView
     }
 
     func updateUIView(_ web: MailWKWebView, context: Context) {
-        context.coordinator.parent = self
-        if context.coordinator.loaded != html {
-            context.coordinator.load(html, in: web)
-        }
+        let page = context.coordinator
+        page.onHeight = onHeight
+        page.onLink = onLink
+        if page.loaded != html { page.load(html) }
     }
 
-    static func dismantleUIView(_ web: MailWKWebView, coordinator: Coordinator) {
-        web.navigationDelegate = nil
-        web.stopLoading()
-    }
-
-    final class Coordinator: NSObject, WKNavigationDelegate {
-        var parent: MailWebViewRepresentable
-        var loaded: String?
-        /// Only the page this view loads itself may be navigated to.
-        private var allowNext = false
-
-        init(_ parent: MailWebViewRepresentable) { self.parent = parent }
-
-        func load(_ html: String, in web: WKWebView) {
-            loaded = html
-            finished = false
-            Task { @MainActor in
-                if let rules = await MailBlockRules.get() {
-                    web.configuration.userContentController.removeAllContentRuleLists()
-                    web.configuration.userContentController.add(rules)
-                }
-                allowNext = true
-                web.loadHTMLString(MailHTML.document(html), baseURL: nil)
-            }
-        }
-
-        private func setHeight(_ h: CGFloat) {
-            guard h > 0, abs(h - parent.height) > 0.5 else { return }
-            parent.height = h
-        }
-
-        func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
-            if allowNext, action.navigationType == .other, action.request.url?.scheme == "about" || action.request.url == nil {
-                allowNext = false
-                return .allow
-            }
-            if action.navigationType == .linkActivated {
-                parent.onLink(action.request.url)
-            }
-            return .cancel
-        }
-
-        private var finished = false
-        private var measuredWidth: CGFloat = 0
-
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            finished = true
-            measure(webView)
-        }
-
-        /// The card's width changed (layout settled, rotation): measure again.
-        func widthChanged(_ webView: WKWebView) {
-            guard finished, abs(webView.bounds.width - measuredWidth) > 0.5 else { return }
-            measure(webView)
-        }
-
-        private func measure(_ webView: WKWebView) {
-            measuredWidth = webView.bounds.width
-            // Measure the email, scaling a layout wider than the card down to fit (as
-            // mail apps do). This runs in the app's own script world: the email's own
-            // scripts stay off, and the page's policy doesn't apply here.
-            let fit = """
-            (() => {
-              const box = document.querySelector('.mimi-mail');
-              if (!box) return document.documentElement.scrollHeight;
-              box.style.cssText = '';
-              document.body.style.overflow = '';
-              const view = document.documentElement.clientWidth;
-              const wide = box.scrollWidth;
-              if (wide > view + 1) {
-                const z = Math.max(view / wide, 0.35);
-                document.body.style.overflow = 'hidden';
-                box.style.width = wide + 'px';
-                box.style.overflow = 'visible';
-                box.style.transformOrigin = '0 0';
-                box.style.transform = 'scale(' + z + ')';
-              }
-              return Math.ceil(box.getBoundingClientRect().height);
-            })()
-            """
-            webView.evaluateJavaScript(fit, in: nil, in: .defaultClient) { [weak self] result in
-                if case .success(let value) = result, let h = value as? Double {
-                    self?.setHeight(CGFloat(h))
-                } else {
-                    self?.setHeight(ceil(webView.scrollView.contentSize.height))
-                }
-            }
-        }
+    static func dismantleUIView(_ web: MailWKWebView, coordinator: MailWebPage) {
+        coordinator.stop()
     }
 }
 

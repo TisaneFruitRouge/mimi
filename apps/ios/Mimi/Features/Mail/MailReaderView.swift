@@ -28,6 +28,8 @@ struct MailReaderView: View {
         }
         .background(Color.canvas)
         .navigationBarTitleDisplayMode(.inline)
+        // The conversation's own bar (Archive, Delete, Reply) takes the bottom, as in Mail.
+        .toolbar(.hidden, for: .tabBar)
         .task(id: "\(id)-\(model.revision("mail_changed"))-\(store.localRevision)") { await load() }
         .toolbar { if let d = detail { toolbar(d) } }
         .confirmationDialog("Delete this conversation?", isPresented: $confirmDelete, titleVisibility: .visible) {
