@@ -51,8 +51,8 @@ Browsers can't read the discovery file, so they sign in with a link:
 
 Known limit: browsers share cookies across ports of the same host, so another web app
 on `127.0.0.1` could receive the cookie. Such software already runs as the user, so
-this doesn't widen what it can reach, but remote access will need a proper origin and
-TLS.
+this doesn't widen what it can reach, but a browser on another device would need a proper
+origin and TLS (phones use iroh instead, see "Using Mimi from a phone").
 
 ## Daemon discovery and auth
 
@@ -823,6 +823,46 @@ Later: Developer ID signing and notarization for macOS (until then the install s
 removes the quarantine flag, and a .dmg opened by hand needs right-click › Open), Linux
 arm64 packages.
 
+## Using Mimi from a phone
+
+Phones reach the daemon peer to peer with [iroh](https://iroh.computer) (QUIC dialled by
+public key; `crates/core/src/remote/`). There is no Mimi server: the phone connects
+straight to the computer when the networks allow it (same Wi-Fi, or hole punching, which
+works most of the time), else through a relay that forwards encrypted QUIC packets it
+can't read. By default the relays and address lookup are number 0's public ones (iroh's
+makers), the one third party this feature adds; Settings › Phone can point at the user's
+own `iroh-relay` instead, and then nothing is published to number 0 (phones learn the
+relay's address from the QR code). The loopback listener is unchanged: phones never use it.
+
+- **When it runs**: the endpoint exists only while a phone is paired or a pairing code is
+  waiting (`remote::sync`). Its secret key is in the `settings` row `remote` (encrypted
+  with the database), so the computer keeps its address across restarts.
+- **Pairing**: `POST /v1/remote/pairing` (this computer only: bearer or browser session)
+  makes a one-time code, valid 10 minutes, and returns
+  `mimi://pair?id=<endpoint id>&code=<code>[&relay=<url>]` with its QR code (SVG). The
+  phone dials the id with ALPN `mimi/1` and calls `POST /v1/remote/pair {code, name}`; the
+  daemon stores the phone's endpoint id with a SHA-256 of a fresh token (`devices`,
+  migration 0024) and returns the token once. While no code waits, connections from
+  unknown keys are closed at once.
+- **Auth**: requests over iroh carry a `remote::Peer` extension (only `wire.rs` sets it).
+  `require_auth` then accepts only a phone token issued to that very endpoint id, never
+  the local token or cookies, and marks the request `Auth::Device(id)`. Pairing codes, the
+  relay and login links are this computer's business (403 from a phone); a phone may
+  rename or remove only itself. Removing a phone cuts its connections.
+- **Wire format** (`remote/wire.rs`): one bidirectional QUIC stream per request. The client
+  writes a head (4-byte big-endian length, then JSON `{method, path, headers}`), the body,
+  and finishes; the daemon answers `{status, headers}` and the body the same way. Only
+  `/v1/*` and `/health` are served. Requests then go through the normal router, so every
+  route keeps its own checks.
+- **Events**: `GET /v1/events` with `Accept: application/x-ndjson` streams one JSON event
+  per line instead of a WebSocket, with a blank line every 25 s so a phone can tell a quiet
+  feed from a dead connection.
+- **Status**: `GET /v1/remote` (paired phones, whether each is connected directly or
+  through the relay, whether the relay is reachable) and `RemoteChanged` events.
+- Tests run a real endpoint and fake phones with relays off (`remote/tests.rs`).
+  `live_pairing` (ignored) pairs through number 0's real infrastructure with a running
+  daemon, like the iPhone app does.
+
 ## Planned
 
 - **Semantic memory search**: optional local embeddings (e.g. an Ollama embedding model)
@@ -830,5 +870,5 @@ arm64 packages.
   extensions: the workspace forbids unsafe code).
 - **Integrations**: MCP. Each tool declares its capabilities (hosts, paths, outbound
   messaging) and the user approves them. Untrusted plugins run sandboxed.
-- **Remote access**: a separate, opt-in listener with its own device pairing and
-  authentication. The loopback listener stays loopback-only.
+- **Phone notifications** while the app is closed (Apple's push service needs a key per
+  developer account, which doesn't fit "no Mimi server" for everyone yet).

@@ -16,6 +16,7 @@ import {
   Send,
   Settings,
   ShieldCheck,
+  Smartphone,
   Smile,
   Sparkles,
 } from "lucide-react";
@@ -42,12 +43,13 @@ import { MemoryView } from "@/features/memory/memory-view";
 import { ModelsView } from "@/features/models/models-view";
 import { PermissionsView } from "@/features/permissions/permissions-view";
 import { PersonalityView } from "@/features/personality/personality-view";
+import { PhoneView } from "@/features/phone/phone-view";
 import { NotificationsSettings } from "@/features/reminders/reminders";
 import { UpdatesGroup } from "@/features/shell/updates";
 import type { Section as Place, SettingsPage } from "@/features/shell/top-bar";
 import { api, keys } from "@/lib/api";
 import { mod } from "@/lib/platform";
-import { useAssistantName, useConnections, useProviders, useSettings } from "@/lib/queries";
+import { useAssistantName, useConnections, useProviders, useRemote, useSettings } from "@/lib/queries";
 import {
   type BackgroundStatus,
   backgroundStatus,
@@ -72,6 +74,7 @@ export const settingsPages: {
   { id: "notifications", label: "Reminders & notifications", icon: BellRing, tone: "bg-[#ff3b30] text-white" },
   { id: "permissions", label: "Permissions", icon: Hand, tone: "bg-[#ff9f0a] text-white" },
   { id: "privacy", label: "Privacy", icon: Lock, tone: "bg-private text-white" },
+  { id: "phone", label: "Phone", icon: Smartphone, tone: "bg-[#30d158] text-white" },
 ];
 
 const shortcuts = [
@@ -155,6 +158,7 @@ export function SettingsView({
             )}
             {page === "permissions" && <PermissionsView />}
             {page === "privacy" && <PrivacySettings onSection={onSection} />}
+            {page === "phone" && <PhoneView />}
           </motion.div>
         </AnimatePresence>
       </div>
@@ -244,6 +248,7 @@ function PrivacySettings({ onSection }: { onSection: (s: Place) => void }) {
   const connections = useConnections().data ?? [];
   const telegram = connections.some((c) => c.integration === "telegram");
   const email = connections.some((c) => c.integration === "email");
+  const phones = useRemote().data?.devices.length ?? 0;
   return (
     <Page>
       <PageHeader
@@ -304,6 +309,25 @@ function PrivacySettings({ onSection }: { onSection: (s: Place) => void }) {
       )}
 
       {email && <MailSortingGroup />}
+
+      {phones > 0 && (
+        <Section title="Phone">
+          <Grouped>
+            <Row
+              onClick={() => onSection("phone")}
+              icon={
+                <IconTile size="sm" className="bg-network-soft text-network">
+                  <Smartphone />
+                </IconTile>
+              }
+              title={phones === 1 ? "1 phone can reach this computer" : `${phones} phones can reach this computer`}
+              detail="End-to-end encrypted. When they can't connect directly, a relay passes the messages along without being able to read them."
+              className="[&_.truncate]:whitespace-normal"
+              trailing={<ChevronRight className="size-4 text-faint" />}
+            />
+          </Grouped>
+        </Section>
+      )}
 
       {telegram && (
         <Section title="Telegram">

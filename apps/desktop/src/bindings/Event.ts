@@ -5,12 +5,14 @@ import type { Delivery } from "./Delivery";
 import type { Message } from "./Message";
 import type { ModelPull } from "./ModelPull";
 import type { Provider } from "./Provider";
+import type { RemoteAccess } from "./RemoteAccess";
 import type { RuntimeStatus } from "./RuntimeStatus";
 import type { Settings } from "./Settings";
 import type { UpdateStatus } from "./UpdateStatus";
 
 /**
  * Pushed by the daemon to every client connected to `GET /v1/events` (WebSocket, one
- * JSON event per text frame).
+ * JSON event per text frame; or, with `Accept: application/x-ndjson`, one JSON event per
+ * line of a streamed response, which is how phones listen).
  */
-export type Event = { "type": "settings_changed", settings: Settings, } | { "type": "providers_changed", providers: Array<Provider>, } | { "type": "conversation_updated", conversation: Conversation, } | { "type": "conversation_deleted", id: string, } | { "type": "message_updated", message: Message, } | { "type": "message_delta", conversation_id: string, message_id: string, content: string, reasoning: string, } | { "type": "people_changed" } | { "type": "mail_changed" } | { "type": "connections_changed", connections: Array<Connection>, } | { "type": "model_pull", pull: ModelPull, } | { "type": "runtime_changed", runtime: RuntimeStatus, } | { "type": "update_changed", update: UpdateStatus, } | { "type": "memory_changed" } | { "type": "schedule_changed" } | { "type": "schedule_delivered", delivery: Delivery, } | { "type": "resync" };
+export type Event = { "type": "settings_changed", settings: Settings, } | { "type": "providers_changed", providers: Array<Provider>, } | { "type": "conversation_updated", conversation: Conversation, } | { "type": "conversation_deleted", id: string, } | { "type": "message_updated", message: Message, } | { "type": "message_delta", conversation_id: string, message_id: string, content: string, reasoning: string, } | { "type": "people_changed" } | { "type": "mail_changed" } | { "type": "connections_changed", connections: Array<Connection>, } | { "type": "model_pull", pull: ModelPull, } | { "type": "runtime_changed", runtime: RuntimeStatus, } | { "type": "update_changed", update: UpdateStatus, } | { "type": "memory_changed" } | { "type": "schedule_changed" } | { "type": "schedule_delivered", delivery: Delivery, } | { "type": "remote_changed", remote: RemoteAccess, } | { "type": "resync" };

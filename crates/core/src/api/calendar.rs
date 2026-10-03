@@ -135,7 +135,7 @@ async fn with_people(
             id: people::mentions::event_id(&e),
             mine: guests::is_mine(&e, &me),
             repeats: e.repeats,
-            organizer: e.organizer.as_ref().map(&person),
+            organizer: e.organizer.as_ref().map(person),
             attendees: e.attendees.iter().map(&person).collect(),
             calendar_id: e.calendar_id,
             calendar: e.calendar,

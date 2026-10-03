@@ -4,12 +4,13 @@ use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::{
-    Connection, Conversation, Delivery, Message, ModelPull, Provider, RuntimeStatus, Settings,
-    UpdateStatus,
+    Connection, Conversation, Delivery, Message, ModelPull, Provider, RemoteAccess, RuntimeStatus,
+    Settings, UpdateStatus,
 };
 
 /// Pushed by the daemon to every client connected to `GET /v1/events` (WebSocket, one
-/// JSON event per text frame).
+/// JSON event per text frame; or, with `Accept: application/x-ndjson`, one JSON event per
+/// line of a streamed response, which is how phones listen).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[ts(export)]
@@ -64,6 +65,10 @@ pub enum Event {
     /// A reminder went off, or a routine finished: show it now.
     ScheduleDelivered {
         delivery: Delivery,
+    },
+    /// Phones were paired or removed, connected or disconnected, or the relay changed.
+    RemoteChanged {
+        remote: RemoteAccess,
     },
     /// This client fell behind and missed events. Refetch any state you display.
     Resync,

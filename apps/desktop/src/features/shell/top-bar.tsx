@@ -21,7 +21,8 @@ export type SettingsPage =
   | "memory"
   | "notifications"
   | "permissions"
-  | "privacy";
+  | "privacy"
+  | "phone";
 /** Anywhere the app can go. */
 export type Section = Tab | SettingsPage;
 
