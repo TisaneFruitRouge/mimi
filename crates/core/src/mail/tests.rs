@@ -800,6 +800,40 @@ async fn a_failed_pass_keeps_its_progress() {
     assert_eq!(fake.bodies_sent(), 30);
 }
 
+/// A connection lost while checking what's still on the server must not read as "it's all
+/// gone": nothing stored is removed, and the next pass sees everything still there.
+#[tokio::test]
+async fn a_lost_connection_removes_nothing() {
+    let fake = FakeMail::start(ME, PASSWORD).await;
+    for n in 1..=5 {
+        fake.deliver(
+            "INBOX",
+            &message(
+                "Sam <sam@example.com>",
+                ME,
+                &format!("Note {n}"),
+                "Hi",
+                &format!("k{n}@example.com"),
+                "",
+            ),
+            now_ms() - DAY,
+            &["\\Seen"],
+        );
+    }
+    let (state, account) = account_without_loop(&fake).await;
+    pass(&state, &account).await;
+    assert_eq!(all_threads(&state).await.len(), 5);
+
+    fake.set_drop_flag_sweep(true);
+    let mut s = sync::session(&account.config).await.unwrap();
+    assert!(sync::pass(&state, &mut s, &account).await.is_err());
+    assert_eq!(all_threads(&state).await.len(), 5);
+
+    fake.set_drop_flag_sweep(false);
+    pass(&state, &account).await;
+    assert_eq!(all_threads(&state).await.len(), 5);
+}
+
 /// A message that can't be read is stored with a note, not dropped or fetched forever.
 #[tokio::test]
 async fn an_unreadable_message_is_stored_with_a_note() {

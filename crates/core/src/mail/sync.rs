@@ -44,6 +44,18 @@ fn proto(e: async_imap::error::Error) -> MailError {
     MailError::Protocol(e.to_string())
 }
 
+/// Checks the connection is still up. When a server drops the connection during a FETCH,
+/// the response just ends, which looks like "no messages" (seen on macOS). Before an
+/// empty or short answer is believed (moving the high-water mark past messages, or
+/// removing what seems gone), this makes sure the answer was complete.
+/// (`Session::noop` won't do: it treats the end of the connection as a normal end too.)
+async fn still_connected(session: &mut ImapSession) -> Result<(), MailError> {
+    session
+        .run_command_and_check_ok("NOOP")
+        .await
+        .map_err(proto)
+}
+
 pub async fn session(config: &EmailConfig) -> Result<ImapSession, MailError> {
     let s = &config.servers;
     net::imap_login(
@@ -411,6 +423,9 @@ async fn sync_mailbox(
             .map_err(|e| MailError::Protocol(e.to_string()))?;
         changed |= added > 0;
     }
+    if !new_uids.is_empty() {
+        still_connected(session).await?;
+    }
 
     // 2. Flag changes and removals among what's already here.
     let name = mailbox.to_owned();
@@ -440,6 +455,9 @@ async fn sync_mailbox(
             .filter(|u| !current.contains_key(u))
             .copied()
             .collect();
+        if !gone.is_empty() {
+            still_connected(session).await?;
+        }
         let updates: Vec<(u32, bool, bool)> = known
             .iter()
             .filter_map(|(uid, was)| {
