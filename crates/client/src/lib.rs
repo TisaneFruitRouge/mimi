@@ -202,6 +202,15 @@ impl Client {
             .await
     }
 
+    pub async fn reconnect(&self, id: Uuid) -> Result<Connection, Error> {
+        self.send(
+            Method::POST,
+            &format!("/connections/{id}/reconnect"),
+            None::<()>,
+        )
+        .await
+    }
+
     /// Untyped request to any `/v1` route. `path` excludes the `/v1` prefix.
     pub async fn request_json(
         &self,

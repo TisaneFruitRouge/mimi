@@ -37,6 +37,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -259,6 +260,12 @@ function ConnectionRow({
   onRemove: () => void;
   onSignInAgain: () => void;
 }) {
+  const reconnect = () =>
+    toast.promise(api.reconnect(c.id), {
+      loading: `Reconnecting ${c.name}…`,
+      success: `Reconnected ${c.name}`,
+      error: (e: Error) => e.message,
+    });
   const dot = { ok: "bg-private", needs_action: "bg-cloud", error: "bg-destructive" }[c.status];
   return (
     <Row
@@ -298,6 +305,8 @@ function ConnectionRow({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={reconnect}>Reconnect</DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem variant="destructive" onSelect={onRemove}>
                 Disconnect
               </DropdownMenuItem>

@@ -418,6 +418,89 @@ pub async fn delete(state: &AppState, id: Uuid) -> Result<bool, DbError> {
     Ok(removed)
 }
 
+/// Checks a connection against its service again and restarts its background work, for
+/// when it got disconnected. Calendars also pick up ones added since. `None` if there's
+/// no such connection; an error if the service still refuses.
+pub async fn reconnect(state: &Arc<AppState>, id: Uuid) -> Result<Option<Connection>, AppError> {
+    let Some(mut row) = store::get(&state.db, id).await? else {
+        return Ok(None);
+    };
+    let unreadable = || AppError::bad_request("This connection's settings can't be read.");
+    match row.integration.as_str() {
+        calendar::GOOGLE => {
+            let config: GoogleConfig =
+                serde_json::from_value(row.config.clone()).map_err(|_| unreadable())?;
+            state.connections.feeds.forget(&config.ics_url);
+            state
+                .connections
+                .feeds
+                .fetch(&state.http, &config.ics_url)
+                .await
+                .map_err(AppError::bad_request)?;
+        }
+        calendar::CALDAV => {
+            let mut config: CalDavConfig =
+                serde_json::from_value(row.config.clone()).map_err(|_| unreadable())?;
+            let url = url::Url::parse(&config.server_url).map_err(|_| unreadable())?;
+            let calendars = CalDav::new(&config.username, &config.password)
+                .discover(&url)
+                .await
+                .map_err(|e| AppError::bad_request(e.to_string()))?;
+            if !calendars.is_empty() {
+                config.calendars = calendars;
+                row.config = serde_json::to_value(config).map_err(AppError::internal)?;
+                store::upsert(&state.db, row.clone()).await?;
+            }
+        }
+        calendar::GOOGLE_ACCOUNT => {
+            let config: GoogleAccountConfig =
+                serde_json::from_value(row.config.clone()).map_err(|_| unreadable())?;
+            let google = &state.connections.feeds.google;
+            match google.recheck(&state.http, id, &config).await {
+                Ok(config) => {
+                    row.config = serde_json::to_value(config).map_err(AppError::internal)?;
+                    store::upsert(&state.db, row.clone()).await?;
+                }
+                Err(calendar::google::GoogleError::SignedOut) => {
+                    record_signed_out(state).await;
+                    publish(state).await;
+                    return Err(AppError::bad_request(
+                        "Google still doesn't accept your assistant's access. Sign in again.",
+                    ));
+                }
+                Err(e) => return Err(AppError::bad_request(e.to_string())),
+            }
+        }
+        telegram::TELEGRAM => {
+            let config: TelegramConfig =
+                serde_json::from_value(row.config.clone()).map_err(|_| unreadable())?;
+            Bot::new(
+                state.http.clone(),
+                &state.connections.telegram_api(),
+                &config.bot_token,
+            )
+            .get_me()
+            .await
+            .map_err(|e| AppError::bad_request(e.to_string()))?;
+        }
+        _ => {}
+    }
+    // Restarting the background work drops any wait between retries.
+    state.connections.stop(id);
+    start(state, &row);
+    publish(state).await;
+    let (status, detail, action_url) = describe(&row);
+    Ok(Some(Connection {
+        id: row.id,
+        integration: row.integration,
+        name: row.name,
+        status,
+        detail,
+        action_url,
+        created_at: row.created_at,
+    }))
+}
+
 /// Starts background work for every connection that needs it. Called at startup.
 pub async fn start_all(state: &Arc<AppState>) {
     match store::list(&state.db).await {

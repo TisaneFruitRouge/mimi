@@ -153,6 +153,35 @@ impl GoogleAccess {
         lock(&self.tokens).remove(&account);
     }
 
+    /// Checks an account afresh (a new token, even after Google refused one) and
+    /// returns its config with the current calendars and `signed_out` cleared.
+    pub async fn recheck(
+        &self,
+        http: &reqwest::Client,
+        account: Uuid,
+        config: &GoogleAccountConfig,
+    ) -> Result<GoogleAccountConfig, GoogleError> {
+        self.forget(account);
+        lock(&self.signed_out).remove(&account);
+        let fresh = GoogleAccountConfig {
+            signed_out: false,
+            ..config.clone()
+        };
+        let token = self.access_token(http, account, &fresh).await?;
+        let endpoints = self
+            .endpoints()
+            .ok_or_else(|| GoogleError::Other(UNAVAILABLE.to_owned()))?;
+        let (_, calendars) = list_calendars(http, &endpoints, &token).await?;
+        Ok(GoogleAccountConfig {
+            calendars: if calendars.is_empty() {
+                fresh.calendars.clone()
+            } else {
+                calendars
+            },
+            ..fresh
+        })
+    }
+
     /// A current access token for the account, refreshed when needed.
     pub async fn access_token(
         &self,

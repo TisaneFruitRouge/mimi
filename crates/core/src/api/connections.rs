@@ -30,6 +30,17 @@ pub async fn delete(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>) ->
     Ok(Json(()))
 }
 
+/// Checks a connection again and restarts it, for when it got disconnected.
+pub async fn reconnect(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Connection> {
+    connections::reconnect(&state, id)
+        .await?
+        .map(Json)
+        .ok_or_else(|| AppError::not_found("Connection"))
+}
+
 /// Whether "Sign in with Google" works in this build.
 pub async fn google_info(State(state): State<Arc<AppState>>) -> ApiResult<GoogleSignInInfo> {
     Ok(Json(GoogleSignInInfo {

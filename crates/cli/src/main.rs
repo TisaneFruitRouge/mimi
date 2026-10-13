@@ -5,8 +5,8 @@ use mimi_client::Client;
 use std::io::{BufRead, Write};
 
 use mimi_protocol::{
-    ActionStatus, ConnectionSetup, Event, Locality, MessageStatus, ModelRef, NewConversation,
-    NewProvider, ProbeRequest, Provider, SendMessage,
+    ActionStatus, Connection, ConnectionSetup, Event, Locality, MessageStatus, ModelRef,
+    NewConversation, NewProvider, ProbeRequest, Provider, SendMessage,
 };
 
 /// Command-line interface to your mimi assistant.
@@ -46,6 +46,8 @@ enum Command {
     Connect(ConnectCommand),
     /// Remove a connection by name or id prefix.
     Disconnect { connection: String },
+    /// Check a connection again and restart it, by name or id prefix.
+    Reconnect { connection: String },
     /// Describe this computer and suggest models for it.
     Recommend,
     /// Show or change the model used for new messages.
@@ -256,20 +258,14 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Command::Disconnect { connection } => {
-            let all = client.connections().await?;
-            let q = connection.to_lowercase();
-            let found: Vec<_> = all
-                .iter()
-                .filter(|c| c.name.to_lowercase() == q || c.id.to_string().starts_with(&q))
-                .collect();
-            match found[..] {
-                [one] => {
-                    client.disconnect(one.id).await?;
-                    println!("removed {}", one.name);
-                }
-                [] => bail!("no connection matches \"{connection}\""),
-                _ => bail!("\"{connection}\" matches several connections; use the id"),
-            }
+            let one = find_connection(&client, &connection).await?;
+            client.disconnect(one.id).await?;
+            println!("removed {}", one.name);
+        }
+        Command::Reconnect { connection } => {
+            let one = find_connection(&client, &connection).await?;
+            let c = client.reconnect(one.id).await?;
+            println!("reconnected {} ({})", c.name, c.detail);
         }
         Command::Recommend => {
             let r = client.recommendations().await?;
@@ -518,6 +514,21 @@ async fn providers(client: &Client, cmd: ProvidersCommand) -> anyhow::Result<()>
         }
     }
     Ok(())
+}
+
+async fn find_connection(client: &Client, query: &str) -> anyhow::Result<Connection> {
+    let q = query.to_lowercase();
+    let mut matches: Vec<_> = client
+        .connections()
+        .await?
+        .into_iter()
+        .filter(|c| c.name.to_lowercase() == q || c.id.to_string().starts_with(&q))
+        .collect();
+    match matches.len() {
+        1 => Ok(matches.remove(0)),
+        0 => bail!("no connection matches \"{query}\""),
+        _ => bail!("\"{query}\" matches several connections; use the id"),
+    }
 }
 
 fn find_provider<'a>(all: &'a [Provider], query: &str) -> anyhow::Result<&'a Provider> {

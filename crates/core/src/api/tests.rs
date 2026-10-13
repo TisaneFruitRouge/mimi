@@ -3813,6 +3813,54 @@ mod google_flow {
     }
 
     #[tokio::test]
+    async fn reconnecting_rechecks_the_account_and_picks_up_new_calendars() {
+        let (h, fake) = setup(fake_account()).await;
+        let first = sign_in(&h, json!({}), &fake).await;
+        let id = first["id"].as_str().unwrap().to_owned();
+        let path = format!("/connections/{id}/reconnect");
+        assert!(first["detail"].as_str().unwrap().starts_with("2 calendars"));
+
+        // Google refuses the access: reconnecting says to sign in again.
+        let tokens = std::mem::take(&mut fake.lock().unwrap().refresh_tokens);
+        let (status, err) = h.call(reqwest::Method::POST, &path, Value::Null).await;
+        assert_eq!(status, 400);
+        assert!(
+            err["message"].as_str().unwrap().contains("Sign in again"),
+            "{err}"
+        );
+        let (_, all) = h
+            .call(reqwest::Method::GET, "/connections", Value::Null)
+            .await;
+        assert_eq!(all[0]["status"], "error");
+
+        // It accepts it again (a hiccup on Google's side), and there's a new calendar.
+        {
+            let mut f = fake.lock().unwrap();
+            f.refresh_tokens = tokens;
+            f.calendars
+                .push(json!({"id": "work@group.calendar.google.com",
+                "summary": "Work", "accessRole": "writer"}));
+        }
+        let (status, again) = h.call(reqwest::Method::POST, &path, Value::Null).await;
+        assert_eq!(status, 200, "{again}");
+        assert_eq!(again["status"], "ok");
+        assert!(again["detail"].as_str().unwrap().starts_with("3 calendars"));
+        let (_, all) = h
+            .call(reqwest::Method::GET, "/connections", Value::Null)
+            .await;
+        assert_eq!(all[0]["status"], "ok", "and it stays that way");
+
+        let (status, _) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/connections/{}/reconnect", uuid::Uuid::now_v7()),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(status, 404);
+    }
+
+    #[tokio::test]
     async fn a_revoked_sign_in_says_so_and_signing_in_again_keeps_the_connection() {
         let (h, fake) = setup(fake_account()).await;
         let first = sign_in(&h, json!({}), &fake).await;

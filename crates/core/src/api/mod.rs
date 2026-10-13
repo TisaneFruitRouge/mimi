@@ -64,6 +64,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/connections/{id}",
             axum::routing::delete(connections::delete),
         )
+        .route("/connections/{id}/reconnect", post(connections::reconnect))
         .route(
             "/google/sign-in",
             get(connections::google_info).post(connections::google_start),

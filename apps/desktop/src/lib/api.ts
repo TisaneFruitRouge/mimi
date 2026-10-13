@@ -154,6 +154,7 @@ export const api = {
   connections: () => call<Connection[]>("GET", "/connections"),
   connect: (setup: ConnectionSetup) => call<Connection>("POST", "/connections", setup),
   disconnect: (id: string) => call<null>("DELETE", `/connections/${id}`),
+  reconnect: (id: string) => call<Connection>("POST", `/connections/${id}/reconnect`),
   /** Whether "Sign in with Google" works in this build. */
   googleSignInInfo: () => call<GoogleSignInInfo>("GET", "/google/sign-in"),
   /** Starts signing in; open `url` in the browser, then poll the status. */
