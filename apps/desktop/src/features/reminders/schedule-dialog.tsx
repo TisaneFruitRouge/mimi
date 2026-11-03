@@ -222,7 +222,7 @@ function ScheduleForm({
         <DialogDescription>
           {routine
             ? "Your assistant does this on schedule and sends you the result. Anything it would send or change still waits for your OK."
-            : "You'll get it here, on this computer, and on Telegram if it's connected."}
+            : "You'll get it here, on this computer, and in your messaging apps if they're connected."}
         </DialogDescription>
       </DialogHeader>
 

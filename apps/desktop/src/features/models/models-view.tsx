@@ -8,6 +8,7 @@ import {
   Cloud,
   Cpu,
   Download,
+  ImageIcon,
   Loader2,
   MoreHorizontal,
   Plus,
@@ -55,6 +56,7 @@ import {
   sameModel,
   useActiveModel,
   useAllModels,
+  useDefaultSeesImages,
   useModelInfo,
   useProviders,
   usePulls,
@@ -77,6 +79,7 @@ export function ModelsView({ setup = false, onChat }: { setup?: boolean; onChat?
   const [adding, setAdding] = useState<null | "any" | "cloud">(null);
   // The model picker, open on one source's models or (null) all of them.
   const [browsing, setBrowsing] = useState<{ source: string | null } | null>(null);
+  const [choosingPhotoModel, setChoosingPhotoModel] = useState(false);
   const rec = useRecommendations().data;
   const yourModels = useRef<HTMLElement>(null);
   const providers = useProviders().data ?? [];
@@ -111,6 +114,7 @@ export function ModelsView({ setup = false, onChat }: { setup?: boolean; onChat?
 
       {!setup && <DetectedServers />}
       <YourModels ref={yourModels} onBrowse={(source) => setBrowsing({ source })} />
+      {!setup && <PhotoModel onChoose={() => setChoosingPhotoModel(true)} />}
 
       <Section title="Good fits for this computer">
         <div className="grid grid-cols-3 gap-3">
@@ -136,6 +140,7 @@ export function ModelsView({ setup = false, onChat }: { setup?: boolean; onChat?
         initialSource={browsing?.source ?? null}
         recommended={recommended}
       />
+      <ModelPickerDialog open={choosingPhotoModel} onOpenChange={setChoosingPhotoModel} forPhotos />
       <AddSourceDialog
         open={adding !== null}
         onOpenChange={(o) => !o && setAdding(null)}
@@ -486,6 +491,73 @@ const YourModels = forwardRef<HTMLElement, { onBrowse: (source: string | null) =
     </section>
   );
 });
+
+/**
+ * The optional model for photos: it answers messages with photos when the model in use
+ * can't see them. Greyed out while the model in use sees photos itself.
+ */
+function PhotoModel({ onChoose }: { onChoose: () => void }) {
+  const settings = useSettings().data;
+  const defaultSees = useDefaultSeesImages();
+  const { options } = useAllModels();
+  const info = useModelInfo();
+  if (!settings?.default_model) return null;
+  const chosen = settings.photo_model;
+  const option = options.find((o) => sameModel(o.ref, chosen));
+  const notNeeded = defaultSees === true;
+  const stop = () => api.putSettings({ ...settings, photo_model: null }).catch((e) => toast.error(e.message));
+
+  const detail = notNeeded
+    ? "Not needed: the model in use already sees photos."
+    : chosen
+      ? [option?.price ? costLabel(option.price) : null, option ? `From ${option.providerName}` : null]
+          .filter(Boolean)
+          .join(" · ") || "Answers messages with photos"
+      : "Optional. The model in use can't see photos; choose one that can, just for them.";
+  return (
+    <Section title="Model for photos">
+      <Grouped>
+        <div aria-disabled={notNeeded} className={cn(notNeeded && "opacity-50")}>
+          <Row
+            onClick={notNeeded ? undefined : onChoose}
+            icon={
+              <IconTile size="sm" className="bg-fill text-muted-foreground">
+                <ImageIcon />
+              </IconTile>
+            }
+            title={chosen ? info(chosen.model, option?.name).name : "None"}
+            detail={detail}
+            trailing={
+              <>
+                {chosen && option && <LocalityBadge locality={option.locality} />}
+                {!notNeeded && <ChevronRight className="size-4 text-faint" />}
+              </>
+            }
+            accessory={
+              chosen && !notNeeded ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Options for the model for photos"
+                      className="rounded-full text-muted-foreground"
+                    >
+                      <MoreHorizontal />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onSelect={stop}>Don't use a model for photos</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : undefined
+            }
+          />
+        </div>
+      </Grouped>
+    </Section>
+  );
+}
 
 function SuggestedCard({
   model,

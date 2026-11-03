@@ -5,7 +5,10 @@ use std::time::Instant;
 
 use mimi_protocol::{KeyStorage, Paths};
 
+pub mod access;
 pub mod api;
+pub mod attachments;
+pub mod channels;
 pub mod chat;
 pub mod connections;
 pub mod daemon;
@@ -25,6 +28,7 @@ pub mod schedule;
 pub mod settings;
 pub mod tools;
 pub mod updates;
+pub mod voice;
 pub mod web;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -65,6 +69,10 @@ pub struct AppState {
     pub mail: mail::Mail,
     /// "Check for new versions": the test endpoint and the loop's wake-up.
     pub updates: updates::Updates,
+    /// Which conversations belong to people the user trusts, kept from their clients.
+    pub access: access::Access,
+    /// Listening and speaking: loaded voice models and their downloads.
+    pub voice: voice::Voice,
 }
 
 impl AppState {
@@ -101,6 +109,8 @@ impl AppState {
             scheduler: Default::default(),
             mail: Default::default(),
             updates: Default::default(),
+            access: Default::default(),
+            voice: Default::default(),
         }
     }
 }

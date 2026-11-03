@@ -7,6 +7,10 @@ import type { PermissionRule } from "./PermissionRule";
  */
 export type KindPermission = { autonomy: Autonomy, 
 /**
- * Exceptions for particular people or calendars. The most specific wins.
+ * Exceptions for particular people, groups or calendars. The most specific wins.
  */
-rules: Array<PermissionRule>, };
+rules: Array<PermissionRule>, 
+/**
+ * The kind's switches the user turned on, by id (see [`PermissionKind::switches`]).
+ */
+switches: Array<string>, };

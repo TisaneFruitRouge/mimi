@@ -32,6 +32,9 @@ pub use permissions::{CallTarget, Governs};
 pub struct ToolContext {
     pub state: Arc<AppState>,
     pub conversation_id: Uuid,
+    /// Who the turn is for: the user, or someone they trust (`access`). Tools that work
+    /// for guests check it themselves (their calendars only, their own reminders).
+    pub principal: crate::access::Principal,
 }
 
 pub trait Tool: Send + Sync {
@@ -47,6 +50,11 @@ pub trait Tool: Send + Sync {
     /// few kinds of action the user may let happen on their own.
     fn governed_by(&self) -> Option<Governs> {
         None
+    }
+    /// A call its permission never lets run on its own, whatever the user chose (an
+    /// email carrying files). Only read for tools with [`Tool::governed_by`].
+    fn always_asks(&self, _args: &Value) -> bool {
+        false
     }
     /// Who or what this call is about, for the exceptions of its permission ("email Sam
     /// without asking", "always ask before writing to the Family calendar"). Read from
@@ -277,6 +285,11 @@ impl Approvals {
             Some(tx) => tx.send(decision).is_ok(),
             None => false,
         }
+    }
+
+    /// Whether a card is still waiting for an answer.
+    pub fn is_waiting(&self, action_id: Uuid) -> bool {
+        lock(&self.waiting).contains_key(&action_id)
     }
 
     pub fn forget(&self, action_id: Uuid) {

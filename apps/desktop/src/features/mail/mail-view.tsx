@@ -1,15 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
   AtSign,
+  BadgeAlert,
   ChevronDown,
   CircleAlert,
   Copy,
   ExternalLink,
   Forward,
   Inbox,
+  Keyboard,
   Layers,
   Link,
   Loader2,
@@ -32,8 +34,10 @@ import {
 import { cn } from "cn";
 import { toast } from "sonner";
 
+import type { MailBatchAction } from "@/bindings/MailBatchAction";
 import type { MailBox } from "@/bindings/MailBox";
 import type { MailDraft } from "@/bindings/MailDraft";
+import type { MailDraftInfo } from "@/bindings/MailDraftInfo";
 import type { MailFolder } from "@/bindings/MailFolder";
 import type { MailMessage } from "@/bindings/MailMessage";
 import type { MailOverview } from "@/bindings/MailOverview";
@@ -63,9 +67,43 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ConnectDialog } from "@/features/connections/connect-dialogs";
 import { DraftEditor, SendButton, useSendDraft } from "@/features/mail/draft-editor";
+import { replaceText, withoutSignature } from "@/features/mail/signature";
+import { useSignature } from "@/features/mail/use-signature";
+import {
+  continueDraft,
+  DraftList,
+  DraftSavedNote,
+  DraftsNavItem,
+  NoDraftOpen,
+  useDraftAutosave,
+  useDraftReplies,
+  useMailDrafts,
+  withDraftId,
+} from "@/features/mail/drafts";
+import {
+  ScheduledList,
+  ScheduledNavItem,
+  ScheduledReader,
+  useDraftHome,
+  useMailRequests,
+} from "@/features/mail/send-later";
+import { FlagStar, RowFlag, useFlagThread } from "@/features/mail/flag";
 import { FolderGlyph } from "@/features/mail/folder-looks";
 import { AddToFolder, FolderChips, FolderHeader, FolderList } from "@/features/mail/folders";
+import { OlderMail } from "@/features/mail/older-mail";
 import { type FrameContext, MailModeSwitch, MessageBody } from "@/features/mail/message-body";
+import { UnsubscribeButton } from "@/features/mail/unsubscribe";
+import {
+  type Bulk,
+  BulkMenuItems,
+  clickChoice,
+  DeleteConversations,
+  rowChosen,
+  SelectionSummary,
+  useBulkMail,
+  useShownThreads,
+} from "@/features/mail/selection";
+import { LIST_SELECTOR, ShortcutsSheet, useMailShortcuts } from "@/features/mail/shortcuts";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -88,9 +126,10 @@ import { openAttachment, openExternal } from "@/lib/transport";
 
 const views: { id: MailBox; label: string; icon: typeof Inbox; sorted: boolean }[] = [
   { id: "needs_reply", label: "Needs a reply", icon: Reply, sorted: true },
-  { id: "important", label: "Important", icon: Star, sorted: true },
+  { id: "important", label: "Important", icon: BadgeAlert, sorted: true },
   { id: "other", label: "Everything else", icon: Layers, sorted: true },
   { id: "inbox", label: "Inbox", icon: Inbox, sorted: false },
+  { id: "flagged", label: "Flagged", icon: Star, sorted: false },
   { id: "sent", label: "Sent", icon: Send, sorted: false },
   { id: "archive", label: "Archive", icon: Archive, sorted: false },
 ];
@@ -101,6 +140,7 @@ const empty: Record<MailBox, string> = {
   important: "Nothing important right now.",
   other: "No newsletters or notifications.",
   inbox: "Your inbox is empty.",
+  flagged: "Nothing is flagged. Flag a conversation with its star to keep it here.",
   sent: "Nothing sent in the last 90 days.",
   archive: "Nothing archived in the last 90 days.",
 };
@@ -144,9 +184,12 @@ function storeFolder(id: number | null) {
 
 // A conversation another panel asked to show (e.g. "Recent emails" on a person's page).
 let pendingThread: number | null = null;
-/** Opens a conversation the next time the Mail panel shows. */
+// The panel while it's showing, so a request (a click on a new-mail notification) reaches it.
+let openMailThread: ((id: number) => void) | null = null;
+/** Opens a conversation the next time the Mail panel shows, or now if it's showing. */
 export function showMailThread(id: number) {
-  pendingThread = id;
+  if (openMailThread) openMailThread(id);
+  else pendingThread = id;
 }
 
 // Which account or address the panel shows, per viewer (like the view).
@@ -226,6 +269,8 @@ function listDate(ms: number) {
   if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const days = (now.getTime() - ms) / 86_400_000;
   if (days < 6) return d.toLocaleDateString([], { weekday: "short" });
+  // Older mail found on the server can be years old.
+  if (d.getFullYear() !== now.getFullYear()) return d.toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
   return d.toLocaleDateString([], { day: "numeric", month: "short" });
 }
 
@@ -286,6 +331,7 @@ export function MailView({
     setScopeState(next);
     storeScope(next);
     setSelected(null);
+    setChosen([]);
   };
   const [view, setViewState] = useState<MailBox | null>(storedView);
   const [folderId, setFolderState] = useState<number | null>(storedFolder);
@@ -295,7 +341,43 @@ export function MailView({
     pendingThread = null;
     return id;
   });
-  const [composing, setComposing] = useState<MailDraft | null>(null);
+  useEffect(() => {
+    // A notification's click: show that conversation, whatever view or choice was on.
+    openMailThread = (id) => {
+      setScheduled(false);
+      setDraftsView(false);
+      setChosen([]);
+      setSelected(id);
+    };
+    return () => {
+      openMailThread = null;
+    };
+  }, []);
+  // A message being written: always with its saved draft's id (`drafts.tsx`).
+  const [composing, setComposingState] = useState<MailDraft | null>(null);
+  const setComposing = (d: MailDraft | null) => setComposingState(withDraftId(d));
+  // The Scheduled view (mail waiting to be sent), and the email open in it.
+  const [scheduled, setScheduled] = useState(false);
+  const [outgoing, setOutgoing] = useState<string | null>(null);
+  // The Drafts view, and the draft open in it (a reply opens in its conversation).
+  const [draftsView, setDraftsView] = useState(false);
+  const [openDraft, setOpenDraft] = useState<string | null>(null);
+  // A draft taken back with Undo whose editor is gone, or "Open" on a toast.
+  useMailRequests((r) => {
+    if ("compose" in r) {
+      setSelected(null);
+      setComposing(r.compose);
+    } else {
+      setComposing(null);
+      setChosen([]);
+      setDraftsView(false);
+      setScheduled(true);
+      setOutgoing(r.scheduled);
+    }
+  });
+  // Conversations chosen together (⌘/Ctrl-click, Shift-click, X, ⌘/Ctrl A): see
+  // `selection.tsx`. Empty unless several are, or X started a choice.
+  const [chosenState, setChosen] = useState<number[]>([]);
   // Conversations being deleted: gone from the list at once (the server's move to the
   // Trash follows), back if it fails. Kept apart from the query cache, so a refresh that
   // lands meanwhile can't bring them back for a moment.
@@ -326,14 +408,42 @@ export function MailView({
     storeView(v);
     setFolder(null);
     setQuery("");
+    setChosen([]);
   };
   const setFolder = (id: number | null) => {
     setFolderState(id);
     storeFolder(id);
     setQuery("");
+    setScheduled(false);
+    setDraftsView(false);
+    setChosen([]);
   };
   // A remembered folder that was deleted means the usual views.
   const folder = o?.folders.find((f) => f.id === folderId) ?? null;
+
+  // Choosing several and acting on them, and the keyboard (`selection.tsx`, `shortcuts.tsx`).
+  const shown = useShownThreads(current, query, scope, folder?.id ?? null, removing, !!o && o.accounts.length > 0);
+  const chosen = chosenState.filter((id) => shown.some((t) => t.id === id));
+  const many = chosen.length > 1;
+  const [deletingIds, setDeletingIds] = useState<number[] | null>(null);
+  const [showKeys, setShowKeys] = useState(false);
+  const hide = useCallback((ids: number[]) => setRemoving((s) => new Set([...s, ...ids])), []);
+  const show = useCallback(
+    (ids: number[]) =>
+      setRemoving((s) => {
+        const next = new Set(s);
+        for (const id of ids) next.delete(id);
+        return next;
+      }),
+    [],
+  );
+  const runBulk = useBulkMail({ hide, show, folders: o?.folders ?? [] });
+  const flag = useFlagThread();
+  const qc = useQueryClient();
+  const shortcuts = useMailShortcuts();
+  shortcuts.current = null;
+  // New messages, replies and forwards start with the user's signature.
+  const { sign } = useSignature();
 
   if (overview.isLoading) {
     return (
@@ -353,31 +463,188 @@ export function MailView({
 
   const compose = () => {
     setSelected(null);
-    setComposing({
-      connection_id: null,
-      from: null,
-      to: [],
-      cc: [],
-      subject: "",
-      body: "",
-      reply_to: null,
-      forward_of: null,
-    });
+    setComposing(
+      sign({
+        connection_id: null,
+        from: null,
+        to: [],
+        cc: [],
+        bcc: [],
+        subject: "",
+        body: "",
+        reply_to: null,
+        forward_of: null,
+        attachments: [],
+      }),
+    );
+  };
+
+  // A saved draft: a reply opens in its conversation (the reader loads it), a new message
+  // in a compose.
+  const openSaved = (info: MailDraftInfo) => {
+    setOpenDraft(info.id);
+    if (info.reply_to !== null) {
+      setComposing(null);
+      setSelected(info.reply_to);
+      return;
+    }
+    continueDraft(info).then(
+      (d) => {
+        setSelected(null);
+        setComposing(d);
+      },
+      (e) => toast.error((e as Error).message),
+    );
+  };
+
+  const focusRow = (id: number) =>
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(`${LIST_SELECTOR} [data-id="${id}"]`)?.focus());
+  const openThread = (id: number) => {
+    setComposing(null);
+    setSelected(id);
+    focusRow(id);
+  };
+  const choose = (id: number, e: React.MouseEvent | null) => {
+    const next = clickChoice(
+      shown.map((t) => t.id),
+      chosen,
+      composing ? null : selected,
+      id,
+      e,
+    );
+    setChosen(next.chosen);
+    setComposing(null);
+    setSelected(next.open);
+  };
+  // What an action applies to: the chosen conversations, else the one open.
+  const targets = many ? chosen : selected !== null && !composing ? [selected] : [];
+  const targetThreads = shown.filter((t) => targets.includes(t.id));
+  const canArchive = query.trim().length > 0 || folder !== null || current !== "archive";
+  const act = (action: MailBatchAction, ids: number[] = targets) => {
+    if (ids.length === 0) return;
+    if (action.kind === "archive" || action.kind === "delete") {
+      if (many) {
+        setChosen([]);
+        setSelected(null);
+      } else if (selected !== null && ids.includes(selected)) {
+        // The next conversation takes its place, as in mail apps.
+        const i = shown.findIndex((t) => t.id === selected);
+        const next =
+          shown.slice(i + 1).find((t) => !ids.includes(t.id)) ??
+          shown
+            .slice(0, Math.max(0, i))
+            .reverse()
+            .find((t) => !ids.includes(t.id));
+        if (next) openThread(next.id);
+        else setSelected(null);
+      }
+    }
+    void runBulk(ids, action);
+  };
+  const bulk: Bulk | null = many
+    ? {
+        ids: chosen,
+        threads: targetThreads,
+        run: (action) => act(action),
+        askDelete: () => setDeletingIds(chosen),
+        clear: () => setChosen([]),
+        canArchive,
+      }
+    : null;
+  const move = (by: number) => {
+    if (shown.length === 0) return;
+    const i = shown.findIndex((t) => t.id === selected);
+    const next = i === -1 ? (by > 0 ? 0 : shown.length - 1) : Math.min(shown.length - 1, Math.max(0, i + by));
+    openThread(shown[next].id);
+  };
+  shortcuts.current = {
+    // The Scheduled and Drafts views have no conversations to act on: only ? works
+    // there, as while writing.
+    writing: composing !== null || scheduled || draftsView,
+    arrows: selected === null || many,
+    next: () => move(1),
+    previous: () => move(-1),
+    open: () => {
+      setChosen([]);
+      if (selected === null && shown[0]) openThread(shown[0].id);
+    },
+    back: () => {
+      if (chosenState.length > 0) setChosen([]);
+      else setSelected(null);
+    },
+    reply: () => !many && selected !== null && setPendingAction({ id: selected, action: "reply" }),
+    replyAll: () => !many && selected !== null && setPendingAction({ id: selected, action: "reply_all" }),
+    forward: () => !many && selected !== null && setPendingAction({ id: selected, action: "forward" }),
+    compose,
+    archive: () => canArchive && act({ kind: "archive" }),
+    remove: () => targets.length > 0 && setDeletingIds(targets),
+    toggleRead: () => {
+      // The open conversation may not be in the list (opened from someone's page).
+      const open = selected !== null ? qc.getQueryData<MailThreadDetail>(keys.mailThread(selected))?.thread : undefined;
+      const threads = targetThreads.length > 0 ? targetThreads : open && !many ? [open] : [];
+      if (threads.length > 0) act({ kind: "read", read: threads.some((t) => t.unread) });
+    },
+    toggleFlag: () => {
+      if (many) act({ kind: "flag", flagged: targetThreads.some((t) => !t.flagged) });
+      else if (selected !== null && !composing) void flag(selected);
+    },
+    search: () => {
+      const field = document.querySelector<HTMLInputElement>('input[aria-label="Search mail"]');
+      field?.focus();
+      field?.select();
+    },
+    choose: () => {
+      if (selected === null || composing) return;
+      setChosen(chosen.includes(selected) ? chosen.filter((x) => x !== selected) : [...chosen, selected]);
+    },
+    chooseAll: () => {
+      if (shown.length > 1) setChosen(shown.map((t) => t.id));
+      else if (shown[0]) openThread(shown[0].id);
+    },
+    help: () => setShowKeys(true),
   };
 
   return (
     <div className="flex h-full">
       <Mailboxes
         overview={o}
-        view={folder ? null : current}
+        view={folder || scheduled || draftsView ? null : current}
         onView={setView}
-        folder={folder?.id ?? null}
+        scheduled={scheduled}
+        onScheduled={() => {
+          setComposing(null);
+          setChosen([]);
+          setDraftsView(false);
+          setScheduled(true);
+        }}
+        drafts={draftsView}
+        onDrafts={() => {
+          setComposing(null);
+          setSelected(null);
+          setChosen([]);
+          setScheduled(false);
+          setOpenDraft(null);
+          setDraftsView(true);
+        }}
+        folder={scheduled || draftsView ? null : (folder?.id ?? null)}
         onFolder={setFolder}
         scope={scope}
         onScope={setScope}
         onCompose={compose}
         onSettings={onSection}
+        onShortcuts={() => setShowKeys(true)}
       />
+      {draftsView ? (
+        <DraftList selected={openDraft} onOpen={openSaved} />
+      ) : scheduled ? (
+        <ScheduledList
+          selected={outgoing}
+          onSelect={(id) => {
+            setComposing(null);
+            setOutgoing(id);
+          }}
+        />
+      ) : (
       <ThreadList
         view={current}
         onView={setView}
@@ -405,11 +672,23 @@ export function MailView({
         removing={removing}
         onDelete={deleteThread}
         onCompose={compose}
+        chosen={chosen}
+        onChoose={choose}
+        bulk={bulk}
       />
+      )}
       <div className="h-full min-w-0 flex-1">
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
-            key={composing ? "compose" : (selected ?? "none")}
+            key={
+              composing
+                ? `compose:${composing.draft_id}`
+                : scheduled
+                  ? `scheduled:${outgoing}`
+                  : many
+                    ? "chosen"
+                    : (selected ?? (draftsView ? "drafts" : "none"))
+            }
             className="h-full"
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
@@ -417,7 +696,19 @@ export function MailView({
             transition={{ type: "spring", stiffness: 420, damping: 36, mass: 0.8 }}
           >
             {composing ? (
-              <Compose draft={composing} onChange={setComposing} onClose={() => setComposing(null)} />
+              <Compose
+                key={composing.draft_id}
+                draft={composing}
+                onChange={setComposing}
+                onClose={() => {
+                  setComposing(null);
+                  setOpenDraft(null);
+                }}
+              />
+            ) : scheduled ? (
+              <ScheduledReader id={outgoing} onGone={() => setOutgoing(null)} onEdit={setComposing} />
+            ) : bulk ? (
+              <SelectionSummary bulk={bulk} folders={o.folders} folder={folder} />
             ) : selected !== null ? (
               <Reader
                 id={selected}
@@ -429,17 +720,33 @@ export function MailView({
                 onOpenPerson={onOpenPerson}
                 onForward={(draft) => {
                   setSelected(null);
-                  setComposing(draft);
+                  setComposing(sign(draft));
                 }}
                 action={pendingAction?.id === selected ? pendingAction.action : null}
                 onActionTaken={() => setPendingAction(null)}
+                openDraft={draftsView ? openDraft : null}
               />
+            ) : draftsView ? (
+              <NoDraftOpen />
             ) : (
-              <NothingOpen view={current} />
+              <NothingOpen view={current} onShortcuts={() => setShowKeys(true)} />
             )}
           </motion.div>
         </AnimatePresence>
       </div>
+      <DeleteConversations
+        ids={deletingIds}
+        subject={
+          deletingIds?.length === 1
+            ? (shown.find((t) => t.id === deletingIds[0])?.subject ??
+              qc.getQueryData<MailThreadDetail>(keys.mailThread(deletingIds[0]))?.thread.subject ??
+              null)
+            : null
+        }
+        onDelete={(ids) => act({ kind: "delete" }, ids)}
+        onCancel={() => setDeletingIds(null)}
+      />
+      <ShortcutsSheet open={showKeys} onClose={() => setShowKeys(false)} />
     </div>
   );
 }
@@ -472,22 +779,32 @@ function Mailboxes({
   overview: o,
   view,
   onView,
+  scheduled,
+  onScheduled,
+  drafts,
+  onDrafts,
   folder,
   onFolder,
   scope,
   onScope,
   onCompose,
   onSettings,
+  onShortcuts,
 }: {
   overview: MailOverview;
   view: MailBox | null;
   onView: (v: MailBox) => void;
+  scheduled: boolean;
+  onScheduled: () => void;
+  drafts: boolean;
+  onDrafts: () => void;
   folder: number | null;
   onFolder: (id: number) => void;
   scope: MailScope;
   onScope: (s: MailScope) => void;
   onCompose: () => void;
   onSettings: (s: Section) => void;
+  onShortcuts: () => void;
 }) {
   const rows = scopeRows(o);
   const [refreshing, setRefreshing] = useState(false);
@@ -547,6 +864,8 @@ function Mailboxes({
       <nav aria-label="Mailboxes" className="flex flex-col gap-0.5">
         <span className="px-2.5 pb-1 section-label">Mailboxes</span>
         {views.filter((v) => !v.sorted).map(item)}
+        <DraftsNavItem active={drafts} onClick={onDrafts} />
+        <ScheduledNavItem active={scheduled} onClick={onScheduled} />
       </nav>
       <FolderList overview={o} current={folder} onOpen={onFolder} />
       {rows.length > 0 && (
@@ -590,6 +909,9 @@ function Mailboxes({
               {a.email}
             </span>
           ))}
+        <button onClick={onShortcuts} className="flex items-center gap-1.5 text-left hover:text-foreground">
+          <Keyboard className="size-3.5" /> Keyboard shortcuts
+        </button>
       </div>
     </aside>
   );
@@ -680,6 +1002,9 @@ function ThreadList({
   selected,
   onSelect,
   onCompose,
+  chosen,
+  onChoose,
+  bulk,
 }: {
   view: MailBox;
   onView: (v: MailBox) => void;
@@ -700,6 +1025,12 @@ function ThreadList({
   selected: number | null;
   onSelect: (id: number) => void;
   onCompose: () => void;
+  /** Conversations chosen together; see `selection.tsx`. */
+  chosen: number[];
+  /** A click on a row (`null`: "Open" in its menu): ⌘/Ctrl- and Shift-click choose several. */
+  onChoose: (id: number, e: React.MouseEvent | null) => void;
+  /** What can be done to the chosen ones, while several are. */
+  bulk: Bulk | null;
 }) {
   const searching = query.trim().length > 0;
   // A search looks through everything, not only the current view.
@@ -714,6 +1045,7 @@ function ThreadList({
   const problem = accounts.find((c) => c.status === "error");
   const checking = accounts.some((c) => c.detail.startsWith("Checking"));
   const list = (threads.data ?? []).filter((t) => !removing.has(t.id));
+  const drafted = useDraftReplies();
   const box = useRef<HTMLDivElement>(null);
   const [deleting, setDeleting] = useState<MailThread | null>(null);
 
@@ -821,6 +1153,7 @@ function ThreadList({
         ref={box}
         role="listbox"
         aria-label="Conversations"
+        aria-multiselectable
         className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-2 pb-4"
         onKeyDown={(e) => {
           if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -861,20 +1194,50 @@ function ThreadList({
             thread={t}
             folder={folder}
             folders={overview.folders}
-            onOpen={() => onSelect(t.id)}
+            onOpen={() => onChoose(t.id, null)}
             onAction={(action) => onAction(t.id, action)}
             onDelete={() => setDeleting(t)}
+            bulk={bulk && chosen.includes(t.id) ? <BulkMenuItems bulk={bulk} folders={overview.folders} folder={folder} /> : null}
           >
             <ThreadRow
               thread={t}
-              active={t.id === selected}
+              active={rowChosen(t.id, chosen, selected)}
               focusable={t.id === selected || (selected === null && t === list[0])}
               showCategory={searching || view === "inbox"}
               showAddress={showAddress && !!t.received_on && !mainAddresses.has(t.received_on)}
-              onClick={() => onSelect(t.id)}
+              draft={drafted.has(t.id)}
+              onClick={(e) => onChoose(t.id, e)}
             />
           </ThreadMenu>
         ))}
+        {searching && !threads.isLoading && (
+          <OlderMail
+            key={`${query.trim()}|${scope.account ?? ""}`}
+            query={query}
+            account={scope.account ?? null}
+            shown={new Set(list.map((t) => t.id))}
+            renderThread={(t) => (
+              <ThreadMenu
+                key={t.id}
+                thread={t}
+                folder={null}
+                folders={overview.folders}
+                onOpen={() => onSelect(t.id)}
+                onAction={(action) => onAction(t.id, action)}
+                onDelete={() => setDeleting(t)}
+              >
+                <ThreadRow
+                  thread={t}
+                  active={t.id === selected}
+                  focusable={false}
+                  showCategory={false}
+                  showAddress={showAddress && !!t.received_on && !mainAddresses.has(t.received_on)}
+                  onClick={() => onSelect(t.id)}
+                />
+              </ThreadMenu>
+            )}
+          />
+        )}
       </div>
       <AlertDialog open={deleting !== null} onOpenChange={(o) => !o && setDeleting(null)}>
         <AlertDialogContent>
@@ -910,6 +1273,7 @@ function ThreadMenu({
   onOpen,
   onAction,
   onDelete,
+  bulk,
   children,
 }: {
   thread: MailThread;
@@ -918,16 +1282,25 @@ function ThreadMenu({
   onOpen: () => void;
   onAction: (action: ThreadAction) => void;
   onDelete: () => void;
+  /** While this row is one of several chosen: their menu instead (`selection.tsx`). */
+  bulk?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const fail = (e: unknown) => toast.error((e as Error).message);
+  const flag = useFlagThread();
   const addable = folders.filter((f) => !t.folders.includes(f.id));
   return (
     <ContextMenu>
       {/* A plain element: the row component doesn't pass the trigger's handlers on. */}
       <ContextMenuTrigger asChild>
-        <div className="flex flex-col">{children}</div>
+        <div className="group/row relative flex flex-col">
+          {children}
+          {/* The row's star, beside it rather than in it: a button can't hold a button. */}
+          <RowFlag thread={t} className="absolute top-[34px] left-[3px]" />
+        </div>
       </ContextMenuTrigger>
+      {bulk && <ContextMenuContent className="w-[230px]">{bulk}</ContextMenuContent>}
+      {!bulk && (
       <ContextMenuContent className="w-[220px]">
         <ContextMenuItem onSelect={onOpen}>
           <MailOpen /> Open
@@ -941,6 +1314,9 @@ function ThreadMenu({
         <ContextMenuSeparator />
         <ContextMenuItem onSelect={() => api.markMailRead(t.id, t.unread).catch(fail)}>
           {t.unread ? <MailOpen /> : <Mail />} {t.unread ? "Mark as read" : "Mark as unread"}
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => void flag(t.id, !t.flagged)}>
+          <FlagStar flagged={false} /> {t.flagged ? "Remove flag" : "Flag"}
         </ContextMenuItem>
         {addable.length > 0 && (
           <ContextMenuSub>
@@ -991,6 +1367,7 @@ function ThreadMenu({
           <Trash2 /> Delete…
         </ContextMenuItem>
       </ContextMenuContent>
+      )}
     </ContextMenu>
   );
 }
@@ -1006,6 +1383,7 @@ function ThreadRow({
   focusable,
   showCategory,
   showAddress,
+  draft,
   onClick,
 }: {
   thread: MailThread;
@@ -1013,7 +1391,9 @@ function ThreadRow({
   focusable: boolean;
   showCategory: boolean;
   showAddress: boolean;
-  onClick: () => void;
+  /** A reply to it is being written (a saved draft). */
+  draft?: boolean;
+  onClick: (e: React.MouseEvent) => void;
 }) {
   const pill = t.suspicious
     ? { label: "Suspicious", className: "bg-[#fdeeec] text-destructive" }
@@ -1028,7 +1408,7 @@ function ThreadRow({
       tabIndex={focusable ? 0 : -1}
       onClick={onClick}
       className={cn(
-        "relative flex flex-col gap-0.5 rounded-[10px] py-2.5 pr-3 pl-6 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/45",
+        "relative flex flex-col gap-0.5 rounded-[10px] py-2.5 pr-3 pl-6 text-left transition-colors outline-none select-none focus-visible:ring-2 focus-visible:ring-ring/45",
         active ? "bg-[rgb(118_118_128/0.14)]" : "hover:bg-[rgb(118_118_128/0.07)]",
       )}
     >
@@ -1042,7 +1422,6 @@ function ThreadRow({
       </span>
       <span className="flex items-center gap-1.5">
         <span className="min-w-0 flex-1 truncate type-subhead">{t.subject || "(no subject)"}</span>
-        {t.flagged && <Star className="size-3 shrink-0 fill-[#ff9f0a] text-[#ff9f0a]" aria-label="Flagged" />}
         {showAddress && t.received_on && !t.last_from_me && (
           <span title={`Received on ${t.received_on}`} className="flex min-w-0 shrink">
             <Pill className="h-[18px] max-w-[130px] bg-fill px-2 text-[11px] text-muted-foreground">
@@ -1050,6 +1429,7 @@ function ThreadRow({
             </Pill>
           </span>
         )}
+        {draft && <Pill className="h-[18px] bg-fill px-2 text-[11px] text-muted-foreground">Draft</Pill>}
         {pill && <Pill className={cn("h-[18px] px-2 text-[11px]", pill.className)}>{pill.label}</Pill>}
       </span>
       <span className="line-clamp-2 type-subhead text-muted-foreground">
@@ -1066,7 +1446,7 @@ function ThreadRow({
   );
 }
 
-function NothingOpen({ view }: { view: MailBox }) {
+function NothingOpen({ view, onShortcuts }: { view: MailBox; onShortcuts: () => void }) {
   const v = viewOf(view);
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 px-6 pt-[60px] text-center">
@@ -1077,6 +1457,9 @@ function NothingOpen({ view }: { view: MailBox }) {
       <p className="max-w-sm type-callout text-muted-foreground">
         Read it here, ask for a summary, or have a reply drafted for you to check and send.
       </p>
+      <button onClick={onShortcuts} className="type-footnote text-faint hover:text-foreground">
+        Press ? for keyboard shortcuts
+      </button>
     </div>
   );
 }
@@ -1094,6 +1477,7 @@ function Reader({
   onActionTaken,
   onAsk,
   onOpenPerson,
+  openDraft,
 }: {
   id: number;
   overview: MailOverview;
@@ -1107,6 +1491,8 @@ function Reader({
   onActionTaken: () => void;
   onAsk: (draft: Draft) => void;
   onOpenPerson: (id: string) => void;
+  /** The saved draft to continue in the reply box (from the Drafts view). */
+  openDraft?: string | null;
 }) {
   const onScroll = useScrollEdge();
   const assistant = useAssistantName();
@@ -1114,25 +1500,55 @@ function Reader({
   const [summary, setSummary] = useState<string | null>(null);
   const [summarizing, setSummarizing] = useState(false);
   const [reply, setReply] = useState<MailDraft | null>(null);
+  // A reply starts with the user's signature (not one put back by Undo).
+  const { sign } = useSignature();
+  const startWith = (r: MailDraft) => setReply(sign(r));
+  // Undo send puts a reply back here while this conversation is open.
+  useDraftHome(`reply:${id}`, setReply);
+  // A reply saved earlier (here, or in another mail app) opens in the reply box. Once:
+  // after it's sent or discarded, the list may still name it for a moment.
+  const drafts = useMailDrafts().data;
+  const draftLoaded = useRef(false);
+  // A reply box opened that way doesn't take the keyboard: J and K keep moving.
+  const [quietReply, setQuietReply] = useState(false);
+  useEffect(() => {
+    if (reply) draftLoaded.current = true;
+    if (draftLoaded.current || !drafts) return;
+    const saved = drafts.find((x) => x.id === openDraft) ?? drafts.find((x) => x.reply_to === id);
+    if (!saved) return;
+    draftLoaded.current = true;
+    continueDraft(saved).then(
+      (d) => {
+        setQuietReply(true);
+        setReply((r) => r ?? d);
+      },
+      (e) => toast.error((e as Error).message),
+    );
+  }, [drafts, reply, id, openDraft]);
   const [archiving, setArchiving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const flag = useFlagThread();
   const d = detail.data;
 
   useEffect(() => {
     if (!d || !action) return;
-    if (action === "forward") onForward(forwardOf(d));
-    else setReply(action === "reply_all" ? (replyAllTo(d, ownAddresses(overview)) ?? replyTo(d)) : replyTo(d));
+    // A reply being written is kept (R, A or F pressed outside it).
+    if (!reply) {
+      if (action === "forward") onForward(forwardOf(d));
+      else startWith(action === "reply_all" ? (replyAllTo(d, ownAddresses(overview)) ?? replyTo(d)) : replyTo(d));
+    }
     onActionTaken();
     // Once per request: the callbacks change on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [d, action]);
 
-  // Opening an unread conversation marks it read, as mail apps do.
+  // Opening an unread conversation marks it read, as mail apps do: once, when it opens,
+  // so marking it unread again (U) keeps it so.
   const marked = useRef(false);
   useEffect(() => {
-    if (d?.thread.unread && !marked.current) {
+    if (d && !marked.current) {
       marked.current = true;
-      api.markMailRead(id, true).catch(() => {});
+      if (d.thread.unread) api.markMailRead(id, true).catch(() => {});
     }
   }, [d, id]);
 
@@ -1175,7 +1591,7 @@ function Reader({
     }
   };
   const mine = ownAddresses(overview);
-  const startReply = () => setReply(replyTo(d));
+  const startReply = () => startWith(replyTo(d));
   const replyAll = replyAllTo(d, mine);
   // The conversation itself goes along as a # mention, so the assistant reads it.
   const ask = () => onAsk(mentionDraft("mail_thread", String(t.id), mailLabel(t.subject)));
@@ -1212,6 +1628,10 @@ function Reader({
             <Button variant="secondary" size="sm" onClick={archive} disabled={archiving}>
               {archiving ? <Loader2 className="animate-spin" /> : <Archive />} Archive
             </Button>
+            <Button variant="secondary" size="sm" aria-pressed={t.flagged} onClick={() => void flag(id, !t.flagged)}>
+              <FlagStar flagged={t.flagged} /> {t.flagged ? "Flagged" : "Flag"}
+            </Button>
+            <UnsubscribeButton thread={t.id} onArchived={onGone} />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon-sm" aria-label="More" className="rounded-full text-muted-foreground">
@@ -1225,7 +1645,7 @@ function Reader({
                   <MailOpen /> Mark as unread
                 </DropdownMenuItem>
                 {replyAll && (
-                  <DropdownMenuItem onSelect={() => setReply(replyAll)}>
+                  <DropdownMenuItem onSelect={() => startWith(replyAll)}>
                     <ReplyAll /> Reply all
                   </DropdownMenuItem>
                 )}
@@ -1299,7 +1719,7 @@ function Reader({
           onPerson={openPerson}
           actions={{
             reply: startReply,
-            replyAll: replyAll ? () => setReply(replyAll) : null,
+            replyAll: replyAll ? () => startWith(replyAll) : null,
             forward: (m) => onForward(forwardOf(d, m)),
             ask,
             askText: (text) => onAsk(quoteDraft(text)),
@@ -1307,7 +1727,17 @@ function Reader({
         />
 
         {reply ? (
-          <ReplyBox threadId={id} draft={reply} onChange={setReply} onClose={() => setReply(null)} overview={overview} />
+          <ReplyBox
+            threadId={id}
+            draft={reply}
+            onChange={setReply}
+            onClose={() => {
+              setReply(null);
+              setQuietReply(false);
+            }}
+            overview={overview}
+            autoFocus={!quietReply || openDraft !== null}
+          />
         ) : (
           <button
             onClick={startReply}
@@ -1359,10 +1789,12 @@ function forwardOf(d: MailThreadDetail, m: MailMessage = d.messages.at(-1)!): Ma
     from: d.thread.received_on,
     to: [],
     cc: [],
+    bcc: [],
     subject,
     body: `\n\n${header}\n\n${m.body}`,
     reply_to: null,
     forward_of: m.attachments.length > 0 ? m.id : null,
+    attachments: [],
   };
 }
 
@@ -1376,10 +1808,12 @@ function replyTo(d: MailThreadDetail): MailDraft {
     from: d.thread.received_on,
     to,
     cc: [],
+    bcc: [],
     subject,
     body: "",
     reply_to: d.thread.id,
     forward_of: null,
+    attachments: [],
   };
 }
 
@@ -1565,23 +1999,28 @@ function ReplyBox({
   onChange,
   onClose,
   overview,
+  autoFocus = true,
 }: {
   threadId: number;
   draft: MailDraft;
   onChange: (d: MailDraft) => void;
   onClose: () => void;
   overview: MailOverview;
+  /** Put the cursor in the text (not for a saved reply opened with its conversation). */
+  autoFocus?: boolean;
 }) {
   const [instructions, setInstructions] = useState("");
   const [writing, setWriting] = useState(false);
   // Remounts the editor when the assistant fills it in.
   const [version, setVersion] = useState(0);
-  const { sending, send } = useSendDraft(onClose);
+  const saving = useDraftAutosave(draft, onChange, `reply:${threadId}`);
+  const { sending, send, sendLater } = useSendDraft(`reply:${threadId}`, onClose, saving);
   const write = async () => {
     setWriting(true);
     try {
       const d = await api.draftMailReply(threadId, instructions.trim() || null);
-      onChange({ ...draft, body: d.body, to: draft.to.length ? draft.to : d.to });
+      // The new text goes above the signature, which stays as it is in this reply.
+      onChange(replaceText({ ...draft, to: draft.to.length ? draft.to : d.to }, d.body));
       setVersion((v) => v + 1);
     } catch (e) {
       toast.error((e as Error).message);
@@ -1613,17 +2052,35 @@ function ReplyBox({
         />
         {overview.model_locality && <LocalityBadge locality={overview.model_locality} />}
         <Button type="submit" size="sm" variant="secondary" disabled={writing}>
-          {writing && <Loader2 className="animate-spin" />} {draft.body ? "Write again" : "Draft it for me"}
+          {writing && <Loader2 className="animate-spin" />} {withoutSignature(draft.body).trim() ? "Write again" : "Draft it for me"}
         </Button>
       </form>
-      <DraftEditor key={version} draft={draft} onChange={onChange} autoFocus="body" className="border-t-[0.5px] border-separator" />
+      <DraftEditor
+        key={version}
+        draft={draft}
+        onChange={onChange}
+        autoFocus={autoFocus || version > 0 ? "body" : undefined}
+        className="border-t-[0.5px] border-separator"
+      />
       <div className="flex items-center justify-between gap-3 border-t-[0.5px] border-separator px-4 py-2.5">
-        <span className="type-footnote text-faint">Sent from your account when you press Send.</span>
+        <DraftSavedNote saving={saving} fallback="Sent from your account when you press Send." />
         <div className="flex gap-2">
-          <Button variant="ghost" onClick={onClose} disabled={sending}>
+          <Button
+            variant="ghost"
+            onClick={() => {
+              saving.discard();
+              onClose();
+            }}
+            disabled={sending}
+          >
             Discard
           </Button>
-          <SendButton sending={sending} onClick={() => send(draft)} disabled={!draft.body.trim() || draft.to.length === 0} />
+          <SendButton
+            sending={sending}
+            onClick={() => send(draft)}
+            onSchedule={(at) => sendLater(draft, at)}
+            disabled={!withoutSignature(draft.body).trim() || draft.to.length === 0}
+          />
         </div>
       </div>
     </motion.div>
@@ -1640,7 +2097,8 @@ function Compose({
   onClose: () => void;
 }) {
   const onScroll = useScrollEdge();
-  const { sending, send } = useSendDraft(onClose);
+  const saving = useDraftAutosave(draft, onChange, "compose");
+  const { sending, send, sendLater } = useSendDraft("compose", onClose, saving);
   return (
     <div className="h-full overflow-y-auto" onScroll={onScroll}>
       <div className="mx-auto flex w-full max-w-[760px] flex-col gap-5 px-6 pt-[84px] pb-20">
@@ -1653,10 +2111,25 @@ function Compose({
         <div className="overflow-hidden rounded-[18px] bg-background shadow-[var(--shadow-card)]">
           <DraftEditor draft={draft} onChange={onChange} autoFocus="to" />
           <div className="flex items-center justify-end gap-2 border-t-[0.5px] border-separator px-4 py-2.5">
-            <Button variant="ghost" onClick={onClose} disabled={sending}>
+            <span className="mr-auto">
+              <DraftSavedNote saving={saving} />
+            </span>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                saving.discard();
+                onClose();
+              }}
+              disabled={sending}
+            >
               Discard
             </Button>
-            <SendButton sending={sending} onClick={() => send(draft)} disabled={draft.to.length === 0 || !draft.body.trim()} />
+            <SendButton
+              sending={sending}
+              onClick={() => send(draft)}
+              onSchedule={(at) => sendLater(draft, at)}
+              disabled={draft.to.length === 0 || !withoutSignature(draft.body).trim()}
+            />
           </div>
         </div>
       </div>

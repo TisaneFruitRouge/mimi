@@ -146,22 +146,27 @@ const question: Record<InvitationOffer["kind"], string> = {
 
 /**
  * After something the user did in the panel, when the sheet or dialog is gone: a toast
- * per offer (`headline` says what happened), whose Send button sends it.
+ * per offer (`headline` says what happened), whose Send button sends it. The first
+ * replaces the toast `replacing`, if one already said what happened.
  */
 export function toastOffers(
   headline: string,
   offers: InvitationOffer[],
   send: (o: InvitationOffer) => Promise<InvitationOffer>,
+  replacing?: string | number,
 ) {
-  for (const offer of offers) {
+  for (const [i, offer] of offers.entries()) {
+    const id = i === 0 ? replacing : undefined;
     const nothing = `Nothing was emailed to ${guestNames(offer)}.`;
     if (offer.from === null) {
       toast(headline, {
+        id,
         description: `${nothing} To send invitations from here, connect your email in Settings › Connections.`,
       });
       continue;
     }
     toast(headline, {
+      id,
       description: `${nothing} ${question[offer.kind]}`,
       duration: 20_000,
       action: {

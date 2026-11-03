@@ -10,8 +10,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use mimi_protocol::{
-    Event, MailAccount, MailBox, MailDraft, MailOverview, MailPreset, MailReceivedAddress,
-    MailSecurity, MailServers, MailThread, MailThreadDetail,
+    Event, MailAccount, MailAttachmentSource, MailBox, MailDraft, MailOverview, MailPreset,
+    MailReceivedAddress, MailSecurity, MailServers, MailThread, MailThreadDetail,
+    NewMailAttachment,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
@@ -20,8 +21,11 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::connections::store as connection_store;
 
+pub mod batch;
 pub mod contacts;
 pub mod discover;
+pub mod drafts;
+pub mod flags;
 pub mod folders;
 pub mod images;
 pub mod jev;
@@ -29,17 +33,24 @@ pub mod known;
 pub mod mentions;
 pub mod model;
 pub mod net;
+pub mod notify;
+pub mod older;
+pub mod outbox;
 pub mod parse;
 pub mod render;
+pub mod signature;
 pub mod smtp;
 pub mod store;
 pub mod suspicious;
 pub mod sync;
 pub mod tools;
 pub mod triage;
+pub mod unsubscribe;
 
 #[cfg(test)]
 pub mod fake;
+#[cfg(test)]
+mod older_tests;
 #[cfg(test)]
 mod tests;
 
@@ -98,6 +109,12 @@ pub struct Mail {
     pub triage_wake: Notify,
     /// Fetches an email's pictures when the user asks for them.
     pub images: images::Fetcher,
+    /// Asks a mailing list's website to unsubscribe the user, on their click.
+    pub unsubscribe: unsubscribe::Poster,
+    /// Wakes the loop that sends mail waiting in the outbox (undo send, send later).
+    pub outbox: outbox::Outbox,
+    /// Copies saved drafts to the servers' Drafts folders.
+    pub drafts: drafts::Drafts,
 }
 
 impl Mail {
@@ -400,14 +417,19 @@ pub async fn forget(state: &AppState, id: Uuid) {
     {
         tracing::error!("couldn't remove a disconnected account's mail: {e}");
     }
+    drafts::forget(state, id).await;
     changed(state);
 }
 
-/// Registers the mail tools, the correspondents contact source and the sorting queue.
+/// Registers the mail tools, the correspondents contact source, the sorting queue and
+/// the new-mail notifier.
 pub fn install(state: &Arc<AppState>) {
     state.tool_sources.add(Arc::new(tools::MailTools));
     state.people.sources.add(Arc::new(contacts::Correspondents));
     tokio::spawn(triage::run(state.clone()));
+    tokio::spawn(notify::run(state.clone()));
+    tokio::spawn(outbox::run(state.clone()));
+    tokio::spawn(drafts::run(state.clone()));
 }
 
 // --- What the panel and the tools use -------------------------------------------------
@@ -643,6 +665,88 @@ pub async fn delete(state: &Arc<AppState>, id: i64) -> Result<(), String> {
 
 /// Sends a message the user wrote or approved, and files it in Sent.
 pub async fn send(state: &Arc<AppState>, draft: MailDraft) -> Result<(), String> {
+    let ready = prepare(state, &draft).await?;
+    deliver(state, ready).await.map_err(|e| e.message)
+}
+
+/// A message checked and built, ready to hand to the server.
+pub struct Prepared {
+    pub account: Account,
+    /// The address it's from.
+    pub from: String,
+    main: String,
+    built: smtp::Built,
+}
+
+/// Why a message didn't go. `retry`: the server couldn't be reached, so trying again
+/// later may work; anything else needs the user.
+#[derive(Debug, Clone)]
+pub struct Undelivered {
+    pub message: String,
+    pub retry: bool,
+}
+
+/// Checks a draft and builds its message without sending anything: the account, the
+/// From address, every file (fetched), the recipients and the sizes.
+pub async fn prepare(state: &AppState, draft: &MailDraft) -> Result<Prepared, String> {
+    let Sender {
+        account,
+        from,
+        main,
+        reply,
+    } = sender(state, draft).await?;
+    // A forward carries the original's attachments along.
+    let mut attachments = match draft.forward_of {
+        Some(message) => forwarded(state, message).await?,
+        None => Vec::new(),
+    };
+    // Pictures placed in the text (with a content id) go inside the formatted message.
+    let (pictures, files): (Vec<_>, Vec<_>) = draft
+        .attachments
+        .iter()
+        .cloned()
+        .partition(|a| a.content_id.is_some());
+    attachments.extend(attached(state, &files).await?);
+    let inline: Vec<smtp::Inline> = attached(state, &pictures)
+        .await?
+        .into_iter()
+        .zip(pictures)
+        .map(|(file, a)| smtp::Inline {
+            content_id: a.content_id.unwrap_or_default(),
+            file,
+        })
+        .collect();
+    let size = attachments.iter().chain(inline.iter().map(|i| &i.file));
+    if size.map(|f| f.data.len()).sum::<usize>() > smtp::MAX_ATTACHMENTS {
+        return Err(match draft.forward_of {
+            Some(_) if draft.attachments.is_empty() => {
+                "The attachments are too large to forward from here.".to_owned()
+            }
+            _ => "Attachments can add up to 20 MB in one email.".to_owned(),
+        });
+    }
+    let built = smtp::build(&from, draft, reply.as_ref(), &attachments, &inline)?;
+    Ok(Prepared {
+        account,
+        from,
+        main,
+        built,
+    })
+}
+
+/// Who a draft goes from: its account, the address, the account's own address, and the
+/// conversation it answers.
+pub(crate) struct Sender {
+    pub account: Account,
+    pub from: String,
+    pub main: String,
+    pub reply: Option<smtp::ReplyHeaders>,
+}
+
+/// Works out who a draft goes from: the account asked for (else the replied-to
+/// conversation's, else the first), and the address asked for, else the one the
+/// conversation arrived at, else the account's.
+pub(crate) async fn sender(state: &AppState, draft: &MailDraft) -> Result<Sender, String> {
     let accounts = accounts(state).await;
     let reply = match draft.reply_to {
         Some(thread) => smtp::reply_headers(state, thread).await?,
@@ -676,32 +780,143 @@ pub async fn send(state: &Arc<AppState>, draft: MailDraft) -> Result<(), String>
             .filter(|r| is_own(r))
             .unwrap_or_else(|| main.clone()),
     };
-    // A forward carries the original's attachments along.
-    let attachments = match draft.forward_of {
-        Some(message) => {
-            let files = parse::attachments(&source(state, message).await?);
-            if files.iter().map(|f| f.data.len()).sum::<usize>() > smtp::MAX_ATTACHMENTS {
-                return Err("The attachments are too large to forward from here.".to_owned());
-            }
-            files
-        }
-        None => Vec::new(),
-    };
-    let raw = smtp::build(&from, &draft, reply.as_ref(), &attachments)?;
-    smtp::send(&account.config, &raw).await.map_err(|e| {
-        if from == main {
+    Ok(Sender {
+        account: account.clone(),
+        from,
+        main,
+        reply,
+    })
+}
+
+/// Hands a prepared message to the account's server and files it in Sent.
+pub async fn deliver(state: &AppState, ready: Prepared) -> Result<(), Undelivered> {
+    let Prepared {
+        account,
+        from,
+        main,
+        built,
+    } = ready;
+    smtp::deliver(&account.config, &built).await.map_err(|e| {
+        let retry = matches!(e, MailError::Unreachable(_));
+        let e = e.to_string();
+        let message = if from == main {
             e
         } else {
             format!(
                 "{e} Your mail service may not allow sending from {from}: add it as a sending \
                  address (an identity) in its settings, or send from {main}."
             )
-        }
+        };
+        Undelivered { message, retry }
     })?;
     tracing::info!(connection = %account.id, "sent an email");
-    sync::file_sent(account, raw.formatted).await;
+    sync::file_sent(&account, built.formatted).await;
     state.mail.poke(account.id);
     Ok(())
+}
+
+/// The attachments of a message being forwarded, fetched from the server.
+pub(crate) async fn forwarded(
+    state: &AppState,
+    message: i64,
+) -> Result<Vec<parse::Attachment>, String> {
+    Ok(parse::attachments(&source(state, message).await?))
+}
+
+/// The files attached to a draft: the user's own, decoded, and those attached by
+/// reference (`NewMailAttachment::source`), fetched: an email's attachment from the
+/// server, a chat photo from the encrypted database. Each goes under a plain file name.
+pub(crate) async fn attached(
+    state: &AppState,
+    files: &[NewMailAttachment],
+) -> Result<Vec<parse::Attachment>, String> {
+    use base64::Engine;
+    // Each email is fetched once, however many of its files go along.
+    let mut fetched: HashMap<i64, Vec<parse::Attachment>> = HashMap::new();
+    let mut out = Vec::new();
+    for f in files {
+        let (name, mime, data) = match &f.source {
+            None => {
+                let data = base64::engine::general_purpose::STANDARD
+                    .decode(f.data.trim())
+                    .map_err(|_| {
+                        format!(
+                            "“{}” couldn't be read. Try attaching it again.",
+                            file_name(&f.name)
+                        )
+                    })?;
+                (f.name.clone(), f.mime.clone().unwrap_or_default(), data)
+            }
+            Some(MailAttachmentSource::Email { message, index, .. }) => {
+                if !fetched.contains_key(message) {
+                    let files = parse::attachments(&source(state, *message).await?);
+                    fetched.insert(*message, files);
+                }
+                let found = fetched[message].get(*index as usize).ok_or_else(|| {
+                    format!("“{}” isn't in that email any more.", file_name(&f.name))
+                })?;
+                (
+                    found.name.clone(),
+                    found.content_type.clone(),
+                    found.data.clone(),
+                )
+            }
+            Some(MailAttachmentSource::Chat { attachment, .. }) => {
+                let (_, meta, data) = chat_file(state, *attachment).await?.ok_or_else(|| {
+                    format!(
+                        "“{}” isn't in the chat any more, so it can't be attached.",
+                        file_name(&f.name)
+                    )
+                })?;
+                (meta.name, meta.mime, data)
+            }
+        };
+        let content_type = Some(mime.trim())
+            .filter(|m| m.parse::<mime::Mime>().is_ok())
+            .unwrap_or("application/octet-stream")
+            .to_owned();
+        out.push(parse::Attachment {
+            name: file_name(&name),
+            content_type,
+            data,
+        });
+    }
+    Ok(out)
+}
+
+/// A file's name without any folder part or control characters.
+fn file_name(raw: &str) -> String {
+    let name: String = raw
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect();
+    match name.trim() {
+        "" => "Attachment".to_owned(),
+        n => n.to_owned(),
+    }
+}
+
+/// A photo sent in one of the owner's chats: the conversation it's in, what it is and
+/// its content. `None` when it's gone, or was sent in a trusted person's conversation,
+/// which is theirs and never the owner's to send on.
+pub async fn chat_file(
+    state: &AppState,
+    id: Uuid,
+) -> Result<Option<(Uuid, mimi_protocol::Attachment, Vec<u8>)>, String> {
+    let conversation = crate::attachments::conversation_of(&state.db, id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let Some(conversation) = conversation.filter(|c| !state.access.is_guest_conversation(*c))
+    else {
+        return Ok(None);
+    };
+    let found = crate::attachments::get(&state.db, id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(found.map(|(meta, data)| (conversation, meta, data)))
 }
 
 /// Parses a view name from a query string.

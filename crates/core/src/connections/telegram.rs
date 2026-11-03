@@ -5,7 +5,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use mimi_protocol::{ConnectionStatus, Event, MessageStatus};
+use async_trait::async_trait;
+use mimi_protocol::{Action, ConnectionStatus, Delivery};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -14,6 +15,7 @@ use uuid::Uuid;
 
 use super::store;
 use crate::AppState;
+use crate::channels::{self, Channel, Outgoing, replies};
 
 pub const TELEGRAM: &str = "telegram";
 
@@ -50,6 +52,8 @@ pub enum TgError {
 pub struct Bot {
     http: reqwest::Client,
     base: String,
+    /// Where files are downloaded from. Contains the token too: never log it.
+    files: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -90,6 +94,102 @@ struct ButtonMessage {
 struct TgMessage {
     chat: Chat,
     text: Option<String>,
+    /// A photo: the same picture in several sizes, smallest first.
+    photo: Option<Vec<PhotoSize>>,
+    /// A file, which may be a picture sent uncompressed.
+    document: Option<Document>,
+    /// A voice message.
+    voice: Option<Sound>,
+    /// A sound file (a forwarded recording, a voice memo).
+    audio: Option<Sound>,
+    /// The words sent with a photo or file.
+    caption: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Sound {
+    file_id: String,
+    file_size: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PhotoSize {
+    file_id: String,
+    width: u32,
+    height: u32,
+    file_size: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Document {
+    file_id: String,
+    file_name: Option<String>,
+    mime_type: Option<String>,
+    file_size: Option<u64>,
+}
+
+/// What came with the words, to download once it's known to be from the owner.
+#[derive(Debug, Default)]
+struct Media {
+    picture: Option<Picture>,
+    /// The file id of a voice message or sound file.
+    voice: Option<String>,
+}
+
+impl Media {
+    fn is_empty(&self) -> bool {
+        self.picture.is_none() && self.voice.is_none()
+    }
+}
+
+/// A picture in a message, to download once it's known to be from the owner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Picture {
+    file_id: String,
+    name: Option<String>,
+    mime: Option<String>,
+}
+
+impl TgMessage {
+    /// The voice message it carries, or a sound file (within what may be downloaded).
+    fn voice(&self) -> Option<String> {
+        let limit = crate::attachments::MAX_UPLOAD_BYTES as u64;
+        self.voice
+            .as_ref()
+            .or(self.audio.as_ref())
+            .filter(|s| s.file_size.is_none_or(|n| n <= limit))
+            .map(|s| s.file_id.clone())
+    }
+
+    /// The picture it carries: the largest size of a photo (within what may be
+    /// downloaded), or a file that says it's a picture.
+    fn picture(&self) -> Option<Picture> {
+        let limit = crate::attachments::MAX_UPLOAD_BYTES as u64;
+        if let Some(sizes) = &self.photo {
+            return sizes
+                .iter()
+                .filter(|s| s.file_size.is_none_or(|n| n <= limit))
+                .max_by_key(|s| u64::from(s.width) * u64::from(s.height))
+                .map(|s| Picture {
+                    file_id: s.file_id.clone(),
+                    name: None,
+                    mime: Some("image/jpeg".to_owned()),
+                });
+        }
+        self.document
+            .as_ref()
+            .filter(|d| {
+                d.mime_type
+                    .as_deref()
+                    .is_some_and(|m| m.starts_with("image/"))
+                    && d.file_size.is_none_or(|n| n <= limit)
+            })
+            .map(|d| Picture {
+                file_id: d.file_id.clone(),
+                name: d.file_name.clone(),
+                mime: d.mime_type.clone(),
+            })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -108,10 +208,55 @@ pub fn default_api() -> String {
 
 impl Bot {
     pub fn new(http: reqwest::Client, api: &str, token: &str) -> Self {
+        let api = api.trim_end_matches('/');
         Self {
             http,
-            base: format!("{}/bot{}", api.trim_end_matches('/'), token.trim()),
+            base: format!("{api}/bot{}", token.trim()),
+            files: format!("{api}/file/bot{}", token.trim()),
         }
+    }
+
+    /// Downloads a file the owner sent (at most [`crate::attachments::MAX_UPLOAD_BYTES`]).
+    async fn download(&self, file_id: &str) -> Result<Vec<u8>, TgError> {
+        #[derive(Deserialize)]
+        struct File {
+            file_path: Option<String>,
+            file_size: Option<u64>,
+        }
+        let file: File = self
+            .call(
+                "getFile",
+                json!({ "file_id": file_id }),
+                Duration::from_secs(20),
+            )
+            .await?;
+        let too_large = || TgError::Api("the file is too large".to_owned());
+        if file
+            .file_size
+            .is_some_and(|n| n > crate::attachments::MAX_UPLOAD_BYTES as u64)
+        {
+            return Err(too_large());
+        }
+        let path = file
+            .file_path
+            .ok_or_else(|| TgError::Api("no file".to_owned()))?;
+        // As with every call: errors without their text, which would hold the token.
+        let res = self
+            .http
+            .get(format!("{}/{}", self.files, path.trim_start_matches('/')))
+            .timeout(Duration::from_secs(90))
+            .send()
+            .await
+            .map_err(|_| TgError::Unreachable)?;
+        if !res.status().is_success() {
+            return Err(TgError::Api(format!(
+                "download failed ({})",
+                res.status().as_u16()
+            )));
+        }
+        crate::attachments::read_capped(res)
+            .await
+            .ok_or_else(too_large)
     }
 
     async fn call<T: DeserializeOwned>(
@@ -168,7 +313,7 @@ impl Bot {
     }
 
     pub async fn send(&self, chat_id: i64, html: &str) -> Result<(), TgError> {
-        for chunk in chunks(html, 4000) {
+        for chunk in channels::chunks(html, 4000) {
             let sent: Result<serde_json::Value, _> = self
                 .call(
                     "sendMessage",
@@ -270,6 +415,39 @@ impl Bot {
                     Duration::from_secs(10),
                 )
                 .await;
+        }
+    }
+
+    /// Sends a voice message (Ogg/Opus).
+    async fn send_voice(
+        &self,
+        chat_id: i64,
+        note: &crate::voice::audio::VoiceNote,
+    ) -> Result<(), TgError> {
+        let file = reqwest::multipart::Part::bytes(note.ogg.clone())
+            .file_name("voice.ogg")
+            .mime_str("audio/ogg")
+            .map_err(|_| TgError::Api("bad voice message".to_owned()))?;
+        let form = reqwest::multipart::Form::new()
+            .text("chat_id", chat_id.to_string())
+            .text("duration", note.duration_ms.div_ceil(1000).to_string())
+            .part("voice", file);
+        // As with every call: errors without their text, which would hold the token.
+        let res = self
+            .http
+            .post(format!("{}/sendVoice", self.base))
+            .multipart(form)
+            .timeout(Duration::from_secs(60))
+            .send()
+            .await
+            .map_err(|_| TgError::Unreachable)?;
+        if res.status().is_success() {
+            Ok(())
+        } else {
+            Err(TgError::Api(format!(
+                "sending a voice message failed ({})",
+                res.status().as_u16()
+            )))
         }
     }
 
@@ -394,11 +572,21 @@ pub async fn run(state: Arc<AppState>, id: Uuid, cancel: CancellationToken) {
             let Some(message) = update.message else {
                 continue;
             };
-            let Some(text) = message.text else { continue };
             if message.chat.kind != "private" {
                 continue;
             }
-            handle(&state, id, &bot, &mut config, message.chat, text).await;
+            let media = Media {
+                picture: message.picture(),
+                voice: message.voice(),
+            };
+            let Some(text) = message
+                .text
+                .or(message.caption)
+                .or((!media.is_empty()).then(String::new))
+            else {
+                continue;
+            };
+            handle(&state, id, &bot, &mut config, message.chat, text, media).await;
         }
         let mut row = row;
         row.config = serde_json::to_value(&config).expect("config serializes");
@@ -413,6 +601,7 @@ async fn handle(
     config: &mut TelegramConfig,
     chat: Chat,
     text: String,
+    media: Media,
 ) {
     let text = text.trim().to_owned();
     match config.owner_chat_id {
@@ -428,10 +617,7 @@ async fn handle(
                     .connections
                     .set_status(state, id, status, detail, url)
                     .await;
-                let name = crate::settings::load(&state.db)
-                    .await
-                    .map(|s| s.assistant_name)
-                    .unwrap_or_else(|_| "Mimi".to_owned());
+                let name = channels::assistant_name(state).await;
                 let _ = bot
                     .send(
                         chat.id,
@@ -446,25 +632,68 @@ async fn handle(
             }
         }
         Some(owner) if owner == chat.id => {
-            if text == "/new" {
+            if media.is_empty() && text == "/new" {
                 config.conversation_id = None;
                 let _ = bot.send(owner, "Started a new conversation.").await;
                 return;
             }
-            if text.starts_with("/start") {
+            if media.is_empty() && text.starts_with("/start") {
                 let _ = bot.send(owner, "I'm here. What can I do for you?").await;
                 return;
             }
-            let conversation = ensure_conversation(state, config).await;
+            let conversation =
+                channels::ensure_conversation(state, config.conversation_id, "Telegram").await;
+            config.conversation_id = conversation;
             let Some(conversation) = conversation else {
                 let _ = bot
                     .send(owner, "Sorry, I couldn't open our conversation.")
                     .await;
                 return;
             };
-            // Replies can take a while; don't hold up polling.
-            let (state, bot) = (state.clone(), bot.clone());
-            tokio::spawn(async move { reply(&state, &bot, owner, conversation, text).await });
+            let channel = Arc::new(TelegramChannel {
+                bot: bot.clone(),
+                chat: owner,
+            });
+            // Only now that it's known to be the owner's is anything downloaded.
+            if let Some(voice) = media.voice {
+                match bot.download(&voice).await {
+                    Ok(audio) => channels::voice::hear(state, channel, conversation, audio, text),
+                    Err(e) => {
+                        tracing::warn!("downloading a voice message from Telegram failed: {e}");
+                        let _ = bot
+                            .send(
+                                owner,
+                                "I couldn't get that voice message from Telegram. Try sending it again.",
+                            )
+                            .await;
+                    }
+                }
+                return;
+            }
+            let mut photos = Vec::new();
+            if let Some(picture) = media.picture {
+                match bot.download(&picture.file_id).await {
+                    Ok(data) => photos.push(crate::attachments::Upload::new(
+                        data,
+                        picture.name,
+                        picture.mime,
+                    )),
+                    Err(e) => {
+                        tracing::warn!("downloading a photo from Telegram failed: {e}");
+                        let _ = bot
+                            .send(
+                                owner,
+                                "I couldn't get that photo from Telegram. Try sending it again.",
+                            )
+                            .await;
+                        if text.is_empty() {
+                            return;
+                        }
+                    }
+                }
+            }
+            // Replies can take a while; this returns at once.
+            channels::photos::deliver(state, channel, conversation, text, photos);
         }
         // Anyone else: ignore silently. The bot is private.
         Some(_) => {}
@@ -504,14 +733,7 @@ async fn on_button(state: &AppState, bot: &Bot, config: &TelegramConfig, query: 
             ),
             (true, Some(m)) => (
                 "Snoozed",
-                format!(
-                    "💤 <b>Snoozed for {}</b>",
-                    if m == 60 {
-                        "an hour".to_owned()
-                    } else {
-                        format!("{m} minutes")
-                    }
-                ),
+                format!("💤 <b>Snoozed for {}</b>", replies::snooze_label(m)),
             ),
             (true, None) => ("Done", "✅ <b>Done</b>".to_owned()),
         };
@@ -542,105 +764,106 @@ async fn on_button(state: &AppState, bot: &Bot, config: &TelegramConfig, query: 
     }
 }
 
-/// The paired owner of the first Telegram bot, for messages Mimi sends on its own
-/// (reminders, routine results). `None` if no bot is connected and paired.
-pub async fn owner(state: &AppState) -> Option<(Bot, i64)> {
-    let rows = super::store::list(&state.db).await.ok()?;
+/// Every paired Telegram bot, for messages Mimi sends on its own (reminders, routine
+/// results).
+pub async fn owners(state: &AppState) -> Vec<Arc<dyn Channel>> {
+    let Ok(rows) = super::store::list(&state.db).await else {
+        return Vec::new();
+    };
     rows.into_iter()
         .filter(|r| r.integration == TELEGRAM)
         .filter_map(|r| serde_json::from_value::<TelegramConfig>(r.config).ok())
-        .find_map(|c| {
+        .filter_map(|c| {
             let chat = c.owner_chat_id?;
-            Some((
-                Bot::new(
+            let channel: Arc<dyn Channel> = Arc::new(TelegramChannel {
+                bot: Bot::new(
                     state.http.clone(),
                     &state.connections.telegram_api(),
                     &c.bot_token,
                 ),
                 chat,
-            ))
+            });
+            Some(channel)
         })
+        .collect()
 }
 
-async fn ensure_conversation(state: &Arc<AppState>, config: &mut TelegramConfig) -> Option<Uuid> {
-    if let Some(id) = config.conversation_id
-        && crate::chat::store::get_conversation(&state.db, id)
+/// A paired bot's chat with its owner.
+pub struct TelegramChannel {
+    bot: Bot,
+    chat: i64,
+}
+
+#[async_trait]
+impl Channel for TelegramChannel {
+    fn kind(&self) -> &'static str {
+        TELEGRAM
+    }
+
+    async fn send(&self, message: &Outgoing) -> Result<(), String> {
+        self.bot
+            .send(self.chat, &to_html(message))
             .await
-            .ok()
-            .flatten()
-            .is_some()
-    {
-        return Some(id);
+            .map_err(|e| e.to_string())
     }
-    let conversation = crate::chat::new_conversation(Some("Telegram".to_owned()));
-    crate::chat::store::upsert_conversation(&state.db, conversation.clone())
-        .await
-        .ok()?;
-    state.events.publish(Event::ConversationUpdated {
-        conversation: conversation.clone(),
-    });
-    config.conversation_id = Some(conversation.id);
-    Some(conversation.id)
+
+    async fn typing(&self) {
+        self.bot.typing(self.chat).await;
+    }
+
+    fn sends_voice(&self) -> bool {
+        true
+    }
+
+    async fn send_voice(&self, note: &crate::voice::audio::VoiceNote) -> Result<(), String> {
+        self.bot
+            .send_voice(self.chat, note)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn ask_approval(&self, action: &Action) -> Result<(), String> {
+        self.bot
+            .ask_approval(self.chat, action)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn remind(&self, delivery: &Delivery, late: Option<&str>) -> Result<(), String> {
+        let html = format!(
+            "⏰ <b>{}</b>{}",
+            escape(&delivery.title),
+            late.map(|l| format!("\n<i>{}</i>", escape(l)))
+                .unwrap_or_default()
+        );
+        let id = delivery.id;
+        let buttons = [
+            ("Done", format!("done:{id}")),
+            ("Snooze 10 min", format!("snooze:{id}")),
+            ("1 hour", format!("snooze60:{id}")),
+        ];
+        self.bot
+            .send_with_buttons(self.chat, &html, &buttons)
+            .await
+            .map_err(|e| e.to_string())
+    }
 }
 
-/// Sends the user's message to the assistant and relays the answer.
-async fn reply(state: &Arc<AppState>, bot: &Bot, chat_id: i64, conversation: Uuid, text: String) {
-    let mut events = state.events.subscribe();
-    bot.typing(chat_id).await;
-    let sent = match crate::chat::send(state.clone(), conversation, text, None, Vec::new()).await {
-        Ok(sent) => sent,
-        Err(e) => {
-            let _ = bot.send(chat_id, &escape(e.message())).await;
-            return;
-        }
-    };
-    let assistant = sent.assistant_message.id;
-    let mut typing = tokio::time::interval(Duration::from_secs(4));
-    let deadline = tokio::time::sleep(Duration::from_secs(15 * 60));
-    tokio::pin!(deadline);
-    let mut announced = std::collections::HashSet::new();
-    let message = loop {
-        tokio::select! {
-            event = events.recv() => match event {
-                Ok(Event::MessageUpdated { message }) if message.id == assistant => {
-                    for action in &message.actions {
-                        if action.status == mimi_protocol::ActionStatus::PendingApproval && announced.insert(action.id) {
-                            let _ = bot.ask_approval(chat_id, action).await;
-                        }
-                    }
-                    if message.status != MessageStatus::Streaming {
-                        break message;
-                    }
-                }
-                Ok(_) => {}
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                Err(_) => return,
-            },
-            _ = typing.tick() => bot.typing(chat_id).await,
-            _ = &mut deadline => return,
-        }
-    };
-    let mut text = match message.status {
-        MessageStatus::Error => format!(
-            "Sorry, something went wrong: {}",
-            escape(message.error.as_deref().unwrap_or("unknown error"))
-        ),
-        MessageStatus::Cancelled if message.content.is_empty() => "(Stopped.)".to_owned(),
-        _ if message.content.is_empty() => "(No answer.)".to_owned(),
-        _ => markdown_to_html(&message.content),
-    };
-    // Things the user has to finish themselves, like saving an event in Google Calendar.
-    for action in &message.actions {
-        if let Some(url) = action.output.as_ref().and_then(|o| o["open_url"].as_str()) {
-            text.push_str(&format!(
-                "\n\n<a href=\"{}\">Open in Google Calendar to save it</a>",
-                escape(url).replace('"', "&quot;")
-            ));
-        }
+/// A message as Telegram HTML.
+fn to_html(message: &Outgoing) -> String {
+    let mut html = String::new();
+    if let Some(title) = &message.title {
+        html.push_str(&format!("<b>{}</b>\n\n", escape(title)));
     }
-    if let Err(e) = bot.send(chat_id, &text).await {
-        tracing::warn!("sending a reply to Telegram failed: {e}");
+    html.push_str(&markdown_to_html(&message.markdown));
+    for link in &message.links {
+        html.push_str(&format!(
+            "\n\n<a href=\"{}\">{}</a>",
+            escape(&link.url).replace('"', "&quot;"),
+            escape(&link.label)
+        ));
     }
+    html
 }
 
 pub fn escape(text: &str) -> String {
@@ -765,22 +988,6 @@ fn inline(text: &str) -> String {
     out
 }
 
-/// Splits text into pieces Telegram accepts, preferring line breaks.
-fn chunks(text: &str, max: usize) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut current = String::new();
-    for line in text.split_inclusive('\n') {
-        if current.chars().count() + line.chars().count() > max && !current.is_empty() {
-            out.push(std::mem::take(&mut current));
-        }
-        current.push_str(line);
-    }
-    if !current.is_empty() {
-        out.push(current);
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -812,13 +1019,5 @@ mod tests {
             Some("https://t.me/my_mimi_bot?start=123456")
         );
         assert_eq!(describe(&config).0, ConnectionStatus::NeedsAction);
-    }
-
-    #[test]
-    fn long_replies_are_split() {
-        let text = "a".repeat(3000) + "\n" + &"b".repeat(3000);
-        let parts = chunks(&text, 4000);
-        assert_eq!(parts.len(), 2);
-        assert!(parts.iter().all(|p| p.chars().count() <= 4000));
     }
 }

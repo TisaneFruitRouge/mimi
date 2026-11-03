@@ -225,6 +225,17 @@ pub struct Mention {
     pub label: String,
 }
 
+/// Someone to write to or invite, as the user types in an email's To or Cc or an
+/// event's Guests (`GET /v1/people/emails?q=`): a person in People, by one of their
+/// email addresses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct EmailSuggestion {
+    pub person_id: Uuid,
+    pub name: String,
+    pub email: String,
+}
+
 /// A suggestion in the @ picker.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]

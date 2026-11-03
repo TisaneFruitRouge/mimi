@@ -9,8 +9,7 @@ use axum::extract::{Path, Query, State};
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use mimi_protocol::{
     CalendarEvent, CalendarEvents, CalendarInfo, Channel, CreatedEvent, EventChange, EventChanged,
-    EventPerson, GuestSuggestion, InvitationOffer, NewCalendarEvent, PersonConversation,
-    SendInvitations,
+    EventPerson, InvitationOffer, NewCalendarEvent, PersonConversation, SendInvitations,
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -184,8 +183,9 @@ pub async fn create(
         organizer: None,
     };
     // The user pressed "Add" themselves: this is their own action, not the assistant's.
-    // Nobody is emailed; the answer carries the invitations they may send.
-    let (created, outcome) = invite::add(&state, &target, event)
+    // Google invites the guests itself; elsewhere nobody is emailed, and the answer carries
+    // the invitations they may send.
+    let (created, outcome) = invite::add(&state, &target, event, true)
         .await
         .map_err(|e| AppError::bad_request(format!("Couldn't add the event: {e}")))?;
     let invitations = invite::views(&state, &outcome.offers).await;
@@ -218,7 +218,8 @@ async fn find(
 }
 
 /// The user changes one occurrence of an event in the Calendar panel: their own action,
-/// so no approval card. Guests aren't emailed; the answer offers what to tell them.
+/// so no approval card. Google tells the guests itself; elsewhere they aren't emailed,
+/// and the answer offers what to tell them.
 pub async fn change(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -280,7 +281,7 @@ pub async fn change(
             note: None,
         }));
     }
-    let (after, outcome) = invite::change(&state, &r, &found, false, changes)
+    let (after, outcome) = invite::change(&state, &r, &found, false, changes, true)
         .await
         .map_err(|e| AppError::bad_request(format!("Couldn't change the event: {e}")))?;
     Ok(Json(EventChanged {
@@ -303,7 +304,7 @@ pub async fn remove(
 ) -> ApiResult<EventChanged> {
     let (r, found) = find(&state, &id).await?;
     let whole = q.which.as_deref() == Some("all");
-    let outcome = invite::remove(&state, &r, &found, whole)
+    let outcome = invite::remove(&state, &r, &found, whole, true)
         .await
         .map_err(|e| AppError::bad_request(format!("Couldn't remove the event: {e}")))?;
     Ok(Json(EventChanged {
@@ -352,45 +353,6 @@ pub async fn send_invitations(
         .await
         .map_err(AppError::bad_request)?;
     Ok(Json(sent))
-}
-
-#[derive(Deserialize)]
-pub struct GuestQuery {
-    #[serde(default)]
-    q: String,
-}
-
-/// People to suggest in a Guests field: each of their email addresses.
-pub async fn guest_suggestions(
-    State(state): State<Arc<AppState>>,
-    Query(q): Query<GuestQuery>,
-) -> ApiResult<Vec<GuestSuggestion>> {
-    let found = people::search(&state, &q.q, 12).await?;
-    let mut out = Vec::new();
-    for p in found
-        .into_iter()
-        .filter(|p| p.channels.contains(&Channel::Email))
-    {
-        for email in crate::mail::person_addresses(&state, p.id)
-            .await
-            .unwrap_or_default()
-        {
-            // One address listed once, even when People has it twice.
-            if out.iter().any(|s: &GuestSuggestion| s.email == email) {
-                continue;
-            }
-            out.push(GuestSuggestion {
-                person_id: p.id,
-                name: p.name.clone(),
-                email,
-            });
-        }
-        if out.len() >= 8 {
-            break;
-        }
-    }
-    out.truncate(8);
-    Ok(Json(out))
 }
 
 /// Events with this person: they're invited (by email), or their name is in the title.

@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import type { CalendarEvent } from "@/bindings/CalendarEvent";
 import type { CalendarInfo } from "@/bindings/CalendarInfo";
 import type { InvitationOffer } from "@/bindings/InvitationOffer";
+import { type AddressEntry, AddressField, addressText } from "@/components/address-field";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -27,15 +28,16 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { addDays, fromInputs, inputDate, inputTime, startOfDay } from "@/features/calendar/dates";
-import { type GuestEntry, GuestsField, guestText } from "@/features/calendar/guests-field";
-import { InvitationRow } from "@/features/calendar/invitations";
+import { InvitationRow, toastOffers, useSendOffer } from "@/features/calendar/invitations";
+import { optimistic } from "@/features/calendar/optimistic";
 import { api, keys } from "@/lib/api";
 import { openExternal } from "@/lib/transport";
 
 /**
  * Adding an event by hand (`start` is where the user clicked, if they did), or changing
- * one (`event`). Guests are saved without anyone being emailed; once saved, the dialog
- * offers to send the invitations.
+ * one (`event`). On Google calendars Google invites the guests; elsewhere they're saved
+ * without anyone being emailed, and once added, the dialog offers to send the
+ * invitations (once changed, a toast does: a change doesn't wait for the calendar).
  */
 export function NewEventDialog({
   open,
@@ -68,11 +70,28 @@ export function NewEventDialog({
 }
 
 /** The user themselves, among an event's attendees: not a guest to show or to invite. */
-function guestsOf(e: CalendarEvent): GuestEntry[] {
+function guestsOf(e: CalendarEvent): AddressEntry[] {
   const organizer = e.organizer?.email;
   return e.attendees
     .filter((a) => a.email !== organizer)
     .map((a) => ({ name: a.person_name ?? a.name, email: a.email }));
+}
+
+/** The attendees after a change of guests: those who stay keep their answer. */
+function withGuests(e: CalendarEvent, guests: AddressEntry[]) {
+  const organizer = e.attendees.filter((a) => a.email === e.organizer?.email);
+  return organizer.concat(
+    guests.map(
+      (g) =>
+        e.attendees.find((a) => a.email.toLowerCase() === g.email.toLowerCase()) ?? {
+          name: g.name,
+          email: g.email,
+          person_id: null,
+          person_name: null,
+          response: null,
+        },
+    ),
+  );
 }
 
 function NewEventForm({
@@ -87,6 +106,7 @@ function NewEventForm({
   onDone: () => void;
 }) {
   const qc = useQueryClient();
+  const send = useSendOffer();
   const initial = event?.start ?? clicked ?? nextHour();
   const initialEnd = event
     ? event.all_day
@@ -104,7 +124,7 @@ function NewEventForm({
   const [endTime, setEndTime] = useState(inputTime(initialEnd));
   const [location, setLocation] = useState(event?.location ?? "");
   const [notes, setNotes] = useState(event?.notes ?? "");
-  const [guests, setGuests] = useState<GuestEntry[]>(() => (event ? guestsOf(event) : []));
+  const [guests, setGuests] = useState<AddressEntry[]>(() => (event ? guestsOf(event) : []));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // Once saved: what the guests could be sent.
@@ -123,28 +143,13 @@ function NewEventForm({
       setError("The event must end after it starts.");
       return;
     }
+    if (event) {
+      saveChange(event, { title, start: startMs, end: endMs, all_day: allDay, location, notes });
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      if (event) {
-        const changed = await api.changeEvent(event.id, {
-          title,
-          start: startMs,
-          end: endMs,
-          all_day: allDay,
-          location,
-          notes,
-          guests: canInvite ? guests.map(guestText) : null,
-        });
-        qc.invalidateQueries({ queryKey: keys.calendar });
-        if (changed.note) toast.info(changed.note);
-        if (changed.invitations.length > 0) setOffers(changed.invitations);
-        else {
-          toast.success("Saved");
-          onDone();
-        }
-        return;
-      }
       const created = await api.addEvent({
         calendar_id: calendarId,
         title,
@@ -153,7 +158,7 @@ function NewEventForm({
         all_day: allDay,
         location: location || null,
         notes: notes || null,
-        guests: canInvite ? guests.map(guestText) : [],
+        guests: canInvite ? guests.map(addressText) : [],
       });
       if (created.open_url) {
         await openExternal(created.open_url);
@@ -175,6 +180,38 @@ function NewEventForm({
     }
   };
 
+  // A change shows in the calendar at once and the dialog closes; the calendar's answer
+  // (a note, invitations to offer, or a refusal that puts the event back) comes as a toast.
+  const saveChange = (
+    event: CalendarEvent,
+    fields: Pick<CalendarEvent, "title" | "start" | "end" | "all_day" | "location" | "notes">,
+  ) => {
+    const change = { ...fields, guests: canInvite ? guests.map(addressText) : null };
+    const edited: CalendarEvent = {
+      ...event,
+      ...fields,
+      location: fields.location || null,
+      notes: fields.notes || null,
+      attendees: canInvite ? withGuests(event, guests) : event.attendees,
+    };
+    const shown = toast.success("Saved");
+    onDone();
+    optimistic(
+      qc,
+      (events, from, to) =>
+        events
+          .filter((e) => e.id !== event.id)
+          .concat(edited.start < to && edited.end > from ? [edited] : [])
+          .sort((a, b) => a.start - b.start),
+      () => api.changeEvent(event.id, change),
+    )
+      .then((changed) => {
+        if (changed.invitations.length > 0) toastOffers("Saved", changed.invitations, send, shown);
+        if (changed.note) toast.info(changed.note);
+      })
+      .catch((e) => toast.error(`Your change to “${event.title}” wasn't saved. ${(e as Error).message}`, { id: shown }));
+  };
+
   // Moving the start keeps the length the same.
   const moveStart = (d: string, t: string) => {
     const before = fromInputs(date, time);
@@ -193,7 +230,7 @@ function NewEventForm({
           <span className="flex size-9 items-center justify-center rounded-full bg-private-soft text-private">
             <Check className="size-[18px]" strokeWidth={2.6} />
           </span>
-          <DialogTitle className="type-title">{editing ? "Saved" : `Added to ${calendar?.name ?? "your calendar"}`}</DialogTitle>
+          <DialogTitle className="type-title">{`Added to ${calendar?.name ?? "your calendar"}`}</DialogTitle>
           <DialogDescription>Nothing has been emailed to your guests yet.</DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-3 rounded-[14px] bg-background p-4 shadow-[var(--shadow-card)]">
@@ -312,9 +349,17 @@ function NewEventForm({
         {canInvite ? (
           <div className="flex flex-col gap-1.5">
             <Label>Guests</Label>
-            <GuestsField value={guests} onChange={setGuests} />
+            <AddressField
+              value={guests}
+              onChange={setGuests}
+              label="Guests"
+              placeholder="Add people by name or email"
+              typedAction="Invite"
+            />
             <p className="type-footnote text-faint">
-              Nobody is emailed when you save. You can send the invitations next.
+              {calendar?.google && calendar.writable
+                ? "Google emails them the invitation when you save, and it shows in their calendar."
+                : "Nobody is emailed when you save. You can send the invitations next."}
             </p>
           </div>
         ) : (

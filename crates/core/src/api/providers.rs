@@ -106,12 +106,15 @@ pub async fn delete(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>) ->
         return Err(AppError::not_found("Provider"));
     }
     let mut current = settings::load(&state.db).await?;
-    if current
-        .default_model
-        .as_ref()
-        .is_some_and(|m| m.provider_id == id)
-    {
-        current.default_model = None;
+    let from_here =
+        |m: &Option<mimi_protocol::ModelRef>| m.as_ref().is_some_and(|m| m.provider_id == id);
+    if from_here(&current.default_model) || from_here(&current.photo_model) {
+        if from_here(&current.default_model) {
+            current.default_model = None;
+        }
+        if from_here(&current.photo_model) {
+            current.photo_model = None;
+        }
         settings::save(&state.db, &current).await?;
         state
             .events
@@ -128,7 +131,26 @@ pub async fn models(
     let record = store::get(&state.db, id)
         .await?
         .ok_or_else(|| AppError::not_found("Provider"))?;
-    Ok(Json(providers::list_models(&state, &record).await?))
+    let mut models = providers::list_models(&state, &record).await?;
+    // Servers on the user's machines (Ollama, LM Studio) say whether a model sees only
+    // when asked about it; they're close, so ask, for the model for photos' list.
+    if record.provider.locality != mimi_protocol::Locality::Cloud {
+        let asked = futures::future::join_all(
+            models
+                .iter()
+                .filter(|m| m.sees_images.is_none())
+                .map(|m| providers::vision::sees_images(&state, &record, &m.id)),
+        )
+        .await;
+        for (model, sees) in models
+            .iter_mut()
+            .filter(|m| m.sees_images.is_none())
+            .zip(asked)
+        {
+            model.sees_images = Some(sees);
+        }
+    }
+    Ok(Json(models))
 }
 
 /// Tries connection details without saving them. If the address fails and has no path,

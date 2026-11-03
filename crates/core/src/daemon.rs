@@ -86,7 +86,11 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
         scheduler: Default::default(),
         mail: Default::default(),
         updates: Default::default(),
+        access: Default::default(),
+        voice: Default::default(),
     });
+    // Before anything is served or sent: trusted people's conversations stay theirs.
+    crate::access::load(&state).await;
     #[cfg(debug_assertions)]
     if std::env::var(crate::tools::dev::ENV).is_ok_and(|v| v == "1") {
         tracing::warn!("development tools enabled");
@@ -102,10 +106,20 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
     state
         .tool_sources
         .add(Arc::new(crate::memory::tools::MemoryTools));
+    state
+        .tool_sources
+        .add(Arc::new(crate::channels::tools::MessagingTools));
+    state
+        .tool_sources
+        .add(Arc::new(crate::connections::matrix::send::MatrixTools));
     crate::connections::start_all(&state).await;
     tokio::spawn(crate::memory::learn::run(state.clone()));
     tokio::spawn(crate::memory::semantic::run(state.clone()));
     crate::people::install(&state);
+    {
+        let state = state.clone();
+        tokio::spawn(async move { crate::access::tidy(&state).await });
+    }
     crate::schedule::install(&state);
     crate::mail::install(&state);
     tokio::spawn(crate::updates::run(state.clone()));
@@ -123,6 +137,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
                 tick.tick().await;
                 state.runtime.unload_if_idle(&state).await;
                 state.semantic.unload_if_idle().await;
+                state.voice.unload_if_idle().await;
             }
         });
     }
@@ -130,6 +145,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<()> {
     let served = axum::serve(listener, api::router(state.clone()))
         .with_graceful_shutdown(shutdown_signal())
         .await;
+    // Drafts not yet on the mail servers get there now, if they can.
+    crate::mail::drafts::flush(&state).await;
     // The runtime is a child process: take it down with the daemon.
     state.runtime.stop(&state).await;
     state.semantic.stop().await;

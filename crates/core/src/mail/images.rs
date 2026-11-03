@@ -212,8 +212,8 @@ pub fn is_public(ip: IpAddr) -> bool {
 
 /// Resolves names, keeping only internet addresses (so a name pointing at this computer
 /// or the local network can't be used, whatever it's called).
-struct PublicOnly {
-    allow_loopback: bool,
+pub(super) struct PublicOnly {
+    pub(super) allow_loopback: bool,
 }
 
 impl Resolve for PublicOnly {

@@ -70,6 +70,8 @@ enum ServiceCommand {
     Status,
     /// Start the installed service now.
     Start,
+    /// Restart the installed service, e.g. after installing a new version.
+    Restart,
 }
 
 /// `mimi service …`: works without a running daemon.
@@ -111,6 +113,10 @@ fn service(cmd: ServiceCommand) -> anyhow::Result<()> {
         ServiceCommand::Start => {
             mimi_service::start(&spec)?;
             println!("started");
+        }
+        ServiceCommand::Restart => {
+            mimi_service::restart(&spec)?;
+            println!("restarted");
         }
     }
     Ok(())
@@ -363,6 +369,8 @@ async fn chat(client: &Client, message: Option<String>, resume: bool) -> anyhow:
                     content: text,
                     model: None,
                     mentions: Vec::new(),
+                    attachments: Vec::new(),
+                    spoken: false,
                 },
             )
             .await?;

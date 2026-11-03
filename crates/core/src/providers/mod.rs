@@ -10,11 +10,12 @@ pub mod anthropic;
 pub mod openai;
 pub mod pull;
 pub mod store;
+pub mod vision;
 
 pub use anthropic::Anthropic;
 pub use openai::{
-    ChatChunk, ChatMessage, ChatOptions, FunctionSpec, OpenAiCompatible, ProviderError, Role,
-    ToolCall, ToolSpec,
+    ChatChunk, ChatMessage, ChatOptions, FunctionSpec, ImagePart, OpenAiCompatible, ProviderError,
+    Role, ToolCall, ToolSpec,
 };
 
 /// A chat client for any kind of source: the OpenAI-compatible API most of them speak,

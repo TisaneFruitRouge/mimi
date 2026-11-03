@@ -476,6 +476,7 @@ mod tests {
         ToolContext {
             state: Arc::new(AppState::for_tests("t")),
             conversation_id: uuid::Uuid::now_v7(),
+            principal: Default::default(),
         }
     }
 

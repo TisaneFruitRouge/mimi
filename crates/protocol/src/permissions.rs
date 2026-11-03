@@ -2,8 +2,8 @@
 //!
 //! The daemon defines the kinds of action (send email, add events…) and serves them as
 //! [`PermissionKind`]s; clients render whatever it serves. The user's choices are stored
-//! as [`Permissions`]: per kind, a default plus exceptions for particular people or
-//! calendars.
+//! as [`Permissions`]: per kind, a default plus exceptions for particular people, groups
+//! or calendars, and the kind's extra switches.
 
 use std::collections::BTreeMap;
 
@@ -36,8 +36,11 @@ pub struct Permissions(pub BTreeMap<String, KindPermission>);
 #[ts(export)]
 pub struct KindPermission {
     pub autonomy: Autonomy,
-    /// Exceptions for particular people or calendars. The most specific wins.
+    /// Exceptions for particular people, groups or calendars. The most specific wins.
     pub rules: Vec<PermissionRule>,
+    /// The kind's switches the user turned on, by id (see [`PermissionKind::switches`]).
+    #[serde(default)]
+    pub switches: Vec<String>,
 }
 
 impl<'de> Deserialize<'de> for KindPermission {
@@ -51,19 +54,30 @@ impl<'de> Deserialize<'de> for KindPermission {
                 autonomy: Autonomy,
                 #[serde(default)]
                 rules: Vec<PermissionRule>,
+                #[serde(default)]
+                switches: Vec<String>,
             },
         }
         Ok(match Repr::deserialize(d)? {
             Repr::Bare(autonomy) => Self {
                 autonomy,
                 rules: Vec::new(),
+                switches: Vec::new(),
             },
-            Repr::Full { autonomy, rules } => Self { autonomy, rules },
+            Repr::Full {
+                autonomy,
+                rules,
+                switches,
+            } => Self {
+                autonomy,
+                rules,
+                switches,
+            },
         })
     }
 }
 
-/// An exception: this person or calendar gets `autonomy` instead of the default.
+/// An exception: this person, group or calendar gets `autonomy` instead of the default.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct PermissionRule {
@@ -76,10 +90,12 @@ pub struct PermissionRule {
 #[serde(tag = "kind", content = "id", rename_all = "snake_case")]
 #[ts(export)]
 pub enum PermissionTarget {
-    /// Someone in People, by id: matched through their email addresses.
+    /// Someone in People, by id: matched through their email and Matrix addresses.
     Person(Uuid),
     /// One calendar, by its stable id (`CalendarInfo.id`).
     Calendar(String),
+    /// A Matrix group the assistant is in, by its room id (`MatrixGroup.id`).
+    MatrixRoom(String),
 }
 
 /// What a kind's exceptions can be about.
@@ -91,6 +107,8 @@ pub enum PermissionTargetKind {
     None,
     Person,
     Calendar,
+    /// People (through their Matrix addresses) and Matrix groups.
+    PeopleAndGroups,
 }
 
 /// A kind of action, as `GET /v1/permissions` serves it: how to show it, and the user's
@@ -117,6 +135,20 @@ pub struct PermissionKind {
     /// The user's choice for everything without an exception.
     pub autonomy: Autonomy,
     pub rules: Vec<PermissionRuleView>,
+    /// Extra choices, shown as switches under the kind.
+    pub switches: Vec<PermissionSwitch>,
+}
+
+/// An extra choice a kind offers, e.g. "Everyone on example.org counts as someone you
+/// know". Turned on by listing its id in [`KindPermission::switches`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PermissionSwitch {
+    pub id: String,
+    pub title: String,
+    /// Why it's off unless the user chooses it, in one or two plain sentences.
+    pub detail: String,
+    pub on: bool,
 }
 
 /// An exception as clients show it.
@@ -125,9 +157,9 @@ pub struct PermissionKind {
 pub struct PermissionRuleView {
     pub target: PermissionTarget,
     pub autonomy: Autonomy,
-    /// The person's or calendar's name.
+    /// The person's, group's or calendar's name.
     pub label: String,
-    /// The person or calendar no longer exists; the exception does nothing.
+    /// The person, group or calendar is gone; the exception does nothing.
     pub missing: bool,
 }
 
@@ -154,6 +186,7 @@ mod tests {
                     target: PermissionTarget::Person(person),
                     autonomy: Autonomy::Automatic,
                 }],
+                switches: vec!["everyone_on_server".to_owned()],
             },
         )]));
         let json = serde_json::to_value(&new).unwrap();

@@ -106,6 +106,8 @@ impl Anthropic {
                 size_bytes: None,
                 supports_tools: Some(true),
                 price: None,
+                // Every Claude model the API lists can see pictures.
+                sees_images: Some(true),
             }));
             match (page.has_more, page.last_id) {
                 (true, Some(last)) => after = Some(last),
@@ -273,9 +275,21 @@ fn request_body(
         match m.role {
             Role::System => {}
             Role::User => {
+                // Pictures first, then what the user wrote about them.
+                let mut blocks: Vec<Value> = m
+                    .images
+                    .iter()
+                    .map(|i| {
+                        json!({
+                            "type": "image",
+                            "source": {"type": "base64", "media_type": i.mime, "data": i.base64()},
+                        })
+                    })
+                    .collect();
                 if !m.content.trim().is_empty() {
-                    push(Role::User, vec![json!({"type": "text", "text": m.content})]);
+                    blocks.push(json!({"type": "text", "text": m.content}));
                 }
+                push(Role::User, blocks);
             }
             Role::Assistant => {
                 for call in &m.tool_calls {
@@ -706,6 +720,34 @@ mod tests {
     }
 
     #[test]
+    fn pictures_become_image_blocks_before_the_words() {
+        use super::super::openai::ImagePart;
+        let messages = vec![
+            ChatMessage::text(Role::User, "Add this train to my calendar")
+                .with_images(vec![ImagePart::new("image/jpeg", vec![1, 2, 3])]),
+            ChatMessage::text(Role::Assistant, "Done."),
+            ChatMessage::text(Role::User, "")
+                .with_images(vec![ImagePart::new("image/png", b"png!".to_vec())]),
+        ];
+        let body = request_body("claude-sonnet-5", &messages, &[], 1000);
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(
+            msgs[0]["content"],
+            json!([
+                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "AQID"}},
+                {"type": "text", "text": "Add this train to my calendar"},
+            ])
+        );
+        // A photo on its own is a message too, without an empty text block.
+        assert_eq!(
+            msgs[2]["content"],
+            json!([
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "cG5nIQ=="}},
+            ])
+        );
+    }
+
+    #[test]
     fn replayed_replies_are_sent_back_unchanged() {
         let replay = json!([
             {"type": "thinking", "thinking": "", "signature": "sig=="},
@@ -937,6 +979,7 @@ mod tests {
                     size_bytes: None,
                     supports_tools: Some(true),
                     price: None,
+                    sees_images: Some(true),
                 },
                 ModelInfo {
                     id: "claude-haiku-4-5".into(),
@@ -944,6 +987,7 @@ mod tests {
                     size_bytes: None,
                     supports_tools: Some(true),
                     price: None,
+                    sees_images: Some(true),
                 },
             ]
         );

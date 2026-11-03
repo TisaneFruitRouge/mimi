@@ -1,6 +1,8 @@
-//! Invitations sent through the user's own email, never by the calendar service.
+//! Invitations sent through the user's own email.
 //!
-//! Saving, changing or removing an event with guests emails nobody (see `guests.rs`).
+//! On Google calendars, a write may ask Google to tell the guests itself (`notify`): it
+//! emails them and the event shows in their calendars, so no offer is made. Otherwise
+//! saving, changing or removing an event with guests emails nobody (see `guests.rs`).
 //! Instead Mimi records an *offer*: the event as it was then, and who could be told.
 //! The user sends it with a click (the Calendar panel, a card in the chat), or asks the
 //! assistant to (`calendar_send_invitations`, which follows the `send_mail` permission).
@@ -111,8 +113,8 @@ pub fn plan_after_change(before: &Snapshot, after: &Snapshot) -> Vec<(Invitation
     out
 }
 
-/// What the rest of Mimi learns from a write: the offers made (nothing was emailed) and
-/// anything the user should be told.
+/// What the rest of Mimi learns from a write: the offers made (Mimi emailed nothing) and
+/// anything the user should be told, such as whom Google emailed.
 #[derive(Debug, Default)]
 pub struct Outcome {
     pub offers: Vec<Uuid>,
@@ -129,12 +131,40 @@ struct Place<'a> {
 
 // --- Writes that make offers ----------------------------------------------------------
 
-/// Adds an event and, when it has guests, offers their invitations. A calendar that
-/// can't take guests gets the event without them, and the note says why.
+/// Whether Google tells the guests of this write itself: asked for (`notify`), and a
+/// Google calendar Mimi writes to.
+fn google_tells(target: &Target, notify: bool) -> bool {
+    notify && matches!(target, Target::GoogleApi { .. })
+}
+
+/// The note for guests Google told about a write.
+fn told_note(kind: InvitationKind, guests: &[Guest]) -> String {
+    let who = guests::names(guests);
+    match kind {
+        InvitationKind::Invite => {
+            format!("Google emailed {who} the invitation; it shows in their calendar.")
+        }
+        InvitationKind::Cancel => format!("Google told {who} it's cancelled."),
+        _ => format!("Google told {who} about the change."),
+    }
+}
+
+/// Adds a note to whatever the outcome already says.
+fn add_note(outcome: &mut Outcome, note: String) {
+    outcome.note = Some(match outcome.note.take() {
+        Some(before) => format!("{before} {note}"),
+        None => note,
+    });
+}
+
+/// Adds an event and, when it has guests, offers their invitations, or with `notify` on
+/// a Google calendar lets Google invite them. A calendar that can't take guests gets the
+/// event without them, and the note says why.
 pub async fn add(
     state: &AppState,
     target: &Target,
     mut event: NewEvent,
+    notify: bool,
 ) -> Result<(Created, Outcome), String> {
     let mut outcome = Outcome::default();
     if !event.guests.is_empty() {
@@ -149,7 +179,9 @@ pub async fn add(
             }
         }
     }
-    let created = super::create(&state.http, &state.connections.feeds, target, &event).await?;
+    let tells = google_tells(target, notify) && !event.guests.is_empty();
+    let created =
+        super::create(&state.http, &state.connections.feeds, target, &event, tells).await?;
     if let Created::Saved { uid, ical_uid, .. } = &created
         && !event.guests.is_empty()
     {
@@ -180,7 +212,9 @@ pub async fn add(
             event_uid: uid,
             start: event.start,
         };
-        if !guests.is_empty() {
+        if tells && !guests.is_empty() {
+            add_note(&mut outcome, told_note(InvitationKind::Invite, &guests));
+        } else if !guests.is_empty() {
             outcome
                 .offers
                 .push(save_offer(state, InvitationKind::Invite, &place, &snapshot, &guests).await?);
@@ -189,15 +223,17 @@ pub async fn add(
     Ok((created, outcome))
 }
 
-/// Changes an event and offers to tell its guests. `before` is the event as found just
-/// now. Changing guests is refused for events someone else organizes, and for every
-/// occurrence of a repeating event at once.
+/// Changes an event and offers to tell its guests, or with `notify` on a Google calendar
+/// lets Google tell them. `before` is the event as found just now. Changing guests is
+/// refused for events someone else organizes, and for every occurrence of a repeating
+/// event at once.
 pub async fn change(
     state: &AppState,
     r: &EventRef,
     before: &Located,
     whole: bool,
     mut changes: Changes,
+    notify: bool,
 ) -> Result<(Option<Located>, Outcome), String> {
     let accounts = crate::connections::calendar_accounts(state).await;
     let me = guests::my_addresses(state, &accounts).await;
@@ -225,6 +261,13 @@ pub async fn change(
     if !changes.details() && changes.guests.is_none() {
         return Err("Nothing to change.".to_owned());
     }
+    // Only the organizer's changes reach guests, when it has some before or after.
+    let has_guests = !guests::guests_of(&before.event, &me).is_empty()
+        || changes.guests.as_ref().is_some_and(|g| !g.is_empty());
+    let tells = has_guests
+        && guests::is_mine(&before.event, &me)
+        && super::target_by_id(&accounts, &r.calendar_id)
+            .is_some_and(|target| google_tells(&target, notify));
     super::change_event(
         &state.http,
         &state.connections.feeds,
@@ -232,7 +275,10 @@ pub async fn change(
         r,
         whole,
         &changes,
-        &me,
+        super::Guests {
+            me: &me,
+            notify: tells,
+        },
     )
     .await?;
     let moved = EventRef {
@@ -249,6 +295,22 @@ pub async fn change(
         return Ok((after, outcome));
     }
     let had_guests = !guests::guests_of(&before.event, &me).is_empty();
+    if tells {
+        // Google told whoever was added, changed or removed; say whom.
+        let b = Snapshot::of(before, &me);
+        let a = after.as_ref().map(|a| Snapshot::of(a, &me));
+        let plan = match &a {
+            Some(a) => plan_after_change(&b, a),
+            None if had_guests && changes.details() => {
+                vec![(InvitationKind::Update, b.guests.clone())]
+            }
+            None => Vec::new(),
+        };
+        for (kind, recipients) in plan {
+            add_note(&mut outcome, told_note(kind, &recipients));
+        }
+        return Ok((after, outcome));
+    }
     match &after {
         Some(_) if series => {
             if had_guests && changes.details() {
@@ -305,27 +367,44 @@ pub fn check_guests_may_change(
     Ok(())
 }
 
-/// Removes an event and, when it had guests, offers to tell them it's cancelled.
+/// Removes an event and, when it had guests, offers to tell them it's cancelled, or with
+/// `notify` on a Google calendar lets Google tell them.
 pub async fn remove(
     state: &AppState,
     r: &EventRef,
     before: &Located,
     whole: bool,
+    notify: bool,
 ) -> Result<Outcome, String> {
     let accounts = crate::connections::calendar_accounts(state).await;
     let me = guests::my_addresses(state, &accounts).await;
+    let mut snapshot = Snapshot::of(before, &me);
+    let mine = guests::is_mine(&before.event, &me);
+    let tells = mine
+        && !snapshot.guests.is_empty()
+        && super::target_by_id(&accounts, &r.calendar_id)
+            .is_some_and(|target| google_tells(&target, notify));
     super::remove_event(
         &state.http,
         &state.connections.feeds,
         &accounts,
         r,
         whole,
-        &me,
+        super::Guests {
+            me: &me,
+            notify: tells,
+        },
     )
     .await?;
     let mut outcome = Outcome::default();
-    let mut snapshot = Snapshot::of(before, &me);
-    if guests::is_mine(&before.event, &me) && !snapshot.guests.is_empty() {
+    if tells {
+        add_note(
+            &mut outcome,
+            told_note(InvitationKind::Cancel, &snapshot.guests),
+        );
+        return Ok(outcome);
+    }
+    if mine && !snapshot.guests.is_empty() {
         if whole {
             // No RECURRENCE-ID: the whole event, every occurrence of it, is cancelled.
             snapshot.occurrence = None;

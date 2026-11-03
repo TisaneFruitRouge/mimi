@@ -4,8 +4,8 @@ use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::{
-    Connection, Conversation, Delivery, Message, ModelPull, Provider, RuntimeStatus, Settings,
-    UpdateStatus,
+    Connection, Conversation, Delivery, GuestApproval, Message, ModelPull, Provider, RuntimeStatus,
+    Settings, UpdateStatus, VoiceStatus,
 };
 
 /// Pushed by the daemon to every client connected to `GET /v1/events` (WebSocket, one
@@ -65,6 +65,33 @@ pub enum Event {
     ScheduleDelivered {
         delivery: Delivery,
     },
+    /// What someone in People may ask the assistant changed: refetch their access.
+    PersonAccessChanged {
+        person_id: Uuid,
+    },
+    /// Something a trusted person asked for waits for the user's OK, or was settled
+    /// (then `action.status` isn't `pending_approval` anymore). Never their conversation.
+    GuestApproval {
+        approval: GuestApproval,
+    },
+    /// A voice download started, progressed or finished, or voice settings changed.
+    VoiceChanged {
+        voice: VoiceStatus,
+    },
+    /// A message in the outbox was added, rescheduled, sent, cancelled or failed.
+    MailOutbox {
+        item: crate::OutgoingMail,
+    },
+    /// The saved drafts changed: one was saved, deleted or sent, or a server's Drafts
+    /// folder changed (`GET /v1/mail/drafts`).
+    MailDrafts,
     /// This client fell behind and missed events. Refetch any state you display.
     Resync,
+    /// The user clicked a new-mail notification on this computer: the desktop app comes
+    /// forward and opens Mail, on that conversation when there's one (`None`: several).
+    /// Browsers ignore it.
+    OpenMail {
+        #[ts(type = "number | null")]
+        thread_id: Option<i64>,
+    },
 }

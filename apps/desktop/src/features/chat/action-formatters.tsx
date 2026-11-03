@@ -1,8 +1,15 @@
+import { when as whenAt } from "@/features/reminders/time";
+
 /**
  * How each tool's arguments read on an approval card. Integrations add an entry for
  * their tools; anything without one falls back to a tidy list of its arguments.
  */
-export type ArgRow = { label: string; value: string };
+export type ArgRow = {
+  label: string;
+  value: string;
+  /** The value is Markdown to show formatted, as the recipient will see it. */
+  markdown?: boolean;
+};
 
 type Formatter = {
   /** Arguments the rows cover (or deliberately leave out). Any other is listed after them. */
@@ -13,7 +20,7 @@ type Formatter = {
 export const formatters: Record<string, Formatter> = {
   // Guests are listed one per line: an event with them reaches each of them.
   calendar_add_event: {
-    keys: ["title", "start", "end", "calendar", "location", "notes", "guests", "guests_note"],
+    keys: ["title", "start", "end", "calendar", "location", "notes", "guests", "guests_note", "email_note"],
     rows: (a) => {
       const rows: ArgRow[] = [{ label: "Event", value: text(a.title) }];
       rows.push({ label: "When", value: when(text(a.start), present(a.end) ? text(a.end) : null) });
@@ -22,7 +29,12 @@ export const formatters: Record<string, Formatter> = {
       if (present(a.guests)) rows.push({ label: "Guests", value: lines(a.guests) });
       if (present(a.guests_note)) rows.push({ label: "Guests", value: text(a.guests_note) });
       if (present(a.notes)) rows.push({ label: "Notes", value: text(a.notes) });
-      if (present(a.guests)) rows.push({ label: "Email", value: "Nobody is emailed. You can send the invitations after." });
+      // The daemon says how the guests hear of it (Google invites them, or nobody does).
+      if (present(a.guests))
+        rows.push({
+          label: "Email",
+          value: present(a.email_note) ? text(a.email_note) : "Nobody is emailed. You can send the invitations after.",
+        });
       return rows;
     },
   },
@@ -46,6 +58,7 @@ export const formatters: Record<string, Formatter> = {
       "add_guests",
       "remove_guests",
       "guests",
+      "email_note",
     ],
     rows: (a) => {
       const rows: ArgRow[] = [
@@ -63,7 +76,8 @@ export const formatters: Record<string, Formatter> = {
       if (present(a.add_guests)) rows.push({ label: "Invite", value: lines(a.add_guests) });
       if (present(a.remove_guests)) rows.push({ label: "Take off", value: lines(a.remove_guests) });
       if (present(a.guests)) rows.push({ label: "Guests after", value: lines(a.guests) });
-      if (present(a.add_guests) || present(a.remove_guests))
+      if (present(a.email_note)) rows.push({ label: "Email", value: text(a.email_note) });
+      else if (present(a.add_guests) || present(a.remove_guests))
         rows.push({ label: "Email", value: "Nobody is emailed. You can tell them after." });
       return rows;
     },
@@ -103,14 +117,47 @@ export const formatters: Record<string, Formatter> = {
       return rows;
     },
   },
-  // The whole message, exactly as it will be sent. `thread_id` only threads the reply.
+  // Everyone it reaches by name with their exact address (`to` holds just the addresses),
+  // the public groups it joins to post, the assistant's account, and the whole message.
+  matrix_send: {
+    keys: ["to", "recipients", "from", "joins", "text"],
+    rows: (a) => {
+      const rows: ArgRow[] = [{ label: "To", value: present(a.recipients) ? lines(a.recipients) : lines(a.to) }];
+      if (present(a.joins))
+        rows.push({ label: "Joins", value: `${lines(a.joins)}\nA public group: your assistant joins it to post this.` });
+      if (present(a.from)) rows.push({ label: "From", value: `Your assistant, ${text(a.from)}` });
+      rows.push({ label: "Message", value: text(a.text), markdown: true });
+      return rows;
+    },
+  },
+  // The whole message, exactly as it will be sent: blind copies said to be hidden, and
+  // every file with its size and where it comes from (looked up by the daemon).
+  // `thread_id` only threads the reply.
   mail_send: {
-    keys: ["to", "cc", "subject", "body", "thread_id"],
+    keys: ["to", "cc", "bcc", "subject", "body", "signature", "thread_id", "attachments", "send_at"],
     rows: (a) => {
       const rows: ArgRow[] = [{ label: "To", value: text(a.to) }];
       if (present(a.cc)) rows.push({ label: "Cc", value: text(a.cc) });
+      if (present(a.bcc))
+        rows.push({ label: "Bcc", value: `${lines(a.bcc)}\nA hidden copy: the others won't see this.` });
       rows.push({ label: "Subject", value: text(a.subject) || "(no subject)" });
-      rows.push({ label: "Message", value: text(a.body) });
+      // The user's signature, added by the daemon (never the model's), under the text.
+      rows.push({
+        label: "Message",
+        value: present(a.signature) ? `${text(a.body)}\n\n-- \n${text(a.signature)}` : text(a.body),
+      });
+      if (Array.isArray(a.attachments) && a.attachments.length > 0)
+        rows.push({ label: a.attachments.length === 1 ? "File" : "Files", value: a.attachments.map(fileLine).join("\n") });
+      // A local date and time ("2026-10-03T09:00"), set by the daemon.
+      if (typeof a.send_at === "string" && a.send_at) {
+        const at = new Date(a.send_at).getTime();
+        rows.push({
+          label: "When",
+          value: Number.isFinite(at)
+            ? `${whenAt(at)}\nIf this computer is off or asleep then, it goes as soon as Mimi runs again.`
+            : a.send_at,
+        });
+      }
       return rows;
     },
   },
@@ -132,6 +179,17 @@ function present(v: unknown) {
 /** A list with one entry per line: each guest or recipient on their own. */
 function lines(v: unknown): string {
   return Array.isArray(v) ? v.map(text).join("\n") : text(v);
+}
+
+/** "Invoice.pdf · 340 KB · From the email “March” from Sam": a file an email carries. */
+function fileLine(f: unknown): string {
+  if (f === null || typeof f !== "object") return text(f);
+  const { name, size, from } = f as { name?: unknown; size?: unknown; from?: unknown };
+  const parts = [text(name) || "A file"];
+  if (typeof size === "number" && size > 0)
+    parts.push(size < 1e6 ? `${Math.max(1, Math.round(size / 1e3))} KB` : `${(size / 1e6).toFixed(1)} MB`);
+  if (present(from)) parts.push(text(from));
+  return parts.join(" · ");
 }
 
 /** "On Friday 2 Oct, 10:00–10:45" from the daemon's "on Friday…". */

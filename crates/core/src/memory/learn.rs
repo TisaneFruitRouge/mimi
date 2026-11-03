@@ -133,6 +133,11 @@ struct NotePlan {
 
 /// Learns from what's new in a conversation. Returns how many notes changed.
 pub async fn learn_from(state: &Arc<AppState>, conversation_id: Uuid) -> Result<usize, String> {
+    // Memory is the owner's: what someone they trust says in their own conversation
+    // (`access`) is never learned from.
+    if state.access.is_guest_conversation(conversation_id) {
+        return Ok(0);
+    }
     let db = &state.db;
     let settings = crate::settings::load(db).await.map_err(|e| e.to_string())?;
     let messages = crate::chat::store::messages(db, conversation_id)
@@ -270,7 +275,9 @@ fn excerpt(messages: &[&mimi_protocol::Message]) -> Option<String> {
         match m.role {
             MessageRole::User => {
                 skip_reply = asks_not_to_remember(&m.content);
-                if !skip_reply {
+                // Photos never reach learning: only what the user wrote (a photo on its
+                // own is nothing to learn from).
+                if !skip_reply && !m.content.trim().is_empty() {
                     parts.push(format!("USER: {}", clip(&m.content, 800)));
                 }
             }

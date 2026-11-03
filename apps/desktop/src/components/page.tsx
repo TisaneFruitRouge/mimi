@@ -5,7 +5,7 @@ import { useScrollEdge } from "@/lib/scroll-edge";
 /**
  * A full-height scrolling page under the translucent top bar. Every non-chat screen
  * (Connections, Models, and any new one) is built from these pieces so spacing,
- * type and surfaces stay consistent. See AGENTS.md, "Look and feel".
+ * type and surfaces stay consistent. See docs/design-system.md.
  */
 export function Page({ children, className }: { children: React.ReactNode; className?: string }) {
   const onScroll = useScrollEdge();

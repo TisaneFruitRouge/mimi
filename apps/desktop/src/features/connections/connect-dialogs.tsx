@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import QRCode from "qrcode";
-import { ChevronRight, CircleCheck, ExternalLink, Loader2, Lock, TriangleAlert } from "lucide-react";
+import { Check, ChevronRight, CircleCheck, Copy, ExternalLink, Loader2, Lock, TriangleAlert } from "lucide-react";
 import { cn } from "cn";
 
 import type { Connection } from "@/bindings/Connection";
@@ -9,6 +9,7 @@ import type { ConnectionSetup } from "@/bindings/ConnectionSetup";
 import type { MailDiscovery } from "@/bindings/MailDiscovery";
 import type { MailSecurity } from "@/bindings/MailSecurity";
 import type { MailServers } from "@/bindings/MailServers";
+import { copyText } from "@/components/app-context-menu";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -22,10 +23,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { api, keys } from "@/lib/api";
-import { useConnections } from "@/lib/queries";
+import { useAssistantName, useConnections } from "@/lib/queries";
 import { openExternal } from "@/lib/transport";
 
-export type ConnectKind = "google_calendar" | "caldav" | "telegram" | "email";
+export type ConnectKind = "google_calendar" | "caldav" | "telegram" | "signal" | "matrix" | "email";
 
 export function ConnectDialog({
   kind,
@@ -43,6 +44,8 @@ export function ConnectDialog({
         {kind === "google_calendar" && <GoogleCalendar onDone={onClose} reconnect={reconnect} />}
         {kind === "caldav" && <CalDav onDone={onClose} />}
         {kind === "telegram" && <Telegram onDone={onClose} />}
+        {kind === "signal" && <Signal onDone={onClose} />}
+        {kind === "matrix" && <Matrix onDone={onClose} />}
         {kind === "email" && <EmailAccount onDone={onClose} />}
       </DialogContent>
     </Dialog>
@@ -518,6 +521,495 @@ function TelegramPairing({ connection }: { connection: Connection }) {
           )}
           <span className="flex items-center gap-2 type-subhead text-muted-foreground">
             <Loader2 className="size-3.5 animate-spin" /> Waiting for you to press Start…
+          </span>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/**
+ * Signal: Mimi links to the user's own account as a device, like Signal Desktop. The
+ * daemon gets the linking address from Signal and publishes it as the connection's
+ * `action_url`; it's only ever shown here as a QR code made on this computer, never
+ * opened as a link.
+ */
+function Signal({ onDone }: { onDone: () => void }) {
+  const assistant = useAssistantName();
+  const connections = useConnections().data;
+  const { busy, error, created, connect } = useConnect();
+  const existing = connections?.find((c) => c.integration === "signal");
+  // The connection updates live (via events) as codes arrive and once it's scanned.
+  const live = created ? (connections?.find((c) => c.id === created.id) ?? created) : undefined;
+  // A link already under way (the dialog was closed meanwhile): show its code again.
+  const linking = live ?? (existing?.status === "needs_action" && existing.action_url ? existing : undefined);
+  const start = () => connect({ integration: "signal" });
+
+  if (live && live.status === "ok") {
+    return <Done connection={live} onDone={onDone} />;
+  }
+  if (linking) {
+    return <SignalCode connection={linking} onRetry={start} busy={busy} />;
+  }
+
+  const again = existing && existing.status !== "ok";
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>Connect Signal</DialogTitle>
+        <DialogDescription>
+          Chat with {assistant} in your Note to Self, end-to-end encrypted. You link it from your
+          phone, like Signal on a computer.
+        </DialogDescription>
+      </DialogHeader>
+      <Steps>
+        <Step n={1}>
+          <span>Show a code to scan.</span>
+          <Button className="self-start" disabled={busy} onClick={start}>
+            {busy && <Loader2 className="animate-spin" />} {again ? "Link again" : "Show the code"}
+          </Button>
+          {(error || shownError(existing)) && (
+            <p className="type-subhead text-destructive">{error ?? shownError(existing)}</p>
+          )}
+        </Step>
+        <Step n={2}>
+          <span>
+            On your phone, open Signal, go to <b>Settings › Linked devices</b>, tap <b>+</b> and scan it.
+          </span>
+        </Step>
+        <Step n={3}>
+          <span>Write to {assistant} in <b>Note to Self</b>. Replies come back there.</span>
+        </Step>
+      </Steps>
+      <Note>
+        {assistant} only reads Note to Self. Like any linked device it receives your other chats too,
+        but ignores them: nothing from them is read, kept or shown to your assistant.
+      </Note>
+      <Note icon="warn">
+        Signal doesn't notify you about Note to Self, so messages and reminders from {assistant} there
+        arrive silently.
+      </Note>
+    </>
+  );
+}
+
+/** What went wrong with a Signal connection, when it isn't just waiting for a scan. */
+function shownError(connection: Connection | undefined) {
+  return connection?.status === "error" ? connection.detail : null;
+}
+
+function SignalCode({ connection, onRetry, busy }: { connection: Connection; onRetry: () => void; busy: boolean }) {
+  const [qr, setQr] = useState<string | null>(null);
+  const url = connection.action_url;
+  useEffect(() => {
+    if (!url) return setQr(null);
+    let current = true;
+    QRCode.toDataURL(url, { margin: 1, width: 480, color: { dark: "#16171a", light: "#ffffff" } }).then(
+      (data) => current && setQr(data),
+    );
+    return () => {
+      current = false;
+    };
+  }, [url]);
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>Scan with Signal</DialogTitle>
+        <DialogDescription>
+          On your phone, open Signal, go to <b>Settings › Linked devices</b>, tap <b>+</b> and scan this code.
+        </DialogDescription>
+      </DialogHeader>
+      <div className="flex flex-col items-center gap-4">
+        <div className="rounded-[18px] bg-white p-3 shadow-[var(--shadow-card)]">
+          {qr ? (
+            <img src={qr} alt="Code to link Signal" className="size-56" />
+          ) : (
+            <div className="flex size-56 items-center justify-center">
+              <Loader2 className="size-6 animate-spin text-muted-foreground" />
+            </div>
+          )}
+        </div>
+        <span
+          className={cn(
+            "flex items-center gap-2 type-subhead",
+            connection.status === "error" ? "text-destructive" : "text-muted-foreground",
+          )}
+        >
+          {connection.status !== "error" && url && <Loader2 className="size-3.5 animate-spin" />}
+          {url ? "Waiting for you to scan… A new code appears if this one expires." : connection.detail}
+        </span>
+        {/* The daemon's passing states ("Getting a code…", "Retrying…") end with an ellipsis. */}
+        {!url && !connection.detail.endsWith("…") && (
+          <Button variant="secondary" size="sm" disabled={busy} onClick={onRetry}>
+            {busy && <Loader2 className="animate-spin" />} Show a new code
+          </Button>
+        )}
+      </div>
+    </>
+  );
+}
+
+/**
+ * How to make the assistant's account on a server whose sign-up is closed, per server
+ * program. `asks`: the command asks for the password itself (so it stays out of the
+ * shell's history); otherwise it's in the command.
+ */
+const matrixServers = [
+  {
+    id: "synapse",
+    name: "Synapse",
+    where: "On the server, in a terminal:",
+    command: (name: string) =>
+      `register_new_matrix_user -c /etc/matrix-synapse/homeserver.yaml -u ${name} --no-admin`,
+    asks: true,
+    note: "Change the path if your homeserver.yaml is somewhere else.",
+  },
+  {
+    id: "synapse-docker",
+    name: "Synapse in Docker",
+    where: "On the server, in a terminal:",
+    command: (name: string) =>
+      `docker exec -it synapse register_new_matrix_user -c /data/homeserver.yaml -u ${name} --no-admin`,
+    asks: true,
+    note: "Change synapse to your container's name if it's different.",
+  },
+  {
+    id: "tuwunel",
+    name: "Tuwunel, conduwuit or Continuwuity",
+    where: "Send this in your server's admin room:",
+    command: (name: string, password: string) => `!admin users create-user ${name} ${password}`,
+    asks: false,
+    note: null,
+  },
+  {
+    id: "mas",
+    name: "Matrix Authentication Service",
+    where: "Where mas-cli runs:",
+    command: (name: string, password: string) =>
+      `mas-cli manage register-user --username ${name} --password ${password} --no-admin --yes`,
+    asks: false,
+    note: "Your server must allow signing in with a password, for apps like this one.",
+  },
+  {
+    id: "dendrite",
+    name: "Dendrite",
+    where: "On the server, in a terminal:",
+    command: (name: string) => `create-account -config /etc/dendrite/dendrite.yaml -username ${name}`,
+    asks: true,
+    note: "Change the path if your dendrite.yaml is somewhere else.",
+  },
+  {
+    id: "dendrite-docker",
+    name: "Dendrite in Docker",
+    where: "On the server, in a terminal:",
+    command: (name: string) =>
+      `docker exec -it dendrite-monolith-1 create-account -config /etc/dendrite/dendrite.yaml -username ${name}`,
+    asks: true,
+    note: "Change dendrite-monolith-1 to your container's name if it's different (docker ps shows it).",
+  },
+] as const;
+
+/** A strong password with nothing a shell or chat command would trip on. */
+function newPassword() {
+  const letters = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  return Array.from(bytes, (b) => letters[b % letters.length]).join("");
+}
+
+/** The name part of a Matrix address: "@mimi:example.org" → "mimi". */
+function localPart(address: string) {
+  const name = address.trim().replace(/^@/, "").split(":")[0].toLowerCase();
+  return /^[a-z0-9._=\/+-]+$/.test(name) ? name : "";
+}
+
+function Matrix({ onDone }: { onDone: () => void }) {
+  const [ownServer, setOwnServer] = useState(false);
+  const [user, setUser] = useState("");
+  const [password, setPassword] = useState("");
+  // The password suggested for an account made on the user's own server.
+  const [suggested, setSuggested] = useState("");
+  const [homeserver, setHomeserver] = useState("");
+  const [showServer, setShowServer] = useState(false);
+  const { busy, error, created, connect } = useConnect();
+  // The connection updates live (via events) once the owner sends the code.
+  const live = useConnections().data?.find((c) => c.id === created?.id) ?? created;
+
+  if (live && live.status === "ok") {
+    return <Done connection={live} onDone={onDone} />;
+  }
+  if (live) return <MatrixPairing connection={live} />;
+
+  const ready = user.trim().length > 0 && password.length > 0;
+  const addressField = (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor="matrix-user">Address</Label>
+      <Input
+        id="matrix-user"
+        value={user}
+        onChange={(e) => setUser(e.target.value)}
+        placeholder={ownServer ? "@assistant:example.org" : "@my-assistant:matrix.org"}
+        autoComplete="off"
+        spellCheck={false}
+        autoFocus
+      />
+    </div>
+  );
+  const form = (
+    <form
+      className="flex flex-col gap-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!ready) return;
+        connect({
+          integration: "matrix",
+          user,
+          password,
+          homeserver: homeserver.trim() || null,
+        });
+      }}
+    >
+      {!ownServer && addressField}
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="matrix-password">Password</Label>
+        <Input
+          id="matrix-password"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          autoComplete="off"
+        />
+      </div>
+      <button
+        type="button"
+        onClick={() => setShowServer((v) => !v)}
+        className="flex items-center gap-1 self-start type-subhead font-medium text-muted-foreground hover:text-foreground"
+        aria-expanded={showServer}
+      >
+        <ChevronRight className={cn("size-3.5 transition-transform", showServer && "rotate-90")} />
+        Server settings
+      </button>
+      {showServer && (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="matrix-server">Server address</Label>
+          <Input
+            id="matrix-server"
+            value={homeserver}
+            onChange={(e) => setHomeserver(e.target.value)}
+            placeholder="https://matrix.example.org"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <p className="type-subhead text-muted-foreground">
+            Only needed when Mimi can't find the server from the address.
+          </p>
+        </div>
+      )}
+      {error && <p className="type-subhead text-destructive">{error}</p>}
+      <Button type="submit" className="self-start" disabled={busy || !ready}>
+        {busy && <Loader2 className="animate-spin" />} {busy ? "Signing in…" : "Connect"}
+      </Button>
+    </form>
+  );
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>Connect Matrix</DialogTitle>
+        <DialogDescription>
+          Chat with your assistant from Element or any Matrix app, end-to-end encrypted.
+        </DialogDescription>
+      </DialogHeader>
+      <div className="grid grid-cols-2 rounded-[10px] bg-fill p-[3px]" role="radiogroup" aria-label="Where its account lives">
+        {[
+          { own: false, label: "A public server" },
+          { own: true, label: "My own server" },
+        ].map((o) => (
+          <button
+            key={o.label}
+            role="radio"
+            aria-checked={ownServer === o.own}
+            onClick={() => {
+              setOwnServer(o.own);
+              // On their own server they make the account: suggest a strong password. On a
+              // public one they choose it when signing up.
+              if (o.own && !password) {
+                const p = newPassword();
+                setPassword(p);
+                setSuggested(p);
+              } else if (!o.own && password === suggested) {
+                setPassword("");
+              }
+            }}
+            className={cn(
+              "h-7 rounded-[7px] text-[13px] font-medium transition-all duration-200",
+              ownServer === o.own
+                ? "bg-background text-foreground shadow-[0_0_0_0.5px_rgb(0_0_0/0.06),0_1px_3px_rgb(0_0_0/0.12)]"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+      {ownServer ? (
+        <Steps>
+          <Step n={1}>
+            <span>Choose an address for your assistant on your server, separate from yours.</span>
+            {addressField}
+          </Step>
+          <Step n={2}>
+            <span>Create the account on your server.</span>
+            <MatrixAccountCommand name={localPart(user)} password={password} />
+          </Step>
+          <Step n={3}>
+            <span>Connect with the account's password.</span>
+            {form}
+          </Step>
+        </Steps>
+      ) : (
+        <Steps>
+          <Step n={1}>
+            <span>
+              Make a new account for your assistant, separate from yours, on matrix.org or any server
+              that lets people sign up. If your server's sign-up is closed, choose <b>My own server</b>.
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="self-start"
+              onClick={() => openExternal("https://app.element.io/#/register")}
+            >
+              <ExternalLink /> Create an account in Element
+            </Button>
+          </Step>
+          <Step n={2}>
+            <span>Enter the new account's address and password.</span>
+            {form}
+          </Step>
+        </Steps>
+      )}
+      <Note>
+        Your assistant uses only its own account, never yours, and talks only to you. Its password
+        is used once to set up encryption and isn't kept.
+      </Note>
+    </>
+  );
+}
+
+/** The command that makes the assistant's account, for the server program the user picks. */
+function MatrixAccountCommand({ name, password }: { name: string; password: string }) {
+  const [serverId, setServerId] = useState<(typeof matrixServers)[number]["id"]>("synapse");
+  const server = matrixServers.find((s) => s.id === serverId)!;
+  return (
+    <div className="flex flex-col gap-2.5">
+      <Select value={serverId} onValueChange={(v) => setServerId(v as typeof serverId)}>
+        <SelectTrigger className="w-full" aria-label="Your server's program">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {matrixServers.map((s) => (
+            <SelectItem key={s.id} value={s.id}>
+              {s.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {name ? (
+        <>
+          <span className="type-subhead text-muted-foreground">{server.where}</span>
+          <CopyBox text={server.command(name, password)} label="command" />
+          {server.asks && (
+            <>
+              <span className="type-subhead text-muted-foreground">When it asks for a password, use this one:</span>
+              <CopyBox text={password} label="password" />
+            </>
+          )}
+          {server.note && <span className="type-subhead text-muted-foreground">{server.note}</span>}
+        </>
+      ) : (
+        <span className="type-subhead text-muted-foreground">
+          Enter an address above to see the command, like @assistant:example.org.
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** Text to paste somewhere else, with a Copy button. */
+function CopyBox({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(t);
+  }, [copied]);
+  return (
+    <div className="flex items-start gap-2 rounded-[10px] bg-subtle py-2 pr-2 pl-3">
+      <code className="min-w-0 flex-1 font-mono text-[12.5px] leading-5 break-all select-all">{text}</code>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-label={`Copy the ${label}`}
+        className="shrink-0 rounded-full text-muted-foreground"
+        onClick={() => {
+          copyText(text);
+          setCopied(true);
+        }}
+      >
+        {copied ? <Check /> : <Copy />}
+      </Button>
+    </div>
+  );
+}
+
+/** The six-digit code in a connection's "send this code" line. */
+const pairingCode = (detail: string) => detail.match(/\b(\d{6})\b/)?.[1] ?? null;
+
+function MatrixPairing({ connection }: { connection: Connection }) {
+  const [qr, setQr] = useState<string | null>(null);
+  const url = connection.action_url;
+  const code = pairingCode(connection.detail);
+  useEffect(() => {
+    if (url) QRCode.toDataURL(url, { margin: 1, width: 360, color: { dark: "#16171a", light: "#ffffff" } }).then(setQr);
+  }, [url]);
+
+  if (connection.status === "error") {
+    return (
+      <DialogHeader>
+        <DialogTitle>Something went wrong</DialogTitle>
+        <DialogDescription>{connection.detail}</DialogDescription>
+      </DialogHeader>
+    );
+  }
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>One last step</DialogTitle>
+        <DialogDescription>
+          From your own Matrix account, start a chat with {connection.name} and send it this code.
+          That makes it yours.
+        </DialogDescription>
+      </DialogHeader>
+      {code && (
+        <p className="mx-auto w-fit rounded-[14px] bg-subtle px-5 py-3 font-mono text-[28px] font-semibold tracking-[0.2em] tabular-nums">
+          {code}
+        </p>
+      )}
+      <div className="flex items-center gap-5">
+        <div className="shrink-0 rounded-[18px] bg-white p-2.5 shadow-[var(--shadow-card)]">
+          {qr ? <img src={qr} alt="QR code to open a chat with your assistant" className="size-36" /> : <div className="size-36" />}
+        </div>
+        <div className="flex flex-col gap-3 type-callout">
+          <span>Scan with your phone's camera, or open it on this computer.</span>
+          {url && (
+            <Button className="self-start" onClick={() => openExternal(url)}>
+              <ExternalLink /> Start the chat
+            </Button>
+          )}
+          <span className="flex items-center gap-2 type-subhead text-muted-foreground">
+            <Loader2 className="size-3.5 animate-spin" /> Waiting for your code…
           </span>
         </div>
       </div>

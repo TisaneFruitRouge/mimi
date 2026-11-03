@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
 
-use crate::Permissions;
+use crate::{Permissions, VoiceSettings};
 
 /// User-editable settings. Every field has a default so settings saved by an older
 /// version keep loading after new fields are added.
@@ -21,6 +21,9 @@ pub struct Settings {
     pub custom_instructions: String,
     /// Model used for new messages. `None` until the user finishes setup.
     pub default_model: Option<ModelRef>,
+    /// Optional model that answers messages with photos (and the message right after)
+    /// when the default model can't see pictures. `None`: the default answers everything.
+    pub photo_model: Option<ModelRef>,
     /// Whether the assistant learns new things about the user from conversations.
     pub memory_learning: bool,
     /// The model chosen during setup while it's still downloading. When its download
@@ -46,7 +49,18 @@ pub struct Settings {
     /// Whether this computer asks GitHub, about once a day, if a newer version of Mimi
     /// has been published. Off unless the user turns it on.
     pub update_check: bool,
+    /// Talking to the assistant and hearing it (Settings › Voice).
+    pub voice: VoiceSettings,
+    /// Which new emails show as notifications on this computer (Settings › Reminders &
+    /// notifications).
+    pub mail_notifications: MailNotifications,
+    /// How long an email the user sends waits, so they can take it back (Undo): one of
+    /// [`UNDO_SEND_CHOICES`]; 0 sends at once.
+    pub undo_send_secs: u32,
 }
+
+/// The waits "Undo send" offers, in seconds (0: off).
+pub const UNDO_SEND_CHOICES: [u32; 5] = [0, 5, 10, 20, 30];
 
 /// Longest personality, in characters. It goes into every prompt, next to the memory
 /// profile (1,200) and recalled notes (1,600), so it stays small for ~8k-token models.
@@ -75,6 +89,7 @@ impl Default for Settings {
             personality: String::new(),
             custom_instructions: String::new(),
             default_model: None,
+            photo_model: None,
             memory_learning: true,
             pending_model: None,
             onboarding_done: false,
@@ -85,6 +100,9 @@ impl Default for Settings {
             mail_sorter: MailSorter::Model,
             permissions: Permissions::default(),
             update_check: false,
+            voice: VoiceSettings::default(),
+            mail_notifications: MailNotifications::default(),
+            undo_send_secs: 10,
         }
     }
 }
@@ -95,6 +113,41 @@ impl Default for Settings {
 pub struct ModelRef {
     pub provider_id: Uuid,
     pub model: String,
+}
+
+/// Notifications on this computer when new mail lands in an Inbox (`mail::notify`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct MailNotifications {
+    pub notify: NewMailNotify,
+    /// Whether a notification says who wrote and the subject. Off: only "New email", for
+    /// screens others can see (a lock screen). Suspicious mail never shows its subject.
+    pub show_details: bool,
+}
+
+impl Default for MailNotifications {
+    fn default() -> Self {
+        Self {
+            notify: NewMailNotify::Important,
+            show_details: true,
+        }
+    }
+}
+
+/// Which new emails show as a notification.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum NewMailNotify {
+    /// None.
+    Off,
+    /// Mail sorted as "needs a reply" or "important". When nothing sorts new mail
+    /// (sorting off, no model), every new email except newsletters and automatic mail.
+    #[default]
+    Important,
+    /// Every new email in the Inbox, newsletters and automatic mail included.
+    All,
 }
 
 #[cfg(test)]

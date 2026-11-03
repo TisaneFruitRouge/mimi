@@ -1,9 +1,11 @@
-import { forwardRef, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowUp, AtSign, Blocks, Hash, MessageSquarePlus, Plus, Sparkles } from "lucide-react";
+import { ArrowUp, AtSign, Blocks, Hash, ImagePlus, MessageSquarePlus, Plus, Sparkles } from "lucide-react";
 import { cn } from "cn";
+import { toast } from "sonner";
 
 import type { Mention } from "@/bindings/Mention";
+import type { NewAttachment } from "@/bindings/NewAttachment";
 import { LocalityIcon } from "@/components/locality-badge";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -14,24 +16,37 @@ import { useMentions } from "@/features/chat/mentions/use-mentions";
 import type { Section } from "@/features/shell/top-bar";
 import { localityExplanation } from "@/lib/format";
 import { mod } from "@/lib/platform";
-import { useActiveModel } from "@/lib/queries";
+import {
+  type DraftPhoto,
+  DraftPhotos,
+  MAX_PHOTOS,
+  ModelsLink,
+  draftPhoto,
+  encodePhoto,
+  imageFiles,
+} from "@/features/chat/photos";
+import { FinishButton, MicButton, RecordingBar, useDictation } from "@/features/chat/voice";
+import { useActiveModel, useSeesImages, useSettings, useVoice } from "@/lib/queries";
 
 export interface ComposerHandle {
   setText: (text: string) => void;
   /** Text with its @ mentions already made into pills, e.g. from "Ask Mimi about this". */
   setDraft: (text: string, mentions: Mention[]) => void;
+  /** Adds photos to the message being written (dropped on the chat, say). */
+  addPhotos: (files: File[]) => void;
 }
 
 /**
  * The message box: a floating card with the text field on top and a quiet toolbar
  * below. Entry points on the left (`@` and `#` mentions, `/` actions), privacy and send on the
- * right.
+ * right; with nothing to send, the microphone takes Send's place.
  */
 export const Composer = forwardRef<
   ComposerHandle,
   {
     replying: boolean;
-    onSend: (text: string, mentions: Mention[]) => Promise<boolean>;
+    /** `spoken`: some of the words were said out loud. */
+    onSend: (text: string, mentions: Mention[], photos: NewAttachment[], spoken: boolean) => Promise<boolean>;
     onStop: () => void;
     onNewConversation: () => void;
     onSection: (s: Section) => void;
@@ -43,6 +58,62 @@ export const Composer = forwardRef<
   const highlights = useRef<HTMLDivElement>(null);
   const active = useActiveModel();
   const mention = useMentions({ text, setText, area });
+  const [photos, setPhotos] = useState<DraftPhoto[]>([]);
+  const [sending, setSending] = useState(false);
+  const picker = useRef<HTMLInputElement>(null);
+  const seesImages = useSeesImages();
+  const sendsAtOnce = !!useSettings().data?.voice.send_when_done;
+  // Some of what's in the box was said out loud.
+  const spoken = useRef(false);
+  const dictation = useDictation((words) => {
+    if (sendsAtOnce) {
+      void submit({ text: [text.trim(), words].filter(Boolean).join(" "), spoken: true });
+      return;
+    }
+    const next = text.trim() ? `${text.trimEnd()} ${words}` : words;
+    spoken.current = true;
+    setText(next);
+    mention.refresh(next);
+    requestAnimationFrame(() => {
+      area.current?.focus();
+      area.current?.setSelectionRange(next.length, next.length);
+    });
+  });
+  const talking = dictation.phase !== "idle";
+  const canListen = useVoice().data?.listening.state === "ready";
+
+  // ⌘/Ctrl ⇧ Space talks from anywhere in the chat, and again finishes.
+  const talk = useRef(() => {});
+  talk.current = () => {
+    if (dictation.phase === "recording") void dictation.finish();
+    else if (talking || replying) return;
+    else if (canListen) void dictation.start();
+    else
+      toast("Talking needs a one-time download first.", {
+        action: { label: "Set up", onClick: () => onSection("voice") },
+      });
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code === "Space" && e.shiftKey && (e.metaKey || e.ctrlKey) && !e.altKey) {
+        e.preventDefault();
+        talk.current();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const addPhotos = (files: File[]) => {
+    const images = imageFiles(files);
+    if (!images.length) return;
+    const room = Math.max(MAX_PHOTOS - photos.length, 0);
+    if (images.length > room) toast.error(`At most ${MAX_PHOTOS} photos can go with one message.`);
+    const added = images.slice(0, room).map(draftPhoto);
+    setPhotos((current) => [...current, ...added].slice(0, MAX_PHOTOS));
+    area.current?.focus();
+  };
+  const removePhoto = (key: string) => setPhotos((current) => current.filter((p) => p.key !== key));
 
   useImperativeHandle(ref, () => {
     const fill = (t: string, mentions: Mention[]) => {
@@ -54,7 +125,7 @@ export const Composer = forwardRef<
         area.current?.setSelectionRange(t.length, t.length);
       });
     };
-    return { setText: (t) => fill(t, []), setDraft: fill };
+    return { setText: (t) => fill(t, []), setDraft: fill, addPhotos };
   });
 
   // Grow with the content, up to a limit.
@@ -65,15 +136,39 @@ export const Composer = forwardRef<
     el.style.height = `${Math.min(el.scrollHeight, 240)}px`;
   }, [text]);
 
-  const submit = async () => {
-    const value = text.trim();
-    if (!value || replying || !active) return;
+  const submit = async (said?: { text: string; spoken: boolean }) => {
+    const value = (said?.text ?? text).trim();
+    const wasSpoken = said?.spoken ?? spoken.current;
+    if ((!value && !photos.length) || replying || sending || !active) {
+      // Said with nowhere to send it yet: keep the words.
+      if (said && value) {
+        setText(value);
+        spoken.current = true;
+      }
+      return;
+    }
     const mentions = mention.mentions;
+    const attached = photos;
+    let encoded: NewAttachment[];
+    try {
+      setSending(true);
+      encoded = await Promise.all(attached.map(encodePhoto));
+    } catch (e) {
+      setSending(false);
+      toast.error((e as Error).message);
+      return;
+    }
     setText("");
+    setPhotos([]);
     mention.reset();
-    if (!(await onSend(value, mentions))) {
+    spoken.current = false;
+    const sent = await onSend(value, mentions, encoded, wasSpoken);
+    setSending(false);
+    if (!sent) {
       setText(value);
+      setPhotos(attached);
       mention.restore(mentions);
+      spoken.current = wasSpoken;
     }
   };
 
@@ -82,7 +177,7 @@ export const Composer = forwardRef<
     fn();
   };
 
-  const canSend = !!text.trim() && !!active;
+  const canSend = (!!text.trim() || photos.length > 0) && !!active && !sending;
 
   return (
     <div className="mx-auto w-full max-w-[720px] px-6 pb-5">
@@ -98,7 +193,22 @@ export const Composer = forwardRef<
             onPick={mention.pick}
           />
         )}
-        <div className="relative">
+        {photos.length > 0 && <DraftPhotos photos={photos} onRemove={removePhoto} />}
+        {photos.length > 0 && seesImages === false && (
+          <p className="px-5 pt-2.5 type-footnote text-muted-foreground">
+            This model can't see photos. Choose one that can, or one just for photos, in{" "}
+            <ModelsLink onModels={() => onSection("models")} />.
+          </p>
+        )}
+        {talking && (
+          <RecordingBar
+            phase={dictation.phase}
+            levels={dictation.levels}
+            seconds={dictation.seconds}
+            onCancel={dictation.cancel}
+          />
+        )}
+        <div className={cn("relative", talking && "hidden")}>
           <MentionHighlights ref={highlights} text={text} mentions={mention.mentions} className={fieldText} />
           <textarea
             ref={area}
@@ -110,21 +220,31 @@ export const Composer = forwardRef<
                 return;
               }
               setText(e.target.value);
+              if (!e.target.value.trim()) spoken.current = false;
               mention.refresh(e.target.value);
             }}
             onKeyDown={(e) => {
               if (mention.onKeyDown(e)) return;
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
-                submit();
+                void submit();
               }
+            }}
+            onPaste={(e) => {
+              const pasted = imageFiles(e.clipboardData.files);
+              if (!pasted.length) return;
+              // A picture alone is added as a photo; text that comes with it still pastes.
+              if (!e.clipboardData.types.includes("text/plain")) e.preventDefault();
+              addPhotos(pasted);
             }}
             onSelect={() => mention.refresh()}
             onBlur={() => mention.close()}
             onScroll={(e) => {
               if (highlights.current) highlights.current.scrollTop = e.currentTarget.scrollTop;
             }}
-            placeholder={active ? "Ask anything" : "Choose a model to start"}
+            placeholder={
+              !active ? "Choose a model to start" : photos.length ? "Add a message, or just send" : "Ask anything"
+            }
             aria-label="Message"
             rows={1}
             autoFocus
@@ -158,6 +278,9 @@ export const Composer = forwardRef<
               <TooltipContent>More · or type /</TooltipContent>
             </Tooltip>
             <PopoverContent align="start" className="w-[240px] p-1.5">
+              <MenuItem icon={<ImagePlus />} onClick={action(() => picker.current?.click())}>
+                Add photos…
+              </MenuItem>
               <MenuItem icon={<MessageSquarePlus />} hint={`${mod}N`} onClick={action(onNewConversation)}>
                 New chat
               </MenuItem>
@@ -170,11 +293,25 @@ export const Composer = forwardRef<
             </PopoverContent>
           </Popover>
 
+          <input
+            ref={picker}
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            onChange={(e) => {
+              addPhotos(Array.from(e.target.files ?? []));
+              e.target.value = "";
+            }}
+          />
+
           <div className="flex-1" />
           <PrivacyChip onManage={() => onSection("models")} />
 
           <AnimatePresence mode="popLayout" initial={false}>
-            {replying ? (
+            {talking ? (
+              <FinishButton phase={dictation.phase} sendsAtOnce={sendsAtOnce} onFinish={() => void dictation.finish()} />
+            ) : replying ? (
               <motion.button
                 key="stop"
                 initial={{ scale: 0.6, opacity: 0 }}
@@ -187,6 +324,8 @@ export const Composer = forwardRef<
               >
                 <span className="size-2.5 rounded-[2.5px] bg-current" />
               </motion.button>
+            ) : !canSend && !sending ? (
+              <MicButton onStart={() => void dictation.start()} />
             ) : (
               <motion.button
                 key="send"
@@ -194,7 +333,7 @@ export const Composer = forwardRef<
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0.6, opacity: 0 }}
                 transition={{ type: "spring", stiffness: 600, damping: 30 }}
-                onClick={submit}
+                onClick={() => void submit()}
                 disabled={!canSend}
                 aria-label="Send"
                 className={cn(

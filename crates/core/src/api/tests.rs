@@ -398,7 +398,7 @@ impl Harness {
                     message_id: id,
                     content,
                     ..
-                } if id.to_string() == message_id => deltas += &content,
+                } if id.to_string() == message_id => deltas += &*content,
                 mimi_protocol::Event::MessageUpdated { message }
                     if message.id.to_string() == message_id
                         && message.status != mimi_protocol::MessageStatus::Streaming =>
@@ -792,11 +792,25 @@ mod tool_use {
     pub(super) async fn scripted_llm(
         script: impl Fn(&Value, usize) -> Reply + Send + Sync + 'static,
     ) -> ScriptedLlm {
+        scripted(script, false).await
+    }
+
+    /// [`scripted_llm`] for a model that can see pictures, as Ollama says so.
+    pub(super) async fn scripted_llm_seeing(
+        script: impl Fn(&Value, usize) -> Reply + Send + Sync + 'static,
+    ) -> ScriptedLlm {
+        scripted(script, true).await
+    }
+
+    async fn scripted(
+        script: impl Fn(&Value, usize) -> Reply + Send + Sync + 'static,
+        sees: bool,
+    ) -> ScriptedLlm {
         use axum::routing::{get, post};
         let requests: Arc<Mutex<Vec<Value>>> = Default::default();
         let script = Arc::new(script);
         let recorded = requests.clone();
-        let app = Router::new()
+        let mut app = Router::new()
             .route(
                 "/v1/models",
                 get(|| async { Json(json!({"data": [{"id": "mock-model"}]})) }),
@@ -847,6 +861,12 @@ mod tool_use {
                     }
                 }),
             );
+        if sees {
+            app = app.route(
+                "/api/show",
+                post(|| async { Json(json!({"capabilities": ["completion", "vision", "tools"]})) }),
+            );
+        }
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -1228,6 +1248,9 @@ mod tool_use {
             created_at: 1,
             actions: vec![pending],
             mentions: Vec::new(),
+            attachments: Vec::new(),
+            attachments_unseen: false,
+            spoken: false,
         };
         crate::chat::store::upsert_message(&db, message)
             .await
@@ -1301,6 +1324,67 @@ mod tool_use {
             tg.sent_to(42)
         );
         assert_eq!(writes.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn the_assistant_can_message_the_user_in_their_apps() {
+        use super::fake_telegram::FakeTelegram;
+
+        let llm = scripted_llm(|_, n| match n {
+            0 => Reply::Call("message_me", json!({"text": "**Shopping**: milk, eggs"})),
+            _ => Reply::Text("Sent it to your phone."),
+        })
+        .await;
+        let (mut h, _, writes) = setup(&llm).await;
+        h.state
+            .tool_sources
+            .add(Arc::new(crate::channels::tools::MessagingTools));
+
+        // With no app paired, there's no such tool to offer.
+        let registry = h.state.tool_sources.registry(&h.state).await;
+        assert!(registry.get("message_me").is_none());
+
+        let (tg, tg_url) = FakeTelegram::start().await;
+        *h.state.connections.telegram_api.lock().unwrap() = tg_url;
+        let (_, conn) = h
+            .call(
+                reqwest::Method::POST,
+                "/connections",
+                json!({"integration": "telegram", "bot_token": "123:secret"}),
+            )
+            .await;
+        let code = conn["action_url"]
+            .as_str()
+            .unwrap()
+            .rsplit("start=")
+            .next()
+            .unwrap()
+            .to_owned();
+        tg.message(42, "Vincent", &format!("/start {code}"));
+        for _ in 0..200 {
+            if crate::channels::owners(&h.state).await.len() == 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+
+        // It only ever reaches the user, like a reminder: no approval card.
+        let (_, id) = h.start("Send me my shopping list on my phone").await;
+        let (message, _) = h.wait_for_reply(&id).await;
+        let action = &message.actions[0];
+        assert_eq!(action.status, ActionStatus::Done, "{action:?}");
+        assert_eq!(
+            action.result.as_deref(),
+            Some("sent you a message on Telegram")
+        );
+        assert!(
+            tg.sent_to(42)
+                .iter()
+                .any(|m| m == "<b>Shopping</b>: milk, eggs"),
+            "{:?}",
+            tg.sent_to(42)
+        );
+        assert_eq!(writes.load(Ordering::SeqCst), 0);
     }
 
     // --- Personality and instructions ----------------------------------------------
@@ -1688,6 +1772,69 @@ mod tool_use {
     }
 
     #[tokio::test]
+    async fn people_are_suggested_by_name_or_email_address() {
+        let llm = scripted_llm(|_, _| Reply::Text("Noted.")).await;
+        let (h, _, _) = setup(&llm).await;
+        for (name, handles) in [
+            (
+                "Lee, Sam",
+                json!([
+                    {"channel": "email", "value": "sam@work.example"},
+                    {"channel": "email", "value": "sam.lee@home.example"},
+                    {"channel": "telegram", "value": "t.me/samlee"}
+                ]),
+            ),
+            (
+                "Samantha Ruiz",
+                json!([{"channel": "phone", "value": "+33 6 12 34 56 78"}]),
+            ),
+            (
+                "Bo Diaz",
+                json!([{"channel": "email", "value": "bo@home.example"}]),
+            ),
+        ] {
+            let (status, p) = h
+                .call(
+                    reqwest::Method::POST,
+                    "/people",
+                    json!({"name": name, "handles": handles}),
+                )
+                .await;
+            assert_eq!(status, 200, "{p}");
+        }
+        let emails = |found: &Value| -> Vec<String> {
+            found
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| r["email"].as_str().unwrap().to_owned())
+                .collect()
+        };
+
+        // A name gives every address of theirs; no one without email.
+        let (_, found) = h
+            .call(reqwest::Method::GET, "/people/emails?q=sam", Value::Null)
+            .await;
+        assert_eq!(emails(&found), ["sam@work.example", "sam.lee@home.example"]);
+        assert_eq!(found[0]["name"], "Lee, Sam");
+
+        // Part of an address gives the addresses that match.
+        let (_, found) = h
+            .call(
+                reqwest::Method::GET,
+                "/people/emails?q=Home.ex",
+                Value::Null,
+            )
+            .await;
+        assert_eq!(emails(&found), ["bo@home.example", "sam.lee@home.example"]);
+
+        let (_, found) = h
+            .call(reqwest::Method::GET, "/people/emails?q=", Value::Null)
+            .await;
+        assert_eq!(found, json!([]));
+    }
+
+    #[tokio::test]
     async fn mentions_tell_the_model_exactly_who_was_meant() {
         let llm = scripted_llm(|_, _| Reply::Text("Noted.")).await;
         let (mut h, _, _) = setup(&llm).await;
@@ -2002,6 +2149,16 @@ SUMMARY:Dentist\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
     }
 }
 
+mod access_flow;
+mod mail_batch;
+mod mail_drafts;
+mod mail_files;
+mod mail_outbox;
+mod mail_signature;
+mod matrix_live;
+mod unsubscribe_flow;
+mod voice_flow;
+
 /// A fake Telegram Bot API: queued updates go out through getUpdates, and everything
 /// sent comes back through `sent()`.
 mod fake_telegram {
@@ -2017,13 +2174,21 @@ mod fake_telegram {
         pub updates: Arc<Mutex<Vec<Value>>>,
         pub sent: Arc<Mutex<Vec<Value>>>,
         next_id: Arc<Mutex<i64>>,
+        /// Files the bot can download, by file id.
+        pub files: Arc<Mutex<std::collections::HashMap<String, Vec<u8>>>>,
+        /// Every file id the bot asked for.
+        pub fetched: Arc<Mutex<Vec<String>>>,
+        /// Voice messages sent (`sendVoice`): their sizes.
+        pub voices: Arc<Mutex<Vec<usize>>>,
     }
 
     impl FakeTelegram {
         pub async fn start() -> (Self, String) {
             let fake = FakeTelegram::default();
             let app = Router::new()
+                .route("/{bot}/sendVoice", post(voice))
                 .route("/{bot}/{method}", post(handle))
+                .route("/file/{bot}/{*path}", axum::routing::get(file))
                 .with_state(fake.clone());
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let url = format!("http://{}", listener.local_addr().unwrap());
@@ -2038,6 +2203,50 @@ mod fake_telegram {
             self.updates.lock().unwrap().push(json!({
                 "update_id": *id,
                 "message": { "chat": { "id": chat_id, "type": "private", "first_name": name }, "text": text }
+            }));
+        }
+
+        /// Queues a photo from `chat_id` (a small and a large size), with a caption.
+        pub fn photo(&self, chat_id: i64, data: Vec<u8>, caption: Option<&str>) -> String {
+            let mut id = self.next_id.lock().unwrap();
+            *id += 1;
+            let file = format!("photo{}", *id);
+            self.files
+                .lock()
+                .unwrap()
+                .insert(file.clone(), data.clone());
+            let mut message = json!({
+                "chat": { "id": chat_id, "type": "private", "first_name": "Someone" },
+                "photo": [
+                    { "file_id": format!("{file}-small"), "width": 90, "height": 60, "file_size": 900 },
+                    { "file_id": file, "width": 1280, "height": 853, "file_size": data.len() },
+                ],
+            });
+            if let Some(caption) = caption {
+                message["caption"] = json!(caption);
+            }
+            self.updates
+                .lock()
+                .unwrap()
+                .push(json!({ "update_id": *id, "message": message }));
+            file
+        }
+
+        /// Queues a voice message from `chat_id`.
+        pub fn voice(&self, chat_id: i64, data: Vec<u8>) {
+            let mut id = self.next_id.lock().unwrap();
+            *id += 1;
+            let file = format!("voice{}", *id);
+            self.files
+                .lock()
+                .unwrap()
+                .insert(file.clone(), data.clone());
+            self.updates.lock().unwrap().push(json!({
+                "update_id": *id,
+                "message": {
+                    "chat": { "id": chat_id, "type": "private", "first_name": "Someone" },
+                    "voice": { "file_id": file, "duration": 2, "mime_type": "audio/ogg", "file_size": data.len() },
+                }
             }));
         }
 
@@ -2115,9 +2324,62 @@ mod fake_telegram {
                 fake.sent.lock().unwrap().push(body);
                 json!({ "message_id": 1 })
             }
+            "getFile" => {
+                let id = body["file_id"].as_str().unwrap_or_default().to_owned();
+                fake.fetched.lock().unwrap().push(id.clone());
+                let size = fake.files.lock().unwrap().get(&id).map(Vec::len);
+                match size {
+                    Some(size) => {
+                        json!({ "file_id": id, "file_size": size, "file_path": format!("photos/{id}.jpg") })
+                    }
+                    None => {
+                        return Json(
+                            json!({ "ok": false, "error_code": 400, "description": "Bad Request: invalid file_id" }),
+                        );
+                    }
+                }
+            }
             _ => json!(true),
         };
         Json(json!({ "ok": true, "result": result }))
+    }
+
+    /// `sendVoice`, which comes as a form with the recording.
+    async fn voice(
+        State(fake): State<FakeTelegram>,
+        Path(bot): Path<String>,
+        mut form: axum::extract::Multipart,
+    ) -> Json<Value> {
+        if bot != "bot123:secret" {
+            return Json(json!({ "ok": false, "error_code": 401, "description": "Unauthorized" }));
+        }
+        while let Ok(Some(field)) = form.next_field().await {
+            if field.name() == Some("voice") {
+                let data = field.bytes().await.unwrap();
+                assert_eq!(&data[..4], b"OggS");
+                fake.voices.lock().unwrap().push(data.len());
+            }
+        }
+        Json(json!({ "ok": true, "result": { "message_id": 2 } }))
+    }
+
+    async fn file(
+        State(fake): State<FakeTelegram>,
+        Path((bot, path)): Path<(String, String)>,
+    ) -> Result<Vec<u8>, axum::http::StatusCode> {
+        if bot != "bot123:secret" {
+            return Err(axum::http::StatusCode::UNAUTHORIZED);
+        }
+        let id = path
+            .trim_start_matches("photos/")
+            .trim_end_matches(".jpg")
+            .to_owned();
+        fake.files
+            .lock()
+            .unwrap()
+            .get(&id)
+            .cloned()
+            .ok_or(axum::http::StatusCode::NOT_FOUND)
     }
 }
 
@@ -2235,10 +2497,10 @@ mod schedule_flow {
     use super::tool_use::{Reply, scripted_llm, setup};
     use crate::schedule;
 
-    const OWNER: i64 = 42;
+    pub(super) const OWNER: i64 = 42;
 
     /// Connects the fake bot and pairs it with its owner.
-    async fn pair(h: &Harness) -> FakeTelegram {
+    pub(super) async fn pair(h: &Harness) -> FakeTelegram {
         let (tg, url) = FakeTelegram::start().await;
         *h.state.connections.telegram_api.lock().unwrap() = url;
         let (_, conn) = h
@@ -2260,7 +2522,7 @@ mod schedule_flow {
         tg
     }
 
-    async fn wait_for(check: impl Fn() -> bool) {
+    pub(super) async fn wait_for(check: impl Fn() -> bool) {
         for _ in 0..400 {
             if check() {
                 return;
@@ -2585,10 +2847,10 @@ mod mail_flow {
     use super::tool_use::{Reply, scripted_llm};
     use crate::mail::fake::{FakeMail, message};
 
-    const ME: &str = "me@example.org";
+    pub(super) const ME: &str = "me@example.org";
 
     /// Connects the fake account through the API and waits for its mail.
-    async fn connect(h: &Harness, fake: &FakeMail, expect: usize) {
+    pub(super) async fn connect(h: &Harness, fake: &FakeMail, expect: usize) {
         let (status, conn) = h
             .call(
                 reqwest::Method::POST,
@@ -2619,7 +2881,7 @@ mod mail_flow {
         panic!("the mail never arrived");
     }
 
-    async fn start(h: &Harness, content: &str) -> String {
+    pub(super) async fn start(h: &Harness, content: &str) -> String {
         let (_, conv) = h
             .call(reqwest::Method::POST, "/conversations", json!({}))
             .await;
@@ -2636,7 +2898,7 @@ mod mail_flow {
     }
 
     /// Waits for an approval card on the reply; returns the pending action.
-    async fn pending(h: &mut Harness, message_id: &str) -> mimi_protocol::Action {
+    pub(super) async fn pending(h: &mut Harness, message_id: &str) -> mimi_protocol::Action {
         loop {
             let frame = tokio::time::timeout(Duration::from_secs(10), h.ws.next())
                 .await
@@ -3361,6 +3623,7 @@ mod permission_api {
             summary,
             [
                 expect("send_mail", "ask", "person"),
+                expect("send_messages", "ask", "people_and_groups"),
                 expect("add_events", "ask", "calendar"),
                 expect("change_events", "ask", "calendar"),
                 expect("schedule", "automatic", "none"),
@@ -3387,6 +3650,15 @@ mod permission_api {
             ),
             ("send_mail", json!({"kind": "person", "id": stranger})),
             ("schedule", json!({"kind": "person", "id": stranger})),
+            (
+                "send_mail",
+                json!({"kind": "matrix_room", "id": "!family:x"}),
+            ),
+            (
+                "send_messages",
+                json!({"kind": "matrix_room", "id": "!not-in-it:x"}),
+            ),
+            ("send_messages", json!({"kind": "calendar", "id": "x"})),
         ] {
             let (status, err) = put(
                 kind,
@@ -3395,6 +3667,40 @@ mod permission_api {
             .await;
             assert_eq!(status, 400, "{kind} {target} {err}");
         }
+
+        // Switches: only the ones a kind has. Everyone on the server counts as known
+        // only when the user says so.
+        assert_eq!(kinds[1]["switches"][0]["id"], "everyone_on_server");
+        assert_eq!(kinds[1]["switches"][0]["on"], false);
+        assert_eq!(
+            kinds[1]["switches"][0]["title"],
+            "Everyone on your assistant's Matrix server counts as someone you know"
+        );
+        assert!(
+            kinds[1]["switches"][0]["detail"]
+                .as_str()
+                .unwrap()
+                .contains("matrix.org")
+        );
+        for (kind, switch) in [
+            ("send_mail", "everyone_on_server"),
+            ("send_messages", "nope"),
+        ] {
+            let (status, _) = put(
+                kind,
+                json!({"autonomy": "ask", "rules": [], "switches": [switch]}),
+            )
+            .await;
+            assert_eq!(status, 400, "{kind} {switch}");
+        }
+        let (status, kinds) = put(
+            "send_messages",
+            json!({"autonomy": "automatic", "rules": [], "switches": ["everyone_on_server"]}),
+        )
+        .await;
+        assert_eq!(status, 200, "{kinds}");
+        assert_eq!(kinds[1]["autonomy"], "automatic");
+        assert_eq!(kinds[1]["switches"][0]["on"], true);
 
         let (_, sam) = h
             .call(
@@ -3429,7 +3735,7 @@ mod permission_api {
             .call(reqwest::Method::GET, "/permissions", Value::Null)
             .await;
         assert_eq!(kinds[0]["rules"].as_array().unwrap().len(), 1);
-        assert_eq!(kinds[3]["autonomy"], "automatic");
+        assert_eq!(kinds[4]["autonomy"], "automatic");
 
         // An exception about someone no longer in People stays visible, doing nothing,
         // and can still be kept when saving.
@@ -3482,7 +3788,7 @@ mod permission_api {
             .iter()
             .map(|k| k["autonomy"].as_str().unwrap())
             .collect();
-        assert_eq!(autonomy, ["automatic", "ask", "ask", "ask"]);
+        assert_eq!(autonomy, ["automatic", "ask", "ask", "ask", "ask"]);
     }
 }
 
@@ -3786,9 +4092,9 @@ mod google_flow {
         let (_, kinds) = h
             .call(reqwest::Method::GET, "/permissions", Value::Null)
             .await;
-        assert_eq!(kinds[2]["id"], "change_events");
-        assert_eq!(kinds[2]["rules"][0]["label"], "me@example.com");
-        assert_eq!(kinds[2]["autonomy"], "ask");
+        assert_eq!(kinds[3]["id"], "change_events");
+        assert_eq!(kinds[3]["rules"][0]["label"], "me@example.com");
+        assert_eq!(kinds[3]["autonomy"], "ask");
     }
 
     async fn pending_action(h: &mut Harness, message_id: &str) -> mimi_protocol::Action {
@@ -4172,6 +4478,9 @@ mod people_removal {
                     id: sc.clone(),
                     label: "S. Carter".into(),
                 }],
+                attachments: Vec::new(),
+                attachments_unseen: false,
+                spoken: false,
             },
         )
         .await
@@ -4492,7 +4801,7 @@ mod calendar_guests {
     }
 
     #[tokio::test]
-    async fn guests_are_saved_quietly_and_invited_only_when_the_user_says_so() {
+    async fn google_tells_guests_itself_and_mimi_can_still_email_them() {
         let (h, google, mail) = setup(None).await;
         let (_, cals) = h
             .call(reqwest::Method::GET, "/calendars", Value::Null)
@@ -4500,7 +4809,8 @@ mod calendar_guests {
         assert_eq!(cals[0]["guests"], true);
         let calendar = cals[0]["id"].clone();
 
-        // Added from the panel with two guests: Google has them, and emailed nobody.
+        // Added from the panel with two guests: Google has them and invites them itself,
+        // so the event shows in their calendars. Mimi emails nothing and offers nothing.
         let (status, created) = h
             .call(
                 reqwest::Method::POST,
@@ -4519,21 +4829,13 @@ mod calendar_guests {
             .map(|a| a["email"].as_str().unwrap())
             .collect();
         assert_eq!(emails, ["sam@example.com", "lea@example.com"]);
-        let offer = created["invitations"][0].clone();
-        assert_eq!(offer["kind"], "invite");
-        assert_eq!(offer["guests"].as_array().unwrap().len(), 2);
-        assert_eq!(offer["from"], ME);
-        assert_eq!(
-            offer["from_note"],
-            Value::Null,
-            "sent from the organizer's own account"
-        );
-        assert_eq!(offer["sent_at"], Value::Null);
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(created["invitations"], json!([]));
+        let note = created["note"].as_str().unwrap();
         assert!(
-            mail.sent().is_empty(),
-            "nothing is emailed until the user says so"
+            note.starts_with("Google emailed Sam Carter") && note.contains("lea@example.com"),
+            "{note}"
         );
+        assert_eq!(google.lock().unwrap().writes[0].2.as_deref(), Some("all"));
 
         // The event shows its guests, and it's the user's own.
         let (_, events) = h
@@ -4548,7 +4850,52 @@ mod calendar_guests {
         assert_eq!(event["attendees"][0]["email"], "sam@example.com");
         let event_id = event["id"].as_str().unwrap().to_owned();
 
-        // The user's click sends one standard invitation to both, from their account.
+        // Moved: Google tells them.
+        let path = format!("/calendar/events/{}", encoded(&event_id));
+        let (status, changed) = h
+            .call(
+                reqwest::Method::PATCH,
+                &path,
+                json!({"start": at(2, 18), "end": at(2, 20)}),
+            )
+            .await;
+        assert_eq!(status, 200, "{changed}");
+        assert_eq!(changed["invitations"], json!([]));
+        assert!(
+            changed["note"]
+                .as_str()
+                .unwrap()
+                .contains("about the change"),
+            "{changed}"
+        );
+
+        // Renamed, then the user sends Mimi's own invitation ("Send invitations…"):
+        // one standard email to both, from their account, at a version above Google's,
+        // which doesn't count renames.
+        let event_id = changed["event_id"].as_str().unwrap().to_owned();
+        let path = format!("/calendar/events/{}", encoded(&event_id));
+        let (status, _) = h
+            .call(
+                reqwest::Method::PATCH,
+                &path,
+                json!({"title": "Dinner at Sam's"}),
+            )
+            .await;
+        assert_eq!(status, 200);
+        let (status, offer) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("{path}/invitations"),
+                json!({}),
+            )
+            .await;
+        assert_eq!(status, 200, "{offer}");
+        assert_eq!(offer["kind"], "invite");
+        assert_eq!(offer["from"], ME);
+        assert_eq!(offer["from_note"], Value::Null);
+        assert_eq!(offer["sent_at"], Value::Null);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(mail.sent().is_empty(), "Mimi emailed nobody on its own");
         let (status, sent) = send(&h, &offer).await;
         assert_eq!(status, 200, "{sent}");
         assert!(sent["sent_at"].is_number());
@@ -4560,10 +4907,7 @@ mod calendar_guests {
         assert_eq!(to, ["lea@example.com", "sam@example.com"]);
         assert!(out[0].data.contains("method=REQUEST"), "{}", out[0].data);
         let ics = calendar_data(&out[0].data);
-        assert!(
-            ics.contains("METHOD:REQUEST") && ics.contains("SEQUENCE:0"),
-            "{ics}"
-        );
+        assert!(ics.contains("METHOD:REQUEST"), "{ics}");
         assert!(ics.contains("UID:new"), "the UID Google gave it: {ics}");
         assert!(ics.contains(&format!("ORGANIZER:mailto:{ME}")));
         // Filed in Sent like any other email.
@@ -4571,7 +4915,7 @@ mod calendar_guests {
             if mail
                 .raw_messages("Sent")
                 .iter()
-                .any(|m| m.contains("Invitation: Dinner"))
+                .any(|m| m.contains("Invitation: Dinner at Sam's"))
             {
                 break;
             }
@@ -4580,48 +4924,13 @@ mod calendar_guests {
         assert!(
             mail.raw_messages("Sent")
                 .iter()
-                .any(|m| m.contains("Invitation: Dinner"))
+                .any(|m| m.contains("Invitation: Dinner at Sam's"))
         );
         // Once only.
         assert_eq!(send(&h, &offer).await.0, 400);
         assert_eq!(mail.sent().len(), 1);
 
-        // Moved: the guests may be told, with a newer version.
-        let path = format!("/calendar/events/{}", encoded(&event_id));
-        let (status, changed) = h
-            .call(
-                reqwest::Method::PATCH,
-                &path,
-                json!({"start": at(2, 18), "end": at(2, 20)}),
-            )
-            .await;
-        assert_eq!(status, 200, "{changed}");
-        let update = changed["invitations"][0].clone();
-        assert_eq!(update["kind"], "update");
-        assert_eq!(changed["invitations"].as_array().unwrap().len(), 1);
-        assert_eq!(mail.sent().len(), 1, "still nothing sent on its own");
-        assert_eq!(send(&h, &update).await.0, 200);
-        let ics = calendar_data(&mail.sent()[1].data);
-        assert!(
-            ics.contains("SEQUENCE:1") && ics.contains("DTSTART:20261002T180000Z"),
-            "{ics}"
-        );
-
-        // Renamed: Google doesn't count that as a new version; the guests' copy must.
-        let event_id = changed["event_id"].as_str().unwrap().to_owned();
-        let path = format!("/calendar/events/{}", encoded(&event_id));
-        let (_, renamed) = h
-            .call(
-                reqwest::Method::PATCH,
-                &path,
-                json!({"title": "Dinner at Sam's"}),
-            )
-            .await;
-        assert_eq!(send(&h, &renamed["invitations"][0]).await.0, 200);
-        let ics = calendar_data(&mail.sent()[2].data);
-        assert!(ics.contains("SEQUENCE:2"), "{ics}");
-
-        // Léa is taken off: only she may be told, and Sam stays on as he was.
+        // Léa is taken off: Google tells her, and Sam stays on as he was.
         let (_, removed) = h
             .call(
                 reqwest::Method::PATCH,
@@ -4629,38 +4938,34 @@ mod calendar_guests {
                 json!({"guests": ["sam@example.com"]}),
             )
             .await;
-        let offers = removed["invitations"].as_array().unwrap().clone();
-        assert_eq!(offers.len(), 1, "{removed}");
-        assert_eq!(offers[0]["kind"], "uninvite");
-        assert_eq!(offers[0]["guests"][0]["email"], "lea@example.com");
+        assert_eq!(removed["invitations"], json!([]), "{removed}");
+        assert!(
+            removed["note"]
+                .as_str()
+                .unwrap()
+                .contains("lea@example.com"),
+            "{removed}"
+        );
         let attendees = google.lock().unwrap().events[ME][0]["attendees"].clone();
         assert_eq!(
             attendees,
             json!([{"email": "sam@example.com", "displayName": "Sam Carter"}])
         );
 
-        // Deleted: Sam may be told it's cancelled.
+        // Deleted: Google tells Sam it's cancelled.
         let (status, gone) = h.call(reqwest::Method::DELETE, &path, Value::Null).await;
         assert_eq!(status, 200, "{gone}");
-        let cancel = gone["invitations"][0].clone();
-        assert_eq!(cancel["kind"], "cancel");
-        assert_eq!(send(&h, &cancel).await.0, 200);
-        let last = mail.sent().last().unwrap().clone();
-        assert_eq!(last.to, ["sam@example.com"]);
-        let ics = calendar_data(&last.data);
-        assert!(
-            ics.contains("METHOD:CANCEL") && ics.contains("SEQUENCE:3"),
-            "{ics}"
-        );
-        assert!(last.data.contains("method=CANCEL"));
+        assert_eq!(gone["invitations"], json!([]));
+        assert_eq!(gone["note"], "Google told Sam Carter it's cancelled.");
 
-        // Google was told to email nobody, every single time.
+        // Google was asked to tell the guests every time; Mimi sent the one email asked.
         let writes = google.lock().unwrap().writes.clone();
         assert_eq!(writes.len(), 5, "{writes:?}");
         assert!(
-            writes.iter().all(|(_, _, s)| s.as_deref() == Some("none")),
+            writes.iter().all(|(_, _, s)| s.as_deref() == Some("all")),
             "{writes:?}"
         );
+        assert_eq!(mail.sent().len(), 1);
     }
 
     /// The id of the event the model added, from the tool's result.
@@ -4755,6 +5060,11 @@ mod calendar_guests {
             action.summary
         );
         assert_eq!(action.always_allow, None, "no shortcut for a stranger");
+        // The card says Google would email her.
+        assert_eq!(
+            action.arguments["email_note"],
+            "Google emails them the invitation, and it shows in their calendar."
+        );
         reject(&h, &action).await;
         // And so does a new event with her.
         let action = pending(&mut h, &id).await;
@@ -4773,18 +5083,22 @@ mod calendar_guests {
             json!(["Sam Carter <sam@example.com>"])
         );
         let output = lunch.output.clone().unwrap();
-        assert_eq!(output["invitations"][0]["kind"], "invite");
+        assert_eq!(
+            output["invitations"],
+            Value::Null,
+            "Google invited Sam itself"
+        );
         assert!(
-            output["next"]
+            output["note"]
                 .as_str()
                 .unwrap()
-                .contains("Nothing was emailed"),
+                .starts_with("Google emailed Sam Carter the invitation"),
             "{output}"
         );
         assert_eq!(reply.actions[2].status, ActionStatus::Rejected);
         assert_eq!(reply.actions[3].status, ActionStatus::Rejected);
 
-        // Only Sam is on anything, and nobody got an email.
+        // Only Sam is on anything: Google invited him, Mimi emailed nobody.
         let events = google.lock().unwrap().events[ME].clone();
         assert_eq!(events.len(), 1);
         assert_eq!(
@@ -4792,12 +5106,12 @@ mod calendar_guests {
             json!([{"email": "sam@example.com", "displayName": "Sam Carter"}])
         );
         assert!(mail.sent().is_empty());
-        // The model was told to ask, with the guest's name.
+        let writes = google.lock().unwrap().writes.clone();
+        assert_eq!(writes.len(), 1, "{writes:?}");
+        assert_eq!(writes[0].2.as_deref(), Some("all"));
+        // The model was told whom Google invited.
         let asked = llm.requests()[2]["messages"].to_string();
-        assert!(
-            asked.contains("Ask the user whether to send the invitation to Sam Carter"),
-            "{asked}"
-        );
+        assert!(asked.contains("Google emailed Sam Carter"), "{asked}");
     }
 
     /// `calendar_send_invitations` is sending mail: it asks by default, and even when
@@ -4844,7 +5158,25 @@ mod calendar_guests {
                        "guests": ["sam@example.com", "mallory@example.net"]}),
             )
             .await;
-        let offer = created["invitations"][0]["id"].as_str().unwrap().to_owned();
+        assert_eq!(created["invitations"], json!([]), "Google invited them");
+        // Mimi's own invitation, from "Send invitations…" on the event.
+        let (_, events) = h
+            .call(
+                reqwest::Method::GET,
+                &format!("/calendar/events?from={}&to={}", at(9, 0), at(10, 0)),
+                Value::Null,
+            )
+            .await;
+        let event_id = events["events"][0]["id"].as_str().unwrap().to_owned();
+        let (status, offer) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/calendar/events/{}/invitations", encoded(&event_id)),
+                json!({}),
+            )
+            .await;
+        assert_eq!(status, 200, "{offer}");
+        let offer = offer["id"].as_str().unwrap().to_owned();
         let (status, _) = h
             .call(
                 reqwest::Method::PUT,
@@ -4958,5 +5290,991 @@ mod calendar_guests {
             )
             .await;
         assert_eq!(status, 200);
+    }
+}
+
+// --- Signal ------------------------------------------------------------------------
+
+mod signal_flow {
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    use serde_json::json;
+    use uuid::Uuid;
+
+    use super::tool_use::{Reply, scripted_llm, setup};
+    use crate::channels;
+    use crate::connections::signal;
+    use crate::connections::signal::classify::Incoming;
+    use crate::connections::signal::worker::{Pieces, Worker};
+    use crate::connections::store::{self as rows, ConnectionRow};
+    use mimi_protocol::{Delivery, DeliveryStatus, ScheduleKind};
+
+    async fn next(sent: &mut tokio::sync::mpsc::UnboundedReceiver<Pieces>) -> Pieces {
+        tokio::time::timeout(Duration::from_secs(10), sent.recv())
+            .await
+            .expect("something was sent to Signal")
+            .unwrap()
+    }
+
+    fn text(pieces: &Pieces) -> String {
+        pieces.iter().map(|(t, _)| t.as_str()).collect()
+    }
+
+    /// Note to Self, driven with a stand-in for the Signal client: a message becomes a
+    /// chat turn, the approval it needs is asked there and answered with a reaction, and
+    /// the reply comes back headed with the assistant's name.
+    #[tokio::test]
+    async fn note_to_self_talks_with_the_assistant() {
+        let llm = scripted_llm(|_, n| match n {
+            0 => Reply::Call("send_note", json!({"to": "Sam"})),
+            _ => Reply::Text("Done, I **sent** it."),
+        })
+        .await;
+        let (h, _reads, writes) = setup(&llm).await;
+        let state = h.state.clone();
+        let id = Uuid::now_v7();
+        rows::upsert(
+            &state.db,
+            ConnectionRow {
+                id,
+                integration: signal::SIGNAL.into(),
+                name: "Signal".into(),
+                config: json!({"account": {"aci": Uuid::now_v7(), "name": "Vincent"}}),
+                created_at: 0,
+            },
+        )
+        .await
+        .unwrap();
+        let (worker, mut sent) = Worker::detached();
+        state.connections.signal.set(id, worker.clone());
+        let note = |text: &str| Incoming::Note {
+            text: text.into(),
+            quote: None,
+            timestamp: 1,
+            photos: Vec::new(),
+            voice: None,
+        };
+
+        signal::on_message(&state, id, &worker, note("Please send Sam a note")).await;
+        let prompt = next(&mut sent).await;
+        let prompt_text = text(&prompt);
+        assert!(
+            prompt_text.starts_with("Mimi\nWaiting for you\n"),
+            "{prompt_text}"
+        );
+        assert!(prompt_text.contains("Reply yes or no"), "{prompt_text}");
+        assert_eq!(
+            writes.load(Ordering::SeqCst),
+            0,
+            "nothing runs before approval"
+        );
+
+        // Someone reacting to another message changes nothing; 👍 on the prompt approves.
+        signal::on_message(
+            &state,
+            id,
+            &worker,
+            Incoming::Reaction {
+                emoji: "👍".into(),
+                target: 5,
+            },
+        )
+        .await;
+        // The stand-in numbers what it sends from 1001.
+        signal::on_message(
+            &state,
+            id,
+            &worker,
+            Incoming::Reaction {
+                emoji: "👍".into(),
+                target: 1001,
+            },
+        )
+        .await;
+        assert_eq!(text(&next(&mut sent).await), "Mimi\n✅ Approved");
+        let reply = next(&mut sent).await;
+        assert_eq!(text(&reply), "Mimi\nDone, I sent it.");
+        // The name and "sent" are bold, as Signal styles.
+        let (reply_text, ranges) = &reply[0];
+        let bold: Vec<String> = ranges
+            .iter()
+            .map(|r| {
+                let units: Vec<u16> = reply_text.encode_utf16().collect();
+                let (s, l) = (r.start.unwrap() as usize, r.length.unwrap() as usize);
+                String::from_utf16(&units[s..s + l]).unwrap()
+            })
+            .collect();
+        assert_eq!(bold, vec!["Mimi", "sent"]);
+        assert_eq!(writes.load(Ordering::SeqCst), 1);
+
+        // The chat went to a "Signal" conversation, which /new replaces.
+        let config: signal::SignalConfig =
+            serde_json::from_value(rows::get(&state.db, id).await.unwrap().unwrap().config)
+                .unwrap();
+        let conversation = config.conversation_id.expect("a Signal conversation");
+        let messages = crate::chat::store::messages(&state.db, conversation)
+            .await
+            .unwrap();
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.content == "Please send Sam a note")
+        );
+        signal::on_message(&state, id, &worker, note("/new")).await;
+        assert_eq!(
+            text(&next(&mut sent).await),
+            "Mimi\nStarted a new conversation."
+        );
+        let config: signal::SignalConfig =
+            serde_json::from_value(rows::get(&state.db, id).await.unwrap().unwrap().config)
+                .unwrap();
+        assert_eq!(config.conversation_id, None);
+
+        // Reminders reach Signal too, and a reply or reaction to one answers it.
+        let delivery = Delivery {
+            id: Uuid::now_v7(),
+            item_id: Uuid::now_v7(),
+            kind: ScheduleKind::Reminder,
+            title: "Call the dentist".into(),
+            due_at: 0,
+            at: 0,
+            status: DeliveryStatus::Delivered,
+            detail: None,
+            conversation_id: None,
+        };
+        assert_eq!(
+            channels::remind_everywhere(&state, &delivery, None).await,
+            vec!["signal"]
+        );
+        let reminder = text(&next(&mut sent).await);
+        assert!(
+            reminder.starts_with("Mimi\n⏰ Call the dentist"),
+            "{reminder}"
+        );
+        assert!(reminder.contains("snooze 1h"), "{reminder}");
+        assert_eq!(
+            state.connections.prompts.target_of(id, "1005"),
+            Some(channels::replies::Target::Reminder(delivery.id))
+        );
+    }
+}
+
+// --- Matrix: messages to other people -----------------------------------------------
+
+/// `matrix_send` through a real chat turn, with a scripted model and a stand-in Matrix
+/// account: cards, "Don't ask again", the known rule and the server switch.
+mod matrix_flow {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use futures::StreamExt;
+    use mimi_protocol::{ActionStatus, Event};
+    use serde_json::{Value, json};
+
+    use super::Harness;
+    use super::tool_use::{Reply, scripted_llm};
+    use crate::connections::matrix::fake::{FakeMessenger, paired_connection};
+
+    const ME: &str = "@mimi:home.org";
+    const OWNER: &str = "@vincent:home.org";
+    const SAM: &str = "@sam:home.org";
+    const LEA: &str = "@lea:home.org";
+
+    async fn start(h: &Harness, content: &str) -> String {
+        let (_, conv) = h
+            .call(reqwest::Method::POST, "/conversations", json!({}))
+            .await;
+        let conv_id = conv["id"].as_str().unwrap().to_owned();
+        let (status, sent) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/conversations/{conv_id}/messages"),
+                json!({"content": content}),
+            )
+            .await;
+        assert_eq!(status, 200, "{sent}");
+        sent["assistant_message"]["id"].as_str().unwrap().to_owned()
+    }
+
+    async fn pending(h: &mut Harness, message_id: &str) -> mimi_protocol::Action {
+        loop {
+            let frame = tokio::time::timeout(Duration::from_secs(10), h.ws.next())
+                .await
+                .expect("timed out waiting for an approval card")
+                .unwrap()
+                .unwrap();
+            if let Ok(Event::MessageUpdated { message }) =
+                serde_json::from_str(frame.to_text().unwrap())
+                && message.id.to_string() == message_id
+                && let Some(a) = message
+                    .actions
+                    .iter()
+                    .find(|a| a.status == ActionStatus::PendingApproval)
+            {
+                return a.clone();
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn messages_ask_first_and_go_on_their_own_only_to_people_the_user_knows() {
+        // The model: one call per request, picked from what the user asked.
+        let llm = scripted_llm(|req, _| {
+            let last = req["messages"].as_array().unwrap().last().unwrap().clone();
+            if last["role"] == "tool" {
+                return Reply::Text("Done.");
+            }
+            let asked = last["content"].as_str().unwrap_or_default().to_owned();
+            if asked.contains("dinner") {
+                Reply::Call(
+                    "matrix_send",
+                    json!({"to": ["Sam"], "text": "Dinner at **8**?"}),
+                )
+            } else if asked.contains("both") {
+                Reply::Call(
+                    "matrix_send",
+                    json!({"to": "Sam, @lea:home.org", "text": "Hello both"}),
+                )
+            } else if asked.contains("elsewhere") {
+                Reply::Call(
+                    "matrix_send",
+                    json!({"to": ["@x:matrix.org"], "text": "Hi"}),
+                )
+            } else if asked.contains("mixed") {
+                Reply::Call("matrix_send", json!({"to": ["Mixed"], "text": "Hi all"}))
+            } else {
+                Reply::Text("Hello.")
+            }
+        })
+        .await;
+        let mut h = Harness::new().await;
+        h.use_mock(llm.port()).await;
+        h.state
+            .tool_sources
+            .add(Arc::new(crate::connections::matrix::send::MatrixTools));
+        let registry = h.state.tool_sources.registry(&h.state).await;
+        assert!(registry.get("matrix_send").is_none(), "nothing paired yet");
+
+        let fake = FakeMessenger::new(ME);
+        fake.add_user(SAM, Some("Sammy"));
+        fake.add_user(LEA, Some("Léa"));
+        fake.add_user("@x:matrix.org", Some("X"));
+        fake.add_group("!family:home.org", "Family", None, &[OWNER, SAM]);
+        fake.add_group(
+            "!mixed:home.org",
+            "Mixed",
+            None,
+            &[OWNER, "@eve:elsewhere.net"],
+        );
+        paired_connection(&h.state, fake.clone(), OWNER, "!owner:home.org").await;
+        let registry = h.state.tool_sources.registry(&h.state).await;
+        assert!(registry.get("matrix_send").is_some());
+        assert!(registry.get("matrix_rooms").is_some());
+
+        // Groups for exceptions in Settings › Permissions: not the owner's own chat.
+        let (_, groups) = h
+            .call(reqwest::Method::GET, "/matrix/groups", Value::Null)
+            .await;
+        let names: Vec<&str> = groups
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|g| g["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["Family", "Mixed"]);
+
+        let (status, sam) = h
+            .call(
+                reqwest::Method::POST,
+                "/people",
+                json!({"name": "Sam", "handles": [{"channel": "matrix", "value": SAM}]}),
+            )
+            .await;
+        assert_eq!(status, 200, "{sam}");
+        let sam_id = sam["id"].as_str().unwrap().to_owned();
+
+        // Asking first, by default: the card names exactly who it reaches.
+        let id = start(&h, "Ask Sam about dinner").await;
+        let action = pending(&mut h, &id).await;
+        assert_eq!(action.arguments["to"], json!([SAM]));
+        assert_eq!(
+            action.arguments["recipients"],
+            json!(["Sam (@sam:home.org)"])
+        );
+        assert_eq!(action.arguments["from"], ME);
+        assert_eq!(
+            action.summary,
+            "Send a Matrix message to Sam (@sam:home.org)"
+        );
+        assert_eq!(
+            action.always_allow.as_deref(),
+            Some("Don't ask again for Sam")
+        );
+        assert!(fake.sent().is_empty(), "nothing before approval");
+        let (status, _) = h
+            .call(
+                reqwest::Method::POST,
+                &format!("/actions/{}/approve", action.id),
+                json!({"always": true}),
+            )
+            .await;
+        assert_eq!(status, 200);
+        let (reply, _) = h.wait_for_reply(&id).await;
+        assert_eq!(reply.actions[0].status, ActionStatus::Done);
+        assert_eq!(
+            reply.actions[0].result.as_deref(),
+            Some("sent a Matrix message to Sam")
+        );
+        assert_eq!(
+            fake.sent(),
+            [("!dm1:home.org".to_owned(), "Dinner at **8**?".to_owned())]
+        );
+        let (_, kinds) = h
+            .call(reqwest::Method::GET, "/permissions", Value::Null)
+            .await;
+        assert_eq!(kinds[1]["id"], "send_messages");
+        assert_eq!(kinds[1]["rules"][0]["target"]["id"], sam_id.as_str());
+        assert_eq!(kinds[1]["rules"][0]["label"], "Sam");
+
+        // Sam now goes on their own, in the same chat, shown as an automatic card.
+        let id = start(&h, "Ask Sam about dinner again").await;
+        let (reply, _) = h.wait_for_reply(&id).await;
+        assert!(!reply.actions[0].requires_approval);
+        assert_eq!(reply.actions[0].status, ActionStatus::Done);
+        assert_eq!(fake.sent().len(), 2);
+        assert_eq!(fake.sent()[1].0, "!dm1:home.org");
+
+        // With someone new, the whole message waits, with nothing to remember.
+        let id = start(&h, "Say hello to both").await;
+        let action = pending(&mut h, &id).await;
+        assert_eq!(action.arguments["to"], json!([SAM, LEA]));
+        assert_eq!(action.always_allow, None);
+        h.call(
+            reqwest::Method::POST,
+            &format!("/actions/{}/reject", action.id),
+            Value::Null,
+        )
+        .await;
+        let (reply, _) = h.wait_for_reply(&id).await;
+        assert_eq!(reply.actions[0].status, ActionStatus::Rejected);
+        assert_eq!(fake.sent().len(), 2);
+
+        // Automatic, with everyone on the server counting as known: Léa goes too. A
+        // group with someone from elsewhere still asks.
+        let (status, _) = h
+            .call(
+                reqwest::Method::PUT,
+                "/permissions/send_messages",
+                json!({"autonomy": "automatic", "rules": [], "switches": ["everyone_on_server"]}),
+            )
+            .await;
+        assert_eq!(status, 200);
+        let id = start(&h, "Say hello to both").await;
+        let (reply, _) = h.wait_for_reply(&id).await;
+        assert_eq!(reply.actions[0].status, ActionStatus::Done, "{reply:?}");
+        assert!(!reply.actions[0].requires_approval);
+        assert_eq!(fake.sent().len(), 4);
+        let id = start(&h, "Post in mixed").await;
+        let action = pending(&mut h, &id).await;
+        assert_eq!(action.arguments["recipients"], json!(["Group “Mixed”"]));
+        assert_eq!(fake.sent().len(), 4);
+
+        // Someone on another server can be written to, but isn't covered by "everyone on
+        // the server": still a card.
+        let id = start(&h, "Write to someone elsewhere").await;
+        let action = pending(&mut h, &id).await;
+        assert_eq!(action.arguments["to"], json!(["@x:matrix.org"]));
+        assert_eq!(fake.sent().len(), 4);
+    }
+}
+
+// --- Photos ------------------------------------------------------------------------
+
+/// Photos sent with messages: from the app and from messaging apps, to models that can
+/// and can't see them.
+mod photo_flow {
+    use std::time::Duration;
+
+    use base64::Engine;
+    use serde_json::{Value, json};
+
+    use super::Harness;
+    use super::tool_use::{Reply, scripted_llm, scripted_llm_seeing};
+    use crate::attachments::tests::{screenshot_png, sideways_jpeg_with_exif};
+
+    fn b64(data: &[u8]) -> String {
+        base64::engine::general_purpose::STANDARD.encode(data)
+    }
+
+    async fn conversation(h: &Harness) -> String {
+        let (_, conv) = h
+            .call(reqwest::Method::POST, "/conversations", json!({}))
+            .await;
+        conv["id"].as_str().unwrap().to_owned()
+    }
+
+    async fn send(h: &Harness, conv: &str, body: Value) -> (u16, Value) {
+        h.call(
+            reqwest::Method::POST,
+            &format!("/conversations/{conv}/messages"),
+            body,
+        )
+        .await
+    }
+
+    /// The parts of a request's message: (kind, text or data URL).
+    pub(super) fn parts(message: &Value) -> Vec<(String, String)> {
+        match &message["content"] {
+            Value::String(text) => vec![("text".into(), text.clone())],
+            Value::Array(parts) => parts
+                .iter()
+                .map(|p| match p["type"].as_str().unwrap() {
+                    "image_url" => (
+                        "image".into(),
+                        p["image_url"]["url"].as_str().unwrap().to_owned(),
+                    ),
+                    kind => (kind.to_owned(), p["text"].as_str().unwrap_or("").to_owned()),
+                })
+                .collect(),
+            other => panic!("unexpected content {other}"),
+        }
+    }
+
+    pub(super) fn user_messages(request: &Value) -> Vec<Value> {
+        request["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| m["role"] == "user")
+            .cloned()
+            .collect()
+    }
+
+    fn images(message: &Value) -> usize {
+        parts(message).iter().filter(|(k, _)| k == "image").count()
+    }
+
+    #[tokio::test]
+    async fn a_guests_photos_are_not_served_to_the_owner() {
+        let llm = scripted_llm_seeing(|_, _| Reply::Text("Nice.")).await;
+        let mut h = Harness::new().await;
+        h.use_mock(llm.port()).await;
+        let conv = conversation(&h).await;
+        let (status, sent) = send(
+            &h,
+            &conv,
+            json!({"content": "Look", "attachments": [{"data": b64(&screenshot_png(40, 30))}]}),
+        )
+        .await;
+        assert_eq!(status, 200, "{sent}");
+        let user: mimi_protocol::Message = super::parse(sent["user_message"].clone());
+        h.wait_for_reply(sent["assistant_message"]["id"].as_str().unwrap())
+            .await;
+        let url = format!("{}/attachments/{}", h.base, user.attachments[0].id);
+        let get = || h.http.get(&url).bearer_auth(super::TOKEN).send();
+        assert_eq!(get().await.unwrap().status(), 200);
+
+        // Once the conversation is a trusted person's, its photos are theirs too.
+        h.state.access.mark(conv.parse().unwrap());
+        assert_eq!(get().await.unwrap().status(), 404);
+    }
+
+    #[tokio::test]
+    async fn photos_reach_a_model_that_sees_them_and_are_served_back() {
+        let llm = scripted_llm_seeing(|_, _| Reply::Text("Two tickets.")).await;
+        let mut h = Harness::new().await;
+        h.use_mock(llm.port()).await;
+        let conv = conversation(&h).await;
+
+        let (status, vision) = h
+            .call(reqwest::Method::GET, "/models/vision", Value::Null)
+            .await;
+        assert_eq!((status, vision), (200, json!({"sees_images": true})));
+
+        let (status, sent) = send(
+            &h,
+            &conv,
+            json!({"content": "Add these dates", "attachments": [
+                {"data": b64(&sideways_jpeg_with_exif(3000, 2000)), "name": "IMG_1.JPG", "mime": "image/jpeg"},
+                {"data": b64(&screenshot_png(400, 300))},
+            ]}),
+        )
+        .await;
+        assert_eq!(status, 200, "{sent}");
+        let user: mimi_protocol::Message = super::parse(sent["user_message"].clone());
+        assert_eq!(user.attachments.len(), 2);
+        assert!(!user.attachments_unseen);
+        assert_eq!(user.attachments[0].mime, "image/jpeg");
+        assert_eq!(user.attachments[0].name, "IMG_1.jpg");
+        assert_eq!(user.attachments[0].height, Some(1568));
+        assert_eq!(user.attachments[1].mime, "image/png");
+        let reply_id = sent["assistant_message"]["id"].as_str().unwrap().to_owned();
+        h.wait_for_reply(&reply_id).await;
+
+        // The model gets the pictures, then the words.
+        let request = &llm.requests()[0];
+        let last = user_messages(request).pop().unwrap();
+        let got = parts(&last);
+        assert_eq!(got.len(), 3, "{got:?}");
+        assert!(got[0].1.starts_with("data:image/jpeg;base64,"));
+        assert!(got[1].1.starts_with("data:image/png;base64,"));
+        assert_eq!(got[2], ("text".into(), "Add these dates".into()));
+
+        // Served back as it was kept: its own type, never sniffed, sandboxed.
+        let url = format!("{}/attachments/{}", h.base, user.attachments[0].id);
+        let res = h
+            .http
+            .get(&url)
+            .bearer_auth(super::TOKEN)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 200);
+        assert_eq!(res.headers()["content-type"], "image/jpeg");
+        assert_eq!(res.headers()["x-content-type-options"], "nosniff");
+        assert!(
+            res.headers()["content-security-policy"]
+                .to_str()
+                .unwrap()
+                .contains("sandbox")
+        );
+        let kept = res.bytes().await.unwrap();
+        assert!(!kept.windows(4).any(|w| w == b"Exif"));
+        assert_eq!(image::load_from_memory(&kept).unwrap().height(), 1568);
+        assert_eq!(h.http.get(&url).send().await.unwrap().status(), 401);
+
+        // The conversation shows them with the message.
+        let (_, detail) = h
+            .call(
+                reqwest::Method::GET,
+                &format!("/conversations/{conv}"),
+                Value::Null,
+            )
+            .await;
+        let detail: mimi_protocol::ConversationDetail = super::parse(detail);
+        assert_eq!(detail.messages[0].attachments, user.attachments);
+
+        // Follow-ups still show the latest two messages with photos; older ones become
+        // a note.
+        let say = |text: &'static str, photos: Vec<Vec<u8>>| json!({"content": text, "attachments": photos.iter().map(|p| json!({"data": b64(p)})).collect::<Vec<_>>()});
+        for (i, body) in [
+            say("And the return?", vec![]),
+            say("", vec![screenshot_png(50, 50)]),
+            say("This one too", vec![screenshot_png(60, 60)]),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let (status, sent) = send(&h, &conv, body).await;
+            assert_eq!(status, 200, "{i}: {sent}");
+            let id = sent["assistant_message"]["id"].as_str().unwrap().to_owned();
+            h.wait_for_reply(&id).await;
+        }
+        let requests = llm.requests();
+        let counts = |r: &Value| user_messages(r).iter().map(images).collect::<Vec<_>>();
+        assert_eq!(counts(&requests[1]), [2, 0]);
+        assert_eq!(counts(&requests[2]), [2, 0, 1]);
+        assert_eq!(counts(&requests[3]), [0, 0, 1, 1]);
+        let first = user_messages(&requests[3]).remove(0);
+        assert_eq!(
+            parts(&first)[0].1,
+            "Add these dates\n\n(The user sent 2 photos here, no longer shown to you.)"
+        );
+
+        // Deleting the conversation deletes its photos.
+        let (status, _) = h
+            .call(
+                reqwest::Method::DELETE,
+                &format!("/conversations/{conv}"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(status, 200);
+        let res = h
+            .http
+            .get(&url)
+            .bearer_auth(super::TOKEN)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 404);
+        let left: i64 = h
+            .state
+            .db
+            .call(|c| c.query_row("SELECT count(*) FROM message_attachments", [], |r| r.get(0)))
+            .await
+            .unwrap();
+        assert_eq!(left, 0);
+    }
+
+    #[tokio::test]
+    async fn a_model_that_cant_see_is_told_and_so_is_the_user() {
+        let llm = scripted_llm(|_, _| Reply::Text("I can't see it, sorry.")).await;
+        let mut h = Harness::new().await;
+        h.use_mock(llm.port()).await;
+        let conv = conversation(&h).await;
+        let (_, vision) = h
+            .call(reqwest::Method::GET, "/models/vision", Value::Null)
+            .await;
+        assert_eq!(vision, json!({"sees_images": false}));
+
+        let (status, sent) = send(
+            &h,
+            &conv,
+            json!({"content": "", "attachments": [{"data": b64(&screenshot_png(40, 40))}]}),
+        )
+        .await;
+        assert_eq!(status, 200, "{sent}");
+        assert_eq!(sent["user_message"]["attachments_unseen"], true);
+        let id = sent["assistant_message"]["id"].as_str().unwrap().to_owned();
+        h.wait_for_reply(&id).await;
+        let request = &llm.requests()[0];
+        assert!(!request.to_string().contains("image_url"));
+        let last = user_messages(request).pop().unwrap();
+        assert!(
+            last["content"]
+                .as_str()
+                .unwrap()
+                .contains("sent a photo, but the current model can't see pictures"),
+            "{last}"
+        );
+        let (_, list) = h
+            .call(reqwest::Method::GET, "/conversations", Value::Null)
+            .await;
+        assert_eq!(list[0]["title"], "Photo");
+    }
+
+    /// Adds a model source for `port` and makes its model the model for photos.
+    async fn choose_photo_model(h: &Harness, port: u16) -> Value {
+        let (status, source) = h
+            .call(
+                reqwest::Method::POST,
+                "/providers",
+                json!({"name": "Eyes", "base_url": format!("http://127.0.0.1:{port}/v1")}),
+            )
+            .await;
+        assert_eq!(status, 200, "{source}");
+        let model = json!({"provider_id": source["id"], "model": "eye-model"});
+        let (_, mut settings) = h.call(reqwest::Method::GET, "/settings", Value::Null).await;
+        settings["photo_model"] = model.clone();
+        let (status, saved) = h.call(reqwest::Method::PUT, "/settings", settings).await;
+        assert_eq!((status, &saved["photo_model"]), (200, &model), "{saved}");
+        model
+    }
+
+    /// Sends one message and waits for the reply; returns the send result.
+    async fn turn(h: &mut Harness, conv: &str, text: &str, photos: Vec<Vec<u8>>) -> Value {
+        let body = json!({"content": text, "attachments": photos.iter().map(|p| json!({"data": b64(p)})).collect::<Vec<_>>()});
+        let (status, sent) = send(h, conv, body).await;
+        assert_eq!(status, 200, "{sent}");
+        h.wait_for_reply(sent["assistant_message"]["id"].as_str().unwrap())
+            .await;
+        sent
+    }
+
+    #[tokio::test]
+    async fn photos_go_to_the_model_for_photos_when_the_default_cant_see() {
+        let blind = scripted_llm(|_, _| Reply::Text("Noted.")).await;
+        let eyes = scripted_llm_seeing(|_, _| Reply::Text("A train on Friday.")).await;
+        let mut h = Harness::new().await;
+        h.use_mock(blind.port()).await;
+        let photo_model = choose_photo_model(&h, eyes.port()).await;
+        // The composer hears that photos will be seen.
+        let (_, vision) = h
+            .call(reqwest::Method::GET, "/models/vision", Value::Null)
+            .await;
+        assert_eq!(vision, json!({"sees_images": true}));
+        let conv = conversation(&h).await;
+
+        turn(&mut h, &conv, "Hello", vec![]).await;
+        let sent = turn(&mut h, &conv, "", vec![screenshot_png(40, 40)]).await;
+        assert_eq!(sent["assistant_message"]["model"], photo_model);
+        assert_eq!(sent["user_message"]["attachments_unseen"], false);
+        // The message right after still goes there, with the photo.
+        let sent = turn(&mut h, &conv, "Add the second one", vec![]).await;
+        assert_eq!(sent["assistant_message"]["model"], photo_model);
+        // Then back to the default, told the photo was seen.
+        let sent = turn(&mut h, &conv, "Thanks", vec![]).await;
+        assert_ne!(sent["assistant_message"]["model"], photo_model);
+
+        let (blind_asked, eyes_asked) = (blind.requests(), eyes.requests());
+        assert_eq!((blind_asked.len(), eyes_asked.len()), (2, 2));
+        let counts = |r: &Value| user_messages(r).iter().map(images).collect::<Vec<_>>();
+        assert_eq!(counts(&eyes_asked[0]), [0, 1]);
+        assert_eq!(counts(&eyes_asked[1]), [0, 1, 0]);
+        let photo = user_messages(&blind_asked[1]).remove(1);
+        assert_eq!(
+            parts(&photo)[0].1,
+            "(The user sent a photo here, no longer shown to you.)"
+        );
+
+        // Removing its source forgets the model for photos; the default is told.
+        let source = photo_model["provider_id"].as_str().unwrap();
+        let (status, _) = h
+            .call(
+                reqwest::Method::DELETE,
+                &format!("/providers/{source}"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(status, 200);
+        let (_, settings) = h.call(reqwest::Method::GET, "/settings", Value::Null).await;
+        assert_eq!(settings["photo_model"], Value::Null);
+        let sent = turn(&mut h, &conv, "", vec![screenshot_png(30, 30)]).await;
+        assert_eq!(sent["user_message"]["attachments_unseen"], true);
+        assert_eq!(blind.requests().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn a_picked_model_or_a_default_that_sees_keeps_photos() {
+        let blind = scripted_llm(|_, _| Reply::Text("I can't see it.")).await;
+        let eyes = scripted_llm_seeing(|_, _| Reply::Text("For photos.")).await;
+        let sees = scripted_llm_seeing(|_, _| Reply::Text("I see it.")).await;
+        let mut h = Harness::new().await;
+        h.use_mock(blind.port()).await;
+        choose_photo_model(&h, eyes.port()).await;
+        let conv = conversation(&h).await;
+
+        // A model picked for one message answers it, photos or not.
+        let (_, mut settings) = h.call(reqwest::Method::GET, "/settings", Value::Null).await;
+        let picked = settings["default_model"].clone();
+        let body = json!({"content": "Look", "model": picked, "attachments": [{"data": b64(&screenshot_png(20, 20))}]});
+        let (status, sent) = send(&h, &conv, body).await;
+        assert_eq!(status, 200, "{sent}");
+        assert_eq!(sent["assistant_message"]["model"], picked);
+        assert_eq!(sent["user_message"]["attachments_unseen"], true);
+        h.wait_for_reply(sent["assistant_message"]["id"].as_str().unwrap())
+            .await;
+
+        // A default that sees keeps its photos.
+        let (_, source) = h
+            .call(
+                reqwest::Method::POST,
+                "/providers",
+                json!({"name": "Sees", "base_url": format!("http://127.0.0.1:{}/v1", sees.port())}),
+            )
+            .await;
+        settings["default_model"] = json!({"provider_id": source["id"], "model": "sees-model"});
+        let (status, _) = h.call(reqwest::Method::PUT, "/settings", settings).await;
+        assert_eq!(status, 200);
+        let sent = turn(&mut h, &conv, "And this", vec![screenshot_png(30, 30)]).await;
+        assert_eq!(sent["user_message"]["attachments_unseen"], false);
+        assert_eq!(
+            (
+                blind.requests().len(),
+                eyes.requests().len(),
+                sees.requests().len()
+            ),
+            (1, 0, 1)
+        );
+    }
+
+    #[tokio::test]
+    async fn what_isnt_a_photo_is_refused() {
+        let llm = scripted_llm(|_, _| Reply::Text("Hi")).await;
+        let h = Harness::new().await;
+        h.use_mock(llm.port()).await;
+        let conv = conversation(&h).await;
+
+        let (status, err) = send(
+            &h,
+            &conv,
+            json!({"content": "Look", "attachments": [{"data": b64(b"just some text"), "name": "notes.txt"}]}),
+        )
+        .await;
+        assert_eq!(status, 400);
+        assert!(
+            err["message"]
+                .as_str()
+                .unwrap()
+                .contains("“notes.txt” isn't a picture"),
+            "{err}"
+        );
+
+        let eleven: Vec<Value> = (0..11)
+            .map(|_| json!({"data": b64(&screenshot_png(8, 8))}))
+            .collect();
+        let (status, err) = send(&h, &conv, json!({"content": "", "attachments": eleven})).await;
+        assert_eq!(status, 400);
+        assert!(
+            err["message"].as_str().unwrap().contains("At most 10"),
+            "{err}"
+        );
+
+        let (status, _) = send(
+            &h,
+            &conv,
+            json!({"content": "x", "attachments": [{"data": "%%%"}]}),
+        )
+        .await;
+        assert_eq!(status, 400);
+        let (status, _) = send(&h, &conv, json!({"content": "  "})).await;
+        assert_eq!(status, 400);
+
+        // Nothing was kept.
+        let (_, detail) = h
+            .call(
+                reqwest::Method::GET,
+                &format!("/conversations/{conv}"),
+                Value::Null,
+            )
+            .await;
+        assert_eq!(detail["messages"], json!([]));
+        assert!(llm.requests().is_empty());
+    }
+
+    /// Telegram: photos from the owner are downloaded and wait for the words that
+    /// follow; a stranger's are never downloaded.
+    #[tokio::test]
+    async fn telegram_photos_go_with_the_words_after_them() {
+        use super::schedule_flow::{OWNER, pair, wait_for};
+
+        let llm = scripted_llm_seeing(|_, _| Reply::Text("Added both.")).await;
+        let h = Harness::new().await;
+        h.use_mock(llm.port()).await;
+        h.state
+            .connections
+            .photos
+            .set_windows(Duration::from_millis(100), Duration::from_secs(20));
+        let tg = pair(&h).await;
+
+        let strangers = tg.photo(99, screenshot_png(30, 30), Some("What's this?"));
+        let first = tg.photo(OWNER, sideways_jpeg_with_exif(800, 600), None);
+        let second = tg.photo(OWNER, screenshot_png(300, 200), None);
+        // Nothing goes to the model until the words arrive.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(llm.requests().is_empty());
+        tg.message(OWNER, "Vincent", "Add these dates to our calendar");
+        wait_for(|| tg.sent_to(OWNER).iter().any(|m| m == "Added both.")).await;
+
+        let requests = llm.requests();
+        assert_eq!(requests.len(), 1);
+        let got = parts(&user_messages(&requests[0]).pop().unwrap());
+        assert_eq!(
+            got.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
+            ["image", "image", "text"]
+        );
+        assert_eq!(got[2].1, "Add these dates to our calendar");
+        // The largest size of each, and nothing of the stranger's.
+        assert_eq!(*tg.fetched.lock().unwrap(), vec![first, second]);
+        assert!(!tg.fetched.lock().unwrap().contains(&strangers));
+
+        // A photo with a caption goes on its own, once its batch has settled.
+        tg.photo(OWNER, screenshot_png(64, 64), Some("And this one?"));
+        wait_for(|| llm.requests().len() == 2).await;
+        let got = parts(&user_messages(&llm.requests()[1]).pop().unwrap());
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[1].1, "And this one?");
+    }
+
+    /// A Signal connection driven with a stand-in worker, as in `signal_flow`.
+    async fn signal(
+        h: &Harness,
+    ) -> (
+        uuid::Uuid,
+        crate::connections::signal::worker::Worker,
+        tokio::sync::mpsc::UnboundedReceiver<crate::connections::signal::worker::Pieces>,
+    ) {
+        use crate::connections::signal;
+        use crate::connections::store::{self as rows, ConnectionRow};
+        let id = uuid::Uuid::now_v7();
+        rows::upsert(
+            &h.state.db,
+            ConnectionRow {
+                id,
+                integration: signal::SIGNAL.into(),
+                name: "Signal".into(),
+                config: json!({"account": {"aci": uuid::Uuid::now_v7(), "name": "Vincent"}}),
+                created_at: 0,
+            },
+        )
+        .await
+        .unwrap();
+        let (worker, sent) = signal::worker::Worker::detached();
+        h.state.connections.signal.set(id, worker.clone());
+        (id, worker, sent)
+    }
+
+    fn note(text: &str, photos: Vec<Vec<u8>>) -> crate::connections::signal::classify::Incoming {
+        crate::connections::signal::classify::Incoming::Note {
+            text: text.into(),
+            quote: None,
+            timestamp: 1,
+            photos: photos
+                .into_iter()
+                .map(|p| crate::attachments::Upload::new(p, None, Some("image/png".into())))
+                .collect(),
+            voice: None,
+        }
+    }
+
+    async fn next_text(
+        sent: &mut tokio::sync::mpsc::UnboundedReceiver<crate::connections::signal::worker::Pieces>,
+    ) -> String {
+        let pieces = tokio::time::timeout(Duration::from_secs(10), sent.recv())
+            .await
+            .expect("something was sent to Signal")
+            .unwrap();
+        pieces.iter().map(|(t, _)| t.as_str()).collect()
+    }
+
+    /// Signal: a photo saved to Note to Self, then a question about it: one turn.
+    #[tokio::test]
+    async fn signal_photos_in_note_to_self_reach_the_model() {
+        use crate::connections::signal;
+
+        let llm = scripted_llm_seeing(|_, _| Reply::Text("It leaves at 9:12.")).await;
+        let h = Harness::new().await;
+        h.use_mock(llm.port()).await;
+        h.state
+            .connections
+            .photos
+            .set_windows(Duration::from_millis(100), Duration::from_secs(20));
+        let (id, worker, mut sent) = signal(&h).await;
+
+        signal::on_message(
+            &h.state,
+            id,
+            &worker,
+            note("", vec![screenshot_png(90, 40)]),
+        )
+        .await;
+        signal::on_message(&h.state, id, &worker, note("When does it leave?", vec![])).await;
+        assert_eq!(next_text(&mut sent).await, "Mimi\nIt leaves at 9:12.");
+        let got = parts(&user_messages(&llm.requests()[0]).pop().unwrap());
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert!(got[0].1.starts_with("data:image/png;base64,"));
+        assert_eq!(got[1].1, "When does it leave?");
+    }
+
+    /// With a model that can't see, the user hears so in the app they wrote from.
+    #[tokio::test]
+    async fn signal_says_when_the_model_cant_see_photos() {
+        use crate::connections::signal;
+
+        let llm = scripted_llm(|_, _| Reply::Text("I can't see pictures.")).await;
+        let h = Harness::new().await;
+        h.use_mock(llm.port()).await;
+        h.state
+            .connections
+            .photos
+            .set_windows(Duration::from_millis(50), Duration::from_millis(200));
+        let (id, worker, mut sent) = signal(&h).await;
+
+        // A photo on its own goes after a while without words.
+        signal::on_message(
+            &h.state,
+            id,
+            &worker,
+            note("", vec![screenshot_png(20, 20)]),
+        )
+        .await;
+        assert_eq!(
+            next_text(&mut sent).await,
+            format!("Mimi\n{}", crate::channels::UNSEEN_NOTE)
+        );
+        assert_eq!(next_text(&mut sent).await, "Mimi\nI can't see pictures.");
+        assert!(!llm.requests()[0].to_string().contains("image_url"));
     }
 }

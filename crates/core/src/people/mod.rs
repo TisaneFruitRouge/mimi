@@ -18,6 +18,7 @@ use crate::db::DbError;
 use crate::{AppState, now_ms};
 
 pub mod carddav;
+pub mod emails;
 pub mod mentions;
 pub mod merge;
 pub mod normalize;
@@ -146,6 +147,8 @@ pub async fn sync_all(state: &AppState) {
     }
     if changed {
         state.events.publish(Event::PeopleChanged);
+        // Someone a sync dropped takes what they had with the assistant along.
+        crate::access::tidy(state).await;
     }
 }
 

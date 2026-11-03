@@ -28,11 +28,13 @@ pub async fn update(
     Path(id): Path<Uuid>,
     Json(update): Json<ScheduleUpdate>,
 ) -> ApiResult<ScheduleItem> {
+    schedule::owners_item(&state, id).await?;
     let item = schedule::update(&state, id, update).await?;
     Ok(Json(schedule::to_public(&item)))
 }
 
 pub async fn delete(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>) -> ApiResult<()> {
+    schedule::owners_item(&state, id).await?;
     if !schedule::delete(&state, id).await? {
         return Err(AppError::not_found("Reminder"));
     }
@@ -41,6 +43,7 @@ pub async fn delete(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>) ->
 
 /// Runs a routine now, outside its schedule.
 pub async fn run(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>) -> ApiResult<()> {
+    schedule::owners_item(&state, id).await?;
     schedule::run_now(&state, id).await?;
     Ok(Json(()))
 }

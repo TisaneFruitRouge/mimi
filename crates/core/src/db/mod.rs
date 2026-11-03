@@ -31,6 +31,16 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/0021_people_removed.sql"),
     include_str!("migrations/0022_calendar_invitations.sql"),
     include_str!("migrations/0023_people_merges.sql"),
+    include_str!("migrations/0024_signal.sql"),
+    include_str!("migrations/0025_matrix_rooms.sql"),
+    include_str!("migrations/0026_person_access.sql"),
+    include_str!("migrations/0027_message_attachments.sql"),
+    include_str!("migrations/0028_spoken_messages.sql"),
+    include_str!("migrations/0029_mail_unsubscribe.sql"),
+    include_str!("migrations/0030_mail_older.sql"),
+    include_str!("migrations/0031_mail_notifications.sql"),
+    include_str!("migrations/0032_mail_outbox.sql"),
+    include_str!("migrations/0033_mail_drafts.sql"),
 ];
 
 #[derive(Debug, thiserror::Error)]

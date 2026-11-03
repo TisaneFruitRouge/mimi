@@ -94,7 +94,10 @@ function subscribeBrowser(onEvent: (e: Event) => void, onConnection: (c: boolean
     };
     socket.onmessage = (msg) => {
       try {
-        onEvent(JSON.parse(msg.data) as Event);
+        const event = JSON.parse(msg.data) as Event;
+        // A click on a notification on the daemon's computer is for the desktop app there,
+        // not for a browser that happens to be open.
+        if (event.type !== "open_mail") onEvent(event);
       } catch {
         // Ignore events this version doesn't understand.
       }
@@ -140,6 +143,37 @@ export async function openAttachment(
   link.click();
   link.remove();
   return "downloaded";
+}
+
+/** `data:` URLs of photos already fetched in the desktop app, by attachment id. */
+const photoUrls = new Map<string, Promise<string>>();
+
+/**
+ * An address the page can show a photo sent in a chat from: the daemon's own route in a
+ * browser (the session cookie covers it), or, in the desktop app, a `data:` URL of the
+ * bytes fetched through the `chat_attachment` command (the page's CSP allows `data:`
+ * pictures, not `blob:`). Fetched once per photo.
+ */
+export function attachmentUrl(id: string, mime: string): Promise<string> {
+  if (!isTauri) return Promise.resolve(`/v1/attachments/${encodeURIComponent(id)}`);
+  let url = photoUrls.get(id);
+  if (!url) {
+    // The daemon only ever serves the JPEG or PNG it made itself.
+    const type = mime === "image/png" ? "image/png" : "image/jpeg";
+    url = invoke<ArrayBuffer>("chat_attachment", { id }).then(
+      (bytes) =>
+        new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(new Blob([bytes], { type }));
+        }),
+    );
+    // A failed fetch may work next time.
+    url.catch(() => photoUrls.delete(id));
+    photoUrls.set(id, url);
+  }
+  return url;
 }
 
 /** Whether the top bar must draw window buttons (Linux desktops without a tiling WM). */

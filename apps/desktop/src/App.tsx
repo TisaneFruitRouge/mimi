@@ -11,6 +11,7 @@ import { MailView } from "@/features/mail/mail-view";
 import { ModelsView } from "@/features/models/models-view";
 import { Onboarding } from "@/features/onboarding/onboarding";
 import { PeopleView } from "@/features/people/people-view";
+import { GuestApprovals } from "@/features/people/guest-approvals";
 import { ConversationPalette } from "@/features/shell/conversation-palette";
 import { SettingsView, settingsPages } from "@/features/shell/settings-view";
 import { AppContextMenu } from "@/components/app-context-menu";
@@ -261,6 +262,7 @@ function Shell() {
             onNewConversation={() => setConversationId(null)}
             onSection={setSection}
           />
+          <GuestApprovals />
         </div>
       </AppContextMenu>
     </ScrollEdgeContext.Provider>

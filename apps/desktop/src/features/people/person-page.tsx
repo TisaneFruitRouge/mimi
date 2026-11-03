@@ -33,6 +33,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { addDays, startOfDay, timeRange } from "@/features/calendar/dates";
 import { EventSheet } from "@/features/calendar/event-sheet";
 import { showMailThread } from "@/features/mail/mail-view";
+import { AssistantAccess } from "@/features/people/assistant-access";
 import { HandleForm, HandleRow, sourcesLine } from "@/features/people/person-dialogs";
 import { ScheduleDialog } from "@/features/reminders/schedule-dialog";
 import { when } from "@/features/reminders/time";
@@ -200,6 +201,7 @@ function Details({
         )}
       </Section>
 
+      <AssistantAccess person={p} assistant={assistant} />
       <Remembered person={p} assistant={assistant} onOpenMemory={() => onSection("memory")} />
       <ComingUp person={p} onAsk={onAsk} onOpenPerson={onOpenPerson} />
       <RecentMail person={p} onOpenMail={() => onSection("mail")} />

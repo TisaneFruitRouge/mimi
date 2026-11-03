@@ -113,6 +113,10 @@ pub struct ModelInfo {
     /// What the provider charges, when it publishes prices (OpenRouter does).
     #[serde(default)]
     pub price: Option<ModelPrice>,
+    /// Whether the model can see photos, when the provider says (OpenRouter and
+    /// Anthropic do).
+    #[serde(default)]
+    pub sees_images: Option<bool>,
 }
 
 /// A cloud model's price, in US dollars per million tokens.

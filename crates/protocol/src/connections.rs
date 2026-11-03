@@ -21,6 +21,20 @@ pub struct Connection {
     pub created_at: i64,
 }
 
+/// A Matrix group the assistant is in (`GET /v1/matrix/groups`), e.g. for an exception
+/// in Settings › Permissions. The name is whatever the group's members called it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MatrixGroup {
+    /// The room id, `!…`.
+    pub id: String,
+    pub name: String,
+    /// Its address, `#name:server`, when it has one.
+    pub alias: Option<String>,
+    #[ts(type = "number")]
+    pub members: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
@@ -47,6 +61,19 @@ pub enum ConnectionSetup {
     },
     /// A Telegram bot created by the user with @BotFather.
     Telegram { bot_token: String },
+    /// The user's own Signal account, linked as a device. Nothing to enter: the
+    /// connection then shows a code to scan (its `action_url`, as a QR code).
+    Signal {},
+    /// A Matrix account the user created for their assistant, on any server.
+    Matrix {
+        /// The account's full address (`@name:example.org`), or just its name when
+        /// `homeserver` says where it lives.
+        user: String,
+        password: String,
+        /// The server's address, when it can't be found from the account's address.
+        #[serde(default)]
+        homeserver: Option<String>,
+    },
     /// An email account, read over IMAP and sent through SMTP with an app password.
     Email {
         email: String,

@@ -52,6 +52,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { IntegrationIcon } from "@/features/connections/connections-view";
+import { MailNotificationsGroup } from "@/features/mail/mail-notifications";
 import { ScheduleDialog } from "@/features/reminders/schedule-dialog";
 import { clock, when } from "@/features/reminders/time";
 import { api, keys } from "@/lib/api";
@@ -205,9 +207,10 @@ export function NotificationsSettings({
     <Page>
       <PageHeader
         title="Reminders and notifications"
-        subtitle="How reminders and routine results reach you, and what went off lately."
+        subtitle="How reminders, routine results and new email reach you, and what went off lately."
       />
       <WhereTheyGo />
+      <MailNotificationsGroup />
 
       <Section title="Your reminders and routines">
         <Grouped>
@@ -451,11 +454,32 @@ function DeliveryRow({
   );
 }
 
+/** Messaging apps reminders and routine results can reach, and how they look there. */
+const messagingApps = [
+  {
+    id: "telegram",
+    title: "Telegram",
+    detail: "Sent to your bot, with Done and Snooze buttons. Routines ask for your OK there too.",
+  },
+  {
+    id: "signal",
+    title: "Signal",
+    detail: "Sent to your Note to Self, without a notification: reply done or snooze, or react ✅ or 💤.",
+  },
+  {
+    id: "matrix",
+    title: "Matrix",
+    detail: "Sent to your chat: reply done or snooze, or react ✅ or 💤. Routines ask for your OK there too.",
+  },
+];
+
 /** Where reminders and routine results show up, and the switch for desktop notifications. */
 function WhereTheyGo() {
   const settings = useSettings().data;
   const connections = useQuery({ queryKey: keys.connections, queryFn: api.connections }).data ?? [];
-  const telegram = connections.find((c) => c.integration === "telegram" && c.status === "ok");
+  const reached = messagingApps.filter((app) =>
+    connections.some((c) => c.integration === app.id && c.status === "ok"),
+  );
   const [busy, setBusy] = useState(false);
   const on = settings?.desktop_notifications ?? true;
   const toggle = async () => {
@@ -489,20 +513,26 @@ function WhereTheyGo() {
             />
           }
         />
-        <Row
-          icon={
-            <IconTile className="bg-network-soft text-network">
-              <Send />
-            </IconTile>
-          }
-          title="Telegram"
-          detail={
-            telegram
-              ? "Sent to your bot, with Done and Snooze buttons. Routines ask for your OK there too."
-              : "Connect a Telegram bot to get them on your phone."
-          }
-          trailing={telegram ? <Pill>On</Pill> : undefined}
-        />
+        {reached.map((app) => (
+          <Row
+            key={app.id}
+            icon={<IntegrationIcon id={app.id} />}
+            title={app.title}
+            detail={app.detail}
+            trailing={<Pill>On</Pill>}
+          />
+        ))}
+        {reached.length === 0 && (
+          <Row
+            icon={
+              <IconTile className="bg-network-soft text-network">
+                <Send />
+              </IconTile>
+            }
+            title="Your phone"
+            detail="Connect Telegram, Signal or Matrix to get them on your phone."
+          />
+        )}
       </Grouped>
     </Section>
   );

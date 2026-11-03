@@ -116,6 +116,8 @@ pub async fn thread(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
 ) -> ApiResult<MailThreadDetail> {
+    // Older mail found by a search stays a while after it was last opened.
+    mail::older::opened(&state, id).await;
     mail::thread(&state, id)
         .await
         .map_err(AppError::internal)?
@@ -134,11 +136,36 @@ pub async fn read(
     Ok(Json(()))
 }
 
+/// Flags (stars) a conversation or takes the flag off. Fails, with nothing changed,
+/// when the mail server doesn't take it.
+pub async fn flag(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(body): Json<mimi_protocol::FlagThread>,
+) -> ApiResult<()> {
+    mail::flags::set_flagged(&state, id, body.flagged)
+        .await
+        .map_err(AppError::bad_request)?;
+    Ok(Json(()))
+}
+
 pub async fn archive(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> ApiResult<()> {
     mail::archive(&state, id)
         .await
         .map_err(AppError::bad_request)?;
     Ok(Json(()))
+}
+
+/// One action on several conversations, chosen together in the Mail panel: the user's
+/// own click. Answers which went through; some can fail while the rest still do.
+pub async fn batch(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<mimi_protocol::MailBatch>,
+) -> ApiResult<mimi_protocol::MailBatchResult> {
+    mail::batch::run(&state, body.ids, body.action)
+        .await
+        .map(Json)
+        .map_err(AppError::bad_request)
 }
 
 /// Moves a conversation to the Trash. The user's own click in the Mail panel.
@@ -436,4 +463,17 @@ pub async fn refresh(State(state): State<Arc<AppState>>) -> ApiResult<()> {
         state.mail.poke(account.id);
     }
     Ok(Json(()))
+}
+
+/// Looks on the mail servers for mail older than what's kept here, and brings in the
+/// newest matches (see `mail::older`).
+pub async fn older(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<mimi_protocol::MailOlderSearch>,
+) -> ApiResult<mimi_protocol::MailOlderResults> {
+    let terms = mail::older::Terms::new(&req.q, Vec::new());
+    mail::older::search(&state, &terms, req.account, mail::older::CAP)
+        .await
+        .map(Json)
+        .map_err(AppError::bad_request)
 }

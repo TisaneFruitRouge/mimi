@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Send } from "lucide-react";
 import { toast } from "sonner";
 
@@ -27,6 +27,7 @@ import {
 import { whenLong } from "@/features/calendar/dates";
 import { canInvite } from "@/features/calendar/event-sheet";
 import { sentLabel, toastOffers, useSendOffer } from "@/features/calendar/invitations";
+import { optimistic, seriesOf } from "@/features/calendar/optimistic";
 import { api, keys } from "@/lib/api";
 
 /**
@@ -124,23 +125,30 @@ function SendInvitations({ event, onDone }: { event: CalendarEvent; onDone: () =
 
 /**
  * Deleting an event, confirmed first. A repeating one asks which: this time or every
- * time. Guests aren't emailed; a toast offers to tell them afterwards.
+ * time. It leaves the calendar at once; if the calendar refuses, it comes back. On
+ * Google calendars Google tells the guests; elsewhere they aren't emailed, and the toast
+ * offers to tell them once the calendar has answered.
  */
 export function DeleteEventDialog({ event, onClose }: { event: CalendarEvent | null; onClose: () => void }) {
   const qc = useQueryClient();
   const send = useSendOffer();
   const remove = (all: boolean) => {
     if (!event) return;
-    api
-      .removeEvent(event.id, all)
+    const series = seriesOf(event.id);
+    const gone = (e: CalendarEvent) => (all ? seriesOf(e.id) === series : e.id === event.id);
+    const headline = `“${event.title}” was deleted`;
+    const shown = toast.success(headline);
+    optimistic(qc, (events) => events.filter((e) => !gone(e)), () => api.removeEvent(event.id, all))
       .then((done) => {
-        qc.invalidateQueries({ queryKey: keys.calendar });
-        if (done.invitations.length > 0) toastOffers(`“${event.title}” was deleted`, done.invitations, send);
-        else toast.success(`“${event.title}” was deleted`);
+        if (done.invitations.length > 0) toastOffers(headline, done.invitations, send, shown);
       })
-      .catch((e) => toast.error((e as Error).message));
+      .catch((e) => toast.error(`“${event.title}” couldn't be deleted. ${(e as Error).message}`, { id: shown }));
   };
   const guests = event ? canInvite(event) : false;
+  const calendars = useQuery({ queryKey: keys.calendars, queryFn: api.calendars }).data ?? [];
+  const calendar = calendars.find((c) => c.id === event?.calendar_id);
+  // Signed in to Google: Google tells the guests itself.
+  const google = !!calendar?.google && calendar.writable;
   return (
     <AlertDialog open={!!event} onOpenChange={(o) => !o && onClose()}>
       <AlertDialogContent>
@@ -150,7 +158,8 @@ export function DeleteEventDialog({ event, onClose }: { event: CalendarEvent | n
             {event?.repeats
               ? "It repeats. Delete only this time, or every time?"
               : `It's removed from ${event?.calendar}.`}
-            {guests && " Your guests aren't emailed: you can tell them next."}
+            {guests &&
+              (google ? " Google tells your guests it's cancelled." : " Your guests aren't emailed: you can tell them next.")}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

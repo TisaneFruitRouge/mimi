@@ -4,6 +4,10 @@ use uuid::Uuid;
 
 use crate::db::{Db, DbError, enum_str, parse_enum, parse_uuid};
 
+const OWNERS_CONVERSATIONS: &str = "SELECT id, title, created_at, updated_at FROM conversations
+     WHERE id NOT IN (SELECT conversation_id FROM guest_conversations)
+     ORDER BY updated_at DESC";
+
 fn conversation(row: &Row) -> rusqlite::Result<Conversation> {
     Ok(Conversation {
         id: parse_uuid(row, 0)?,
@@ -13,7 +17,7 @@ fn conversation(row: &Row) -> rusqlite::Result<Conversation> {
     })
 }
 
-const MESSAGE_COLUMNS: &str = "id, conversation_id, role, content, reasoning, status, provider_id, model, locality, error, created_at, actions, mentions";
+const MESSAGE_COLUMNS: &str = "id, conversation_id, role, content, reasoning, status, provider_id, model, locality, error, created_at, actions, mentions, attachments_unseen, spoken";
 
 fn message(row: &Row) -> rusqlite::Result<Message> {
     let provider_id: Option<String> = row.get(6)?;
@@ -61,14 +65,18 @@ fn message(row: &Row) -> rusqlite::Result<Message> {
             .ok()
             .and_then(|raw| serde_json::from_str(&raw).ok())
             .unwrap_or_default(),
+        // Filled in by `messages`, from their own table.
+        attachments: Vec::new(),
+        attachments_unseen: row.get(13)?,
+        spoken: row.get(14)?,
     })
 }
 
+/// The owner's conversations, newest first. Trusted people's conversations belong to
+/// them and are never listed (`access`).
 pub async fn list_conversations(db: &Db) -> Result<Vec<Conversation>, DbError> {
     db.call(|c| {
-        let mut stmt = c.prepare(
-            "SELECT id, title, created_at, updated_at FROM conversations ORDER BY updated_at DESC",
-        )?;
+        let mut stmt = c.prepare(OWNERS_CONVERSATIONS)?;
         stmt.query_map([], conversation)?.collect()
     })
     .await
@@ -107,9 +115,7 @@ pub async fn conversations_mentioning(
                 }
             }
         }
-        let mut stmt = c.prepare(
-            "SELECT id, title, created_at, updated_at FROM conversations ORDER BY updated_at DESC",
-        )?;
+        let mut stmt = c.prepare(OWNERS_CONVERSATIONS)?;
         let all: Vec<Conversation> = stmt
             .query_map([], conversation)?
             .collect::<Result<_, _>>()?;
@@ -160,8 +166,14 @@ pub async fn messages(db: &Db, conversation_id: Uuid) -> Result<Vec<Message>, Db
             "SELECT {MESSAGE_COLUMNS} FROM messages WHERE conversation_id = ?1
              ORDER BY created_at, id"
         ))?;
-        stmt.query_map([conversation_id.to_string()], message)?
-            .collect()
+        let mut messages: Vec<Message> = stmt
+            .query_map([conversation_id.to_string()], message)?
+            .collect::<rusqlite::Result<_>>()?;
+        let mut attached = crate::attachments::in_conversation(c, conversation_id)?;
+        for m in &mut messages {
+            m.attachments = attached.remove(&m.id).unwrap_or_default();
+        }
+        Ok(messages)
     })
     .await
 }
@@ -171,7 +183,7 @@ pub async fn upsert_message(db: &Db, m: Message) -> Result<(), DbError> {
         c.execute(
             &format!(
                 "INSERT INTO messages ({MESSAGE_COLUMNS})
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
                  ON CONFLICT (id) DO UPDATE SET content = excluded.content,
                      reasoning = excluded.reasoning, status = excluded.status,
                      error = excluded.error, actions = excluded.actions"
@@ -190,6 +202,8 @@ pub async fn upsert_message(db: &Db, m: Message) -> Result<(), DbError> {
                 m.created_at,
                 serde_json::to_string(&m.actions).expect("actions serialize"),
                 serde_json::to_string(&m.mentions).expect("mentions serialize"),
+                m.attachments_unseen,
+                m.spoken,
             ],
         )?;
         Ok(())

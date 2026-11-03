@@ -42,7 +42,7 @@ fn setup_for(fake: &FakeMail, password: &str) -> ConnectionSetup {
 }
 
 /// A state with the account saved but no sync loop running, so tests drive passes.
-async fn account_without_loop(fake: &FakeMail) -> (Arc<AppState>, Account) {
+pub(super) async fn account_without_loop(fake: &FakeMail) -> (Arc<AppState>, Account) {
     let state = Arc::new(AppState::for_tests("t"));
     let (name, config) = connect(
         &reqwest::Client::new(),
@@ -69,13 +69,13 @@ async fn account_without_loop(fake: &FakeMail) -> (Arc<AppState>, Account) {
     (state, Account { id, name, config })
 }
 
-async fn pass(state: &Arc<AppState>, account: &Account) {
+pub(super) async fn pass(state: &Arc<AppState>, account: &Account) {
     let mut s = sync::session(&account.config).await.unwrap();
     sync::pass(state, &mut s, account).await.unwrap();
     let _ = s.logout().await;
 }
 
-async fn all_threads(state: &AppState) -> Vec<mimi_protocol::MailThread> {
+pub(super) async fn all_threads(state: &AppState) -> Vec<mimi_protocol::MailThread> {
     threads(
         state,
         store::Query {
@@ -688,6 +688,167 @@ async fn read_state_and_archiving_reach_the_server() {
     assert_eq!(archived.len(), 1);
 }
 
+/// The conversations in the Flagged view.
+async fn flagged_threads(state: &AppState) -> Vec<i64> {
+    threads(
+        state,
+        store::Query {
+            view: Some(MailBox::Flagged),
+            limit: 10,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|t| t.id)
+    .collect()
+}
+
+fn mail_changes(events: &mut tokio::sync::broadcast::Receiver<Event>) -> usize {
+    std::iter::from_fn(|| events.try_recv().ok())
+        .filter(|e| matches!(e, Event::MailChanged))
+        .count()
+}
+
+#[tokio::test]
+async fn flags_reach_the_server_and_unflagging_clears_every_message() {
+    let fake = FakeMail::start(ME, PASSWORD).await;
+    let first = fake.deliver(
+        "INBOX",
+        &message(
+            "Sam <sam@example.com>",
+            ME,
+            "Trip",
+            "Where to?",
+            "t1@example.com",
+            "",
+        ),
+        now_ms() - 2 * DAY,
+        &["\\Flagged"],
+    );
+    let second = fake.deliver(
+        "INBOX",
+        &message(
+            "Sam <sam@example.com>",
+            ME,
+            "Re: Trip",
+            "Lisbon?",
+            "t2@example.com",
+            "In-Reply-To: <t1@example.com>\r\nReferences: <t1@example.com>\r\n",
+        ),
+        now_ms() - DAY,
+        &[],
+    );
+    // The user's answer, copied to themselves: one message, in Sent and the Inbox.
+    let reply = message(
+        ME,
+        "Sam <sam@example.com>, me@example.org",
+        "Re: Trip",
+        "Lisbon!",
+        "t3@example.org",
+        "In-Reply-To: <t2@example.com>\r\nReferences: <t1@example.com> <t2@example.com>\r\n",
+    );
+    let reply_in = fake.deliver("INBOX", &reply, now_ms() - 3_600_000, &["\\Seen"]);
+    let reply_sent = fake.deliver("Sent", &reply, now_ms() - 3_600_000, &["\\Seen"]);
+    let (state, account) = account_without_loop(&fake).await;
+    pass(&state, &account).await;
+    let list = all_threads(&state).await;
+    assert_eq!(list.len(), 1);
+    let id = list[0].id;
+    assert!(
+        list[0].flagged,
+        "an older message's flag stars the conversation"
+    );
+    assert_eq!(flagged_threads(&state).await, vec![id]);
+
+    // Taking the flag off clears it from every message, the older one included.
+    let mut events = state.events.subscribe();
+    flags::set_flagged(&state, id, false).await.unwrap();
+    assert!(mail_changes(&mut events) >= 1);
+    assert!(!all_threads(&state).await[0].flagged);
+    assert!(flagged_threads(&state).await.is_empty());
+    for (mailbox, uid) in [
+        ("INBOX", first),
+        ("INBOX", second),
+        ("INBOX", reply_in),
+        ("Sent", reply_sent),
+    ] {
+        assert!(
+            !fake.flags(mailbox, uid).contains("\\Flagged"),
+            "{mailbox} {uid}"
+        );
+    }
+    // Asking again changes nothing.
+    flags::set_flagged(&state, id, false).await.unwrap();
+    assert_eq!(mail_changes(&mut events), 0);
+
+    // Flagging marks the latest message, each copy of it, and nothing older.
+    flags::set_flagged(&state, id, true).await.unwrap();
+    assert!(mail_changes(&mut events) >= 1);
+    assert!(all_threads(&state).await[0].flagged);
+    assert_eq!(flagged_threads(&state).await, vec![id]);
+    assert!(fake.flags("INBOX", reply_in).contains("\\Flagged"));
+    assert!(fake.flags("Sent", reply_sent).contains("\\Flagged"));
+    assert!(!fake.flags("INBOX", first).contains("\\Flagged"));
+    assert!(!fake.flags("INBOX", second).contains("\\Flagged"));
+    // Other flags are left alone.
+    assert!(fake.flags("Sent", reply_sent).contains("\\Seen"));
+
+    // The next pass agrees, and an archived conversation stays in Flagged.
+    pass(&state, &account).await;
+    assert_eq!(flagged_threads(&state).await, vec![id]);
+    archive(&state, id).await.unwrap();
+    pass(&state, &account).await;
+    assert_eq!(flagged_threads(&state).await, vec![id]);
+
+    let err = flags::set_flagged(&state, 999_999, true).await.unwrap_err();
+    assert!(err.contains("isn't here"), "{err}");
+}
+
+#[tokio::test]
+async fn a_flag_the_server_refuses_is_undone() {
+    let fake = FakeMail::start(ME, PASSWORD).await;
+    let uid = fake.deliver(
+        "INBOX",
+        &message(
+            "Sam <sam@example.com>",
+            ME,
+            "Plans",
+            "Hi",
+            "r1@example.com",
+            "",
+        ),
+        now_ms() - DAY,
+        &[],
+    );
+    let (state, account) = account_without_loop(&fake).await;
+    pass(&state, &account).await;
+    let id = all_threads(&state).await[0].id;
+
+    // The password was revoked: the server can't be told.
+    fake.state.lock().unwrap().password = "revoked".to_owned();
+    let mut events = state.events.subscribe();
+    let err = flags::set_flagged(&state, id, true).await.unwrap_err();
+    assert!(err.starts_with("Couldn't flag it"), "{err}");
+    // Shown at once, then taken back: the star doesn't claim what the server lacks.
+    assert_eq!(mail_changes(&mut events), 2);
+    assert!(!all_threads(&state).await[0].flagged);
+    assert!(flagged_threads(&state).await.is_empty());
+    assert!(!fake.flags("INBOX", uid).contains("\\Flagged"));
+
+    // Unflagging is undone the same way.
+    fake.set_flags("INBOX", uid, &["\\Flagged"]);
+    fake.state.lock().unwrap().password = PASSWORD.to_owned();
+    pass(&state, &account).await;
+    assert!(all_threads(&state).await[0].flagged);
+    fake.state.lock().unwrap().password = "revoked".to_owned();
+    let err = flags::set_flagged(&state, id, false).await.unwrap_err();
+    assert!(err.starts_with("Couldn't remove the flag"), "{err}");
+    assert!(all_threads(&state).await[0].flagged);
+    assert!(fake.flags("INBOX", uid).contains("\\Flagged"));
+}
+
 #[tokio::test]
 async fn replies_go_out_from_the_alias_the_mail_arrived_at() {
     let fake = FakeMail::start(ME, PASSWORD).await;
@@ -977,6 +1138,10 @@ async fn sending_threads_the_reply_and_files_it_in_sent() {
             body: "y".to_owned(),
             reply_to: None,
             forward_of: None,
+            bcc: Vec::new(),
+            attachments: Vec::new(),
+            html: None,
+            draft_id: None,
         },
     )
     .await
@@ -996,12 +1161,88 @@ async fn sending_threads_the_reply_and_files_it_in_sent() {
             body: "y".to_owned(),
             reply_to: None,
             forward_of: None,
+            bcc: Vec::new(),
+            attachments: Vec::new(),
+            html: None,
+            draft_id: None,
         },
     )
     .await
     .unwrap_err();
     assert!(err.contains("isn't an email address"), "{err}");
     assert_eq!(fake.sent().len(), 2);
+}
+
+#[tokio::test]
+async fn blind_copies_stay_blind_and_attached_files_go_as_they_are() {
+    use base64::Engine;
+    let fake = FakeMail::start(ME, PASSWORD).await;
+    let (state, _account) = account_without_loop(&fake).await;
+    let pdf = b"%PDF-1.7 not really".to_vec();
+    let draft = MailDraft {
+        connection_id: None,
+        from: None,
+        to: vec!["sam@example.com".to_owned()],
+        cc: vec![],
+        bcc: vec!["Bo <bo@example.net>".to_owned()],
+        subject: "The plan".to_owned(),
+        body: "Attached.".to_owned(),
+        reply_to: None,
+        forward_of: None,
+        attachments: vec![mimi_protocol::NewMailAttachment {
+            name: "../../plan.pdf".to_owned(),
+            mime: Some("application/pdf".to_owned()),
+            data: base64::engine::general_purpose::STANDARD.encode(&pdf),
+            source: None,
+            content_id: None,
+        }],
+        html: None,
+        draft_id: None,
+    };
+    send(&state, draft.clone()).await.unwrap();
+
+    let sent = fake.sent();
+    assert_eq!(sent[0].to, vec!["sam@example.com", "bo@example.net"]);
+    // The message itself doesn't name the blind copy; the user's Sent copy does.
+    assert!(!sent[0].data.contains("bo@example.net"), "{}", sent[0].data);
+    let filed = fake.raw_messages("Sent");
+    assert!(
+        filed[0].contains("Bcc: Bo <bo@example.net>"),
+        "{}",
+        filed[0]
+    );
+    let files = parse::attachments(sent[0].data.as_bytes());
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].name, "plan.pdf");
+    assert_eq!(files[0].content_type, "application/pdf");
+    assert_eq!(files[0].data, pdf);
+
+    // Too much, or not a file, is refused before anything is sent.
+    let big = MailDraft {
+        attachments: vec![mimi_protocol::NewMailAttachment {
+            name: "big.bin".to_owned(),
+            mime: None,
+            data: base64::engine::general_purpose::STANDARD
+                .encode(vec![0u8; smtp::MAX_ATTACHMENTS + 1]),
+            source: None,
+            content_id: None,
+        }],
+        ..draft.clone()
+    };
+    let err = send(&state, big).await.unwrap_err();
+    assert!(err.contains("20 MB"), "{err}");
+    let broken = MailDraft {
+        attachments: vec![mimi_protocol::NewMailAttachment {
+            name: "x.txt".to_owned(),
+            mime: None,
+            data: "not base64!".to_owned(),
+            source: None,
+            content_id: None,
+        }],
+        ..draft
+    };
+    assert!(send(&state, broken).await.is_err());
+    assert_eq!(fake.sent().len(), 1);
 }
 
 /// Anyone can put the user's address on From: that doesn't exempt mail from the check.
@@ -1407,6 +1648,10 @@ async fn forwarding_carries_attachments_and_deleting_moves_to_trash() {
             body: "FYI\n\n---------- Forwarded message ----------\nHere are the notes.".to_owned(),
             reply_to: None,
             forward_of: Some(detail.messages[0].id),
+            bcc: Vec::new(),
+            attachments: Vec::new(),
+            html: None,
+            draft_id: None,
         },
     )
     .await
@@ -2367,6 +2612,17 @@ fn seed(fake: &FakeMail) {
         now - 90 * 60 * 1000,
         &[],
     );
+    // A draft written in another mail app, answering Sam, for the Drafts view.
+    fake.add_mailbox("Drafts", "\\Drafts");
+    fake.deliver(
+        "Drafts",
+        "From: me@example.org\r\nTo: Sam Carter <sam@example.com>\r\nSubject: Re: Dinner on Thursday?\r\n\
+         In-Reply-To: <seed1@example.com>\r\nMessage-ID: <draft1@example.org>\r\nMIME-Version: 1.0\r\n\
+         Content-Type: text/html; charset=utf-8\r\n\r\n\
+         <div>Thursday works. <b>19:30</b> at Chez Léon,</div><div>I'll bring the book.</div>\r\n",
+        now - 3600 * 1000,
+        &["\\Draft"],
+    );
 }
 
 #[tokio::test]
@@ -2545,4 +2801,55 @@ async fn an_error_clears_once_mail_syncs_again() {
     .await;
     assert_eq!(all_threads(&state).await.len(), 1);
     token.cancel();
+}
+
+#[tokio::test]
+async fn formatted_mail_goes_with_its_pictures_in_the_text() {
+    use base64::Engine;
+    let fake = FakeMail::start(ME, PASSWORD).await;
+    let (state, _account) = account_without_loop(&fake).await;
+    let png = b"\x89PNG not really".to_vec();
+    let picture = |id: Option<&str>| mimi_protocol::NewMailAttachment {
+        name: "Pasted image.png".to_owned(),
+        mime: Some("image/png".to_owned()),
+        data: base64::engine::general_purpose::STANDARD.encode(&png),
+        content_id: id.map(str::to_owned),
+        source: None,
+    };
+    let draft = MailDraft {
+        connection_id: None,
+        from: None,
+        to: vec!["sam@example.com".to_owned()],
+        cc: vec![],
+        bcc: vec![],
+        subject: "The garden".to_owned(),
+        body: "It *grew*:\n[image: Pasted image.png]".to_owned(),
+        reply_to: None,
+        forward_of: None,
+        attachments: vec![picture(Some("p1@inline")), picture(None)],
+        html: Some(
+            r#"<div>It <strong>grew</strong>:</div><div><img src="cid:p1@inline" onerror="x()"><img src="https://tracker.example/t.gif"></div>"#
+                .to_owned(),
+        ),
+        draft_id: None,
+    };
+    send(&state, draft).await.unwrap();
+
+    let sent = &fake.sent()[0].data;
+    let msg = mail_parser::MessageParser::default()
+        .parse(sent.as_bytes())
+        .unwrap();
+    let html = msg.body_html(0).unwrap();
+    assert!(html.contains("<strong>grew</strong>"), "{html}");
+    assert!(html.contains(r#"<img src="cid:p1@inline">"#), "{html}");
+    assert!(
+        !html.contains("tracker") && !html.contains("onerror"),
+        "{html}"
+    );
+    assert!(msg.body_text(0).unwrap().contains("It *grew*:"));
+    assert!(sent.contains("multipart/related"), "{sent}");
+    // Both pictures arrive: one in the text, the other attached.
+    let files = parse::attachments(sent.as_bytes());
+    assert_eq!(files.iter().filter(|f| f.data == png).count(), 2);
+    assert!(fake.raw_messages("Sent")[0].contains("multipart/related"));
 }

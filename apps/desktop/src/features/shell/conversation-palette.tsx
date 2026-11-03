@@ -1,4 +1,5 @@
 import {
+  AudioLines,
   Bell,
   BellRing,
   Blocks,
@@ -106,16 +107,22 @@ export function ConversationPalette({
           >
             <Smile /> Personality
           </CommandItem>
-          <CommandItem keywords={["telegram", "google", "icloud", "apps"]} onSelect={run(() => onSection("connections"))}>
+          <CommandItem keywords={["telegram", "signal", "matrix", "element", "google", "icloud", "apps"]} onSelect={run(() => onSection("connections"))}>
             <Blocks /> Connections
           </CommandItem>
           <CommandItem onSelect={run(() => onSection("models"))}>
             <Sparkles /> Models
           </CommandItem>
+          <CommandItem
+            keywords={["talk", "microphone", "dictation", "speak", "read aloud", "voice messages", "listen"]}
+            onSelect={run(() => onSection("voice"))}
+          >
+            <AudioLines /> Voice
+          </CommandItem>
           <CommandItem onSelect={run(() => onSection("memory"))}>
             <BookOpen /> Memory
           </CommandItem>
-          <CommandItem keywords={["alerts", "telegram"]} onSelect={run(() => onSection("notifications"))}>
+          <CommandItem keywords={["alerts", "telegram", "signal", "matrix"]} onSelect={run(() => onSection("notifications"))}>
             <BellRing /> Reminders and notifications
           </CommandItem>
           <CommandItem

@@ -55,9 +55,10 @@ pub const COLORS: &[&str] = &[
 /// A folder as the sorter sees it: (id, name, description).
 pub type FolderSpec = (i64, String, String);
 
-/// Conversations that can be filed: in the inbox or archive, and not suspicious.
+/// Conversations that can be filed: in the inbox or archive (not only older mail a search
+/// found), and not suspicious.
 const ELIGIBLE: &str = "EXISTS (SELECT 1 FROM mail_messages x WHERE x.thread_id = t.id
-       AND x.folder IN ('inbox', 'archive'))
+       AND x.folder IN ('inbox', 'archive') AND x.kept_until IS NULL)
    AND NOT EXISTS (SELECT 1 FROM mail_messages x WHERE x.thread_id = t.id AND x.suspicious = 1)";
 
 // --- Storage --------------------------------------------------------------------------

@@ -320,24 +320,32 @@ export function useModelEntries(recommended: (ref: ModelRef) => boolean = () => 
   });
 }
 
-/** A window for choosing the assistant's model among everything the sources offer. */
+/**
+ * A window for choosing the assistant's model among everything the sources offer, or
+ * (`forPhotos`) the model for photos among those that can see them.
+ */
 export function ModelPickerDialog({
   open,
   onOpenChange,
   initialSource = null,
   recommended,
+  forPhotos = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Start filtered to this source. */
   initialSource?: string | null;
   recommended?: (ref: ModelRef) => boolean;
+  forPhotos?: boolean;
 }) {
   const settings = useSettings().data;
   const providers = useProviders().data ?? [];
-  const entries = useModelEntries(recommended);
-  const { loading } = useAllModels();
-  const current = settings?.default_model ?? null;
+  const { options, loading } = useAllModels();
+  const all = useModelEntries(recommended);
+  const entries = forPhotos
+    ? all.filter((e) => options.find((o) => sameModel(o.ref, e.ref))?.seesImages === true)
+    : all;
+  const current = (forPhotos ? settings?.photo_model : settings?.default_model) ?? null;
   const [selected, setSelected] = useState<ModelRef | null>(null);
   const [busy, setBusy] = useState(false);
   const sources = providers
@@ -353,9 +361,9 @@ export function ModelPickerDialog({
     }
     setBusy(true);
     try {
-      await api.putSettings({ ...settings, default_model: ref });
-      const entry = entries.find((e) => sameModel(e.ref, ref));
-      toast.success(`Your assistant now uses ${entry?.name ?? ref.model}`);
+      await api.putSettings(forPhotos ? { ...settings, photo_model: ref } : { ...settings, default_model: ref });
+      const name = entries.find((e) => sameModel(e.ref, ref))?.name ?? ref.model;
+      toast.success(forPhotos ? `Photos now go to ${name}` : `Your assistant now uses ${name}`);
       onOpenChange(false);
     } catch (e) {
       toast.error((e as Error).message);
@@ -374,13 +382,21 @@ export function ModelPickerDialog({
     >
       <DialogContent className="flex h-[min(680px,86vh)] flex-col gap-4 sm:max-w-[620px]">
         <DialogHeader>
-          <DialogTitle>Choose a model</DialogTitle>
-          <DialogDescription>What your assistant thinks with. You can change it any time.</DialogDescription>
+          <DialogTitle>{forPhotos ? "Choose a model for photos" : "Choose a model"}</DialogTitle>
+          <DialogDescription>
+            {forPhotos
+              ? "It answers messages with photos, and the message right after. Only models that can see photos are listed."
+              : "What your assistant thinks with. You can change it any time."}
+          </DialogDescription>
         </DialogHeader>
         {loading && entries.length === 0 ? (
           <div className="flex flex-1 items-center justify-center">
             <Loader2 className="size-5 animate-spin text-faint" />
           </div>
+        ) : forPhotos && entries.length === 0 ? (
+          <p className="flex flex-1 items-center justify-center px-6 text-center type-callout text-muted-foreground">
+            None of your models can see photos. Add a cloud service in Model sources to get some that can.
+          </p>
         ) : (
           <ModelList
             key={`${open}-${initialSource}`}

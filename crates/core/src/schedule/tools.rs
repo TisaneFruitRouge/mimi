@@ -20,16 +20,36 @@ pub struct ScheduleTools;
 
 impl ToolSource for ScheduleTools {
     fn tools<'a>(&'a self, _state: &'a AppState) -> BoxFuture<'a, Vec<Arc<dyn Tool>>> {
-        async move {
-            vec![
-                Arc::new(AddReminder) as Arc<dyn Tool>,
-                Arc::new(AddRoutine),
-                Arc::new(List),
-                Arc::new(Change),
-                Arc::new(Cancel),
-            ]
+        async move { all() }.boxed()
+    }
+}
+
+/// Every reminder and routine tool. They work for whoever the turn is for: the user's
+/// own items, or, in a trusted person's turn, only that person's (`access`).
+pub fn all() -> Vec<Arc<dyn Tool>> {
+    vec![
+        Arc::new(AddReminder) as Arc<dyn Tool>,
+        Arc::new(AddRoutine),
+        Arc::new(List),
+        Arc::new(Change),
+        Arc::new(Cancel),
+    ]
+}
+
+/// Whether an item is this turn's to see and change: the user's own for the user, and
+/// only their own for someone they trust.
+async fn belongs(ctx: &ToolContext, item: &store::Item) -> bool {
+    match (ctx.principal.guest(), item.for_person) {
+        (None, None) => true,
+        (Some(guest), Some(person)) => {
+            person == guest.person_id
+                || crate::people::get(&ctx.state, person)
+                    .await
+                    .ok()
+                    .flatten()
+                    .is_some_and(|p| p.id == guest.person_id)
         }
-        .boxed()
+        _ => false,
     }
 }
 
@@ -124,11 +144,14 @@ fn local_string(t: Timestamp, tz: &TimeZone) -> String {
 }
 
 /// Turns the model's "when" arguments into a schedule. `None` if it didn't say when.
-pub(crate) async fn schedule_from_args(
+/// Events are looked for only in `calendars` when given (a trusted person's shared
+/// calendars).
+async fn schedule_from_args(
     state: &AppState,
     args: &Value,
     now: Timestamp,
     tz: &TimeZone,
+    calendars: Option<&[String]>,
 ) -> Result<Option<Schedule>, String> {
     if !has_when(args) {
         return Ok(None);
@@ -137,7 +160,7 @@ pub(crate) async fn schedule_from_args(
         let minutes = int(args, "minutes_before")
             .unwrap_or(30)
             .clamp(0, 7 * 24 * 60) as u32;
-        let (event_id, event_title) = resolve_event(state, &event, now).await?;
+        let (event_id, event_title) = resolve_event(state, &event, now, calendars).await?;
         return Ok(Some(Schedule::BeforeEvent {
             event_id,
             event_title,
@@ -253,8 +276,13 @@ async fn resolve_event(
     state: &AppState,
     query: &str,
     now: Timestamp,
+    calendars: Option<&[String]>,
 ) -> Result<(String, String), String> {
     let accounts = crate::connections::calendar_accounts(state).await;
+    let accounts = match calendars {
+        Some(allowed) => crate::connections::calendar::restrict(accounts, allowed),
+        None => accounts,
+    };
     if accounts.is_empty() {
         return Err("No calendar is connected, so I can't time this to an event.".to_owned());
     }
@@ -334,9 +362,17 @@ fn item_json(item: &store::Item, now: Timestamp, tz: &TimeZone) -> Value {
 /// The item an id refers to. Small models sometimes pass a name instead of the id: a name
 /// that matches exactly one item is accepted; otherwise the error lists what exists, so
 /// the model can try again with a real id.
-async fn find_item(state: &AppState, args: &Value) -> Result<store::Item, String> {
+async fn find_item(ctx: &ToolContext, args: &Value) -> Result<store::Item, String> {
     let id = text(args, "id").ok_or("`id` is required; list reminders first to get it.")?;
-    let items = store::list(&state.db).await.map_err(|e| e.to_string())?;
+    let mut items = Vec::new();
+    for item in store::list(&ctx.state.db)
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        if belongs(ctx, &item).await {
+            items.push(item);
+        }
+    }
     if let Some(item) = items
         .iter()
         .find(|i| i.id.to_string() == id || (id.len() >= 8 && i.id.to_string().starts_with(&id)))
@@ -529,7 +565,7 @@ async fn add(ctx: &ToolContext, args: &Value, kind: ScheduleKind) -> Result<Valu
     let state = &ctx.state;
     let tz = TimeZone::system();
     let now = Timestamp::now();
-    let schedule = schedule_from_args(state, args, now, &tz)
+    let schedule = schedule_from_args(state, args, now, &tz, ctx.principal.calendars())
         .await?
         .ok_or("Say when: `at`, `in_minutes`, `repeat` with `time`, or `event`.")?;
     let (title, instruction) = match kind {
@@ -539,7 +575,7 @@ async fn add(ctx: &ToolContext, args: &Value, kind: ScheduleKind) -> Result<Valu
             Some(text(args, "instruction").ok_or("`instruction` is required")?),
         ),
     };
-    let item = super::create(
+    let item = super::create_for(
         state,
         NewScheduleItem {
             kind,
@@ -548,6 +584,7 @@ async fn add(ctx: &ToolContext, args: &Value, kind: ScheduleKind) -> Result<Valu
             schedule,
         },
         Some(ctx.conversation_id),
+        ctx.principal.guest().map(|g| g.person_id),
     )
     .await
     .map_err(|e| e.message().to_owned())?;
@@ -590,15 +627,18 @@ impl Tool for List {
         async move {
             let tz = TimeZone::system();
             let now = Timestamp::now();
-            let items = store::list(&ctx.state.db)
+            let mut active: Vec<Value> = Vec::new();
+            for item in store::list(&ctx.state.db)
                 .await
-                .map_err(|e| e.to_string())?;
-            let active: Vec<Value> = items
-                .iter()
-                .filter(|i| i.wake_at().is_some() || i.paused)
-                .take(40)
-                .map(|i| item_json(i, now, &tz))
-                .collect();
+                .map_err(|e| e.to_string())?
+            {
+                if (item.wake_at().is_some() || item.paused)
+                    && active.len() < 40
+                    && belongs(ctx, &item).await
+                {
+                    active.push(item_json(&item, now, &tz));
+                }
+            }
             Ok(json!({ "items": active }))
         }
         .boxed()
@@ -653,7 +693,7 @@ impl Tool for Change {
             let state = &ctx.state;
             let tz = TimeZone::system();
             let now = Timestamp::now();
-            let before = find_item(state, &args).await?;
+            let before = find_item(ctx, &args).await?;
             let mut args = args;
             // Small models sometimes write the new time in words ("every weekday at 8:00").
             if args["time"].is_null()
@@ -665,8 +705,14 @@ impl Tool for Change {
                 title: title(&args, "text"),
                 instruction: text(&args, "instruction"),
                 schedule: if has_when(&args) || !args["minutes_before"].is_null() {
-                    schedule_from_args(state, &merged_when(&before.schedule, &args), now, &tz)
-                        .await?
+                    schedule_from_args(
+                        state,
+                        &merged_when(&before.schedule, &args),
+                        now,
+                        &tz,
+                        ctx.principal.calendars(),
+                    )
+                    .await?
                 } else {
                     None
                 },
@@ -733,7 +779,7 @@ impl Tool for Cancel {
     ) -> BoxFuture<'a, Result<Value, String>> {
         async move {
             let state = &ctx.state;
-            let item = find_item(state, &args).await?;
+            let item = find_item(ctx, &args).await?;
             let (id, title) = (item.id, item.title.clone());
             let revision = store::remember_before(&state.db, id, Some(item), ctx.conversation_id)
                 .await
@@ -760,7 +806,7 @@ mod tests {
 
     async fn parse(args: Value) -> Result<Option<Schedule>, String> {
         let state = AppState::for_tests("t");
-        schedule_from_args(&state, &args, now(), &zurich()).await
+        schedule_from_args(&state, &args, now(), &zurich(), None).await
     }
 
     #[tokio::test]

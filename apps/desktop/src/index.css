@@ -8,7 +8,7 @@
  * macOS/iOS system apps: neutral surfaces, translucent materials, hairline separators,
  * layered soft shadows, Geist type on a strict scale, and a lime signature accent used
  * sparingly. Fixed meanings for where data goes: teal = private, blue = your network,
- * amber = cloud. See AGENTS.md ("Look and feel") for how to use these.
+ * amber = cloud. See docs/design-system.md for how to use these.
  */
 
 @custom-variant dark (&:is(.dark *));

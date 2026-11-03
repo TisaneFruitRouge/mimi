@@ -15,6 +15,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use mimi_protocol::Paths;
 use mimi_protocol::paths::HOME_ENV;
@@ -506,6 +507,36 @@ pub fn start(spec: &Spec) -> Result<(), Error> {
     }
 }
 
+/// Restarts an installed service's daemon from the program on disk (after an update).
+///
+/// The service manager does the stop and the start itself. Stopping the daemon and then
+/// calling [`start`] races: the daemon stops answering as soon as it begins shutting down,
+/// and a start that arrives before its process has exited finds the service still running
+/// and does nothing, leaving no daemon at all.
+pub fn restart(spec: &Spec) -> Result<(), Error> {
+    match manager() {
+        Manager::Systemd => run(
+            "systemctl",
+            &["--user", "restart", &format!("{}.service", spec.name)],
+        ),
+        Manager::Launchd => run(
+            "launchctl",
+            &["kickstart", "-k", &format!("gui/{}/{}", uid()?, spec.label)],
+        ),
+        Manager::Autostart => {
+            let paths = Paths {
+                data_dir: spec.data_dir.clone(),
+                config_dir: spec.data_dir.clone(),
+            };
+            stop_daemon_and_wait(&paths, STOP_TIMEOUT);
+            spawn_detached(spec)
+        }
+    }
+}
+
+/// How long a daemon gets to save its state and exit.
+pub const STOP_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Starts the daemon in its own process group, so it outlives whoever started it.
 pub fn spawn_detached(spec: &Spec) -> Result<(), Error> {
     use std::os::unix::process::CommandExt;
@@ -523,13 +554,40 @@ pub fn spawn_detached(spec: &Spec) -> Result<(), Error> {
 
 /// Asks the daemon running for `paths` (per its discovery file) to shut down cleanly.
 pub fn stop_daemon(paths: &Paths) -> bool {
-    let Ok(raw) = fs::read(paths.discovery_file()) else {
-        return false;
+    daemon_pid(paths).is_some_and(terminate)
+}
+
+/// Like [`stop_daemon`], then waits up to `timeout` for its process to exit: it stops
+/// answering before it's gone, so that alone doesn't mean another can start. Whether it
+/// exited (true when none was running).
+pub fn stop_daemon_and_wait(paths: &Paths, timeout: Duration) -> bool {
+    let Some(pid) = daemon_pid(paths) else {
+        return true;
     };
-    match serde_json::from_slice::<mimi_protocol::Discovery>(&raw) {
-        Ok(discovery) => terminate(discovery.pid),
-        Err(_) => false,
+    terminate(pid);
+    let deadline = Instant::now() + timeout;
+    while process_alive(pid) {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(100));
     }
+    true
+}
+
+/// The pid in the discovery file, read before the daemon removes it on shutdown.
+fn daemon_pid(paths: &Paths) -> Option<u32> {
+    let raw = fs::read(paths.discovery_file()).ok()?;
+    serde_json::from_slice::<mimi_protocol::Discovery>(&raw)
+        .ok()
+        .map(|d| d.pid)
+}
+
+/// Whether `pid` is still running. A zombie has exited (it only waits for its parent to
+/// notice), so `ps` is asked for its state rather than `kill -0`, which still finds it.
+fn process_alive(pid: u32) -> bool {
+    output("ps", &["-o", "stat=", "-p", &pid.to_string()])
+        .is_ok_and(|state| !state.trim().is_empty() && !state.trim().starts_with('Z'))
 }
 
 /// Sends SIGTERM to `pid`, letting the daemon save its state and remove its discovery
@@ -735,5 +793,62 @@ mod tests {
             daemon_binary_from(&app, Some("/nope".into()), None),
             Some(dir.path().join("mimid"))
         );
+    }
+
+    /// A pretend daemon: writes its pid where the app looks, and on SIGTERM takes
+    /// `on_term` to exit (or never does).
+    fn fake_daemon(dir: &Path, on_term: &str) -> (Paths, std::process::Child) {
+        let paths = Paths {
+            data_dir: dir.to_owned(),
+            config_dir: dir.to_owned(),
+        };
+        let child = Command::new("sh")
+            .args([
+                "-c",
+                &format!("trap '{on_term}' TERM; while :; do sleep 0.1; done"),
+            ])
+            .spawn()
+            .unwrap();
+        let discovery = mimi_protocol::Discovery {
+            pid: child.id(),
+            port: 1,
+            token: "t".into(),
+        };
+        fs::write(
+            paths.discovery_file(),
+            serde_json::to_vec(&discovery).unwrap(),
+        )
+        .unwrap();
+        // Let the shell install its trap before it's signalled.
+        std::thread::sleep(Duration::from_millis(300));
+        (paths, child)
+    }
+
+    #[test]
+    fn stopping_waits_until_the_daemon_has_exited() {
+        let dir = tempfile::tempdir().unwrap();
+        let none = Paths {
+            data_dir: dir.path().to_owned(),
+            config_dir: dir.path().to_owned(),
+        };
+        assert!(
+            stop_daemon_and_wait(&none, STOP_TIMEOUT),
+            "nothing was running"
+        );
+
+        // Shutting down takes a moment, as the real daemon's does after it stops answering.
+        let (paths, mut child) = fake_daemon(dir.path(), "sleep 0.5; exit 0");
+        assert!(stop_daemon_and_wait(&paths, STOP_TIMEOUT));
+        assert!(child.try_wait().unwrap().is_some(), "it has exited");
+    }
+
+    #[test]
+    fn stopping_gives_up_on_a_daemon_that_never_exits() {
+        let dir = tempfile::tempdir().unwrap();
+        let (paths, mut child) = fake_daemon(dir.path(), "");
+        assert!(!stop_daemon_and_wait(&paths, Duration::from_millis(500)));
+        assert!(child.try_wait().unwrap().is_none(), "still running");
+        child.kill().unwrap();
+        child.wait().unwrap();
     }
 }

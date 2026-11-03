@@ -3,9 +3,12 @@ import type { ConversationDetail } from "@/bindings/ConversationDetail";
 import type { CatalogModel } from "@/bindings/CatalogModel";
 import type { Connection } from "@/bindings/Connection";
 import type { ConnectionSetup } from "@/bindings/ConnectionSetup";
+import type { MailSignatures } from "@/bindings/MailSignatures";
+import type { EmailSuggestion } from "@/bindings/EmailSuggestion";
 import type { HardwareInfo } from "@/bindings/HardwareInfo";
 import type { DuplicateSuggestion } from "@/bindings/DuplicateSuggestion";
 import type { Integration } from "@/bindings/Integration";
+import type { MatrixGroup } from "@/bindings/MatrixGroup";
 import type { MemoryNote } from "@/bindings/MemoryNote";
 import type { MemoryOverview } from "@/bindings/MemoryOverview";
 import type { MemorySemantic } from "@/bindings/MemorySemantic";
@@ -15,13 +18,19 @@ import type { MergeRequest } from "@/bindings/MergeRequest";
 import type { MergeResult } from "@/bindings/MergeResult";
 import type { NewHandle } from "@/bindings/NewHandle";
 import type { NewPerson } from "@/bindings/NewPerson";
+import type { GuestApproval } from "@/bindings/GuestApproval";
 import type { Person } from "@/bindings/Person";
+import type { PersonAccess } from "@/bindings/PersonAccess";
+import type { PersonAccessUpdate } from "@/bindings/PersonAccessUpdate";
 import type { PersonSummary } from "@/bindings/PersonSummary";
 import type { PersonUpdate } from "@/bindings/PersonUpdate";
 import type { RemovedPerson } from "@/bindings/RemovedPerson";
 import type { ModelPull } from "@/bindings/ModelPull";
 import type { RuntimeStatus } from "@/bindings/RuntimeStatus";
 import type { UpdateStatus } from "@/bindings/UpdateStatus";
+import type { Speech } from "@/bindings/Speech";
+import type { Transcript } from "@/bindings/Transcript";
+import type { VoiceStatus } from "@/bindings/VoiceStatus";
 import type { ModelInfo } from "@/bindings/ModelInfo";
 import type { NewProvider } from "@/bindings/NewProvider";
 import type { ProbeRequest } from "@/bindings/ProbeRequest";
@@ -32,6 +41,7 @@ import type { ProviderUpdate } from "@/bindings/ProviderUpdate";
 import type { Recommendations } from "@/bindings/Recommendations";
 import type { SendMessage } from "@/bindings/SendMessage";
 import type { SendMessageResult } from "@/bindings/SendMessageResult";
+import type { VisionSupport } from "@/bindings/VisionSupport";
 import type { Delivery } from "@/bindings/Delivery";
 import type { NewScheduleItem } from "@/bindings/NewScheduleItem";
 import type { ScheduleItem } from "@/bindings/ScheduleItem";
@@ -43,19 +53,25 @@ import type { CalendarEvent } from "@/bindings/CalendarEvent";
 import type { MailBox } from "@/bindings/MailBox";
 import type { MailContent } from "@/bindings/MailContent";
 import type { MailDraft } from "@/bindings/MailDraft";
+import type { MailDraftInfo } from "@/bindings/MailDraftInfo";
 import type { MailOverview } from "@/bindings/MailOverview";
 import type { MailDiscovery } from "@/bindings/MailDiscovery";
 import type { MailFolderInput } from "@/bindings/MailFolderInput";
 import type { MailPreset } from "@/bindings/MailPreset";
 import type { MailSummary } from "@/bindings/MailSummary";
+import type { MailOlderResults } from "@/bindings/MailOlderResults";
 import type { MailThread } from "@/bindings/MailThread";
 import type { MailThreadDetail } from "@/bindings/MailThreadDetail";
+import type { MailUnsubscribe } from "@/bindings/MailUnsubscribe";
+import type { MailArchivedCount } from "@/bindings/MailArchivedCount";
+import type { OutgoingMail } from "@/bindings/OutgoingMail";
+import type { MailBatchAction } from "@/bindings/MailBatchAction";
+import type { MailBatchResult } from "@/bindings/MailBatchResult";
 import type { CalendarEvents } from "@/bindings/CalendarEvents";
 import type { CalendarInfo } from "@/bindings/CalendarInfo";
 import type { CreatedEvent } from "@/bindings/CreatedEvent";
 import type { EventChange } from "@/bindings/EventChange";
 import type { EventChanged } from "@/bindings/EventChanged";
-import type { GuestSuggestion } from "@/bindings/GuestSuggestion";
 import type { InvitationOffer } from "@/bindings/InvitationOffer";
 import type { NewCalendarEvent } from "@/bindings/NewCalendarEvent";
 import type { SendInvitations } from "@/bindings/SendInvitations";
@@ -127,10 +143,25 @@ export const api = {
   putSettings: (s: Settings) => call<Settings>("PUT", "/settings", s),
   updates: () => call<UpdateStatus>("GET", "/updates"),
   checkForUpdates: () => call<UpdateStatus>("POST", "/updates/check"),
+  /** What's needed to listen and speak, and how far along it is. */
+  voice: () => call<VoiceStatus>("GET", "/voice"),
+  /** The words in a recording (base64). */
+  transcribe: (data: string) => call<Transcript>("POST", "/voice/transcribe", { data }),
+  /** Loads the speech recognizer while the user is still talking. */
+  prepareListening: () => call<null>("POST", "/voice/prepare"),
+  /** One part of a text as speech; `voice` picks one to hear (with empty text, a sample). */
+  speak: (text: string, part: number, voice?: string) =>
+    call<Speech>("POST", "/voice/speak", { text, part, voice: voice ?? null }),
+  downloadVoicePack: (id: string) =>
+    call<VoiceStatus>("POST", `/voice/packs/${encodeURIComponent(id)}/download`),
+  cancelVoicePack: (id: string) => call<null>("POST", `/voice/packs/${encodeURIComponent(id)}/cancel`),
+  removeVoicePack: (id: string) => call<VoiceStatus>("DELETE", `/voice/packs/${encodeURIComponent(id)}`),
   /** What the assistant may do without asking, kind by kind, with the user's choices. */
   permissions: () => call<PermissionKind[]>("GET", "/permissions"),
   setPermission: (kind: string, choice: KindPermission) =>
     call<PermissionKind[]>("PUT", `/permissions/${encodeURIComponent(kind)}`, choice),
+  /** The Matrix groups the assistant is in, for exceptions. */
+  matrixGroups: () => call<MatrixGroup[]>("GET", "/matrix/groups"),
 
   providers: () => call<Provider[]>("GET", "/providers"),
   presets: () => call<ProviderPreset[]>("GET", "/providers/presets"),
@@ -164,6 +195,9 @@ export const api = {
   cancelGoogleSignIn: (id: string) => call<null>("DELETE", `/google/sign-in/${id}`),
 
   people: (q = "") => call<PersonSummary[]>("GET", `/people?q=${encodeURIComponent(q)}`),
+  /** People by name or address, one per email address: To, Cc and Guests fields. */
+  emailSuggestions: (q: string) =>
+    call<EmailSuggestion[]>("GET", `/people/emails?q=${encodeURIComponent(q)}`),
   person: (id: string) => call<Person>("GET", `/people/${id}`),
   addPerson: (p: NewPerson) => call<Person>("POST", "/people", p),
   updatePerson: (id: string, u: PersonUpdate) => call<Person>("PATCH", `/people/${id}`, u),
@@ -195,6 +229,12 @@ export const api = {
     call<PersonConversation[]>("GET", `/people/${id}/conversations`),
   /** What memory holds about someone. Answered by newer daemons only: callers handle 404. */
   personMemory: (id: string) => call<MemoryNote[]>("GET", `/people/${id}/memory`),
+  /** Whether someone may ask the assistant things, the calendars shared with them, who approves. */
+  personAccess: (id: string) => call<PersonAccess>("GET", `/people/${id}/access`),
+  setPersonAccess: (id: string, change: PersonAccessUpdate) =>
+    call<PersonAccess>("PUT", `/people/${id}/access`, change),
+  /** What people the user trusts asked for that waits for the user's OK (only the cards). */
+  guestApprovals: () => call<GuestApproval[]>("GET", "/access/approvals"),
   /** Recent email conversations with someone (none without a connected mailbox). */
   personMail: (id: string) =>
     call<MailThread[]>("GET", `/mail/threads?person=${encodeURIComponent(id)}&limit=5`),
@@ -212,6 +252,9 @@ export const api = {
     return call<MailThread[]>("GET", `/mail/threads?${params}`);
   },
   mailThread: (id: number) => call<MailThreadDetail>("GET", `/mail/threads/${id}`),
+  /** Asks the mail servers for mail older than what's kept here; brings in the newest matches. */
+  mailOlder: (q: string, account: string | null = null) =>
+    call<MailOlderResults>("POST", "/mail/older", { q: q.trim(), account }),
   /** One email as it was sent (made safe) and as formatted text, pictures from other servers left out. */
   mailContent: (id: number) => call<MailContent>("GET", `/mail/messages/${id}/content`),
   /** The same with its pictures from other servers, fetched by the daemon now (the user asked). */
@@ -219,6 +262,17 @@ export const api = {
   markMailRead: (id: number, read: boolean) =>
     call<null>("POST", `/mail/threads/${id}/read`, { read }),
   archiveMail: (id: number) => call<null>("POST", `/mail/threads/${id}/archive`),
+  /** Flags (stars) a conversation or takes the flag off, here and on the mail server. */
+  flagMail: (id: number, flagged: boolean) => call<null>("POST", `/mail/threads/${id}/flag`, { flagged }),
+  /** One action on several conversations at once; says which couldn't be changed, and why. */
+  mailBatch: (ids: number[], action: MailBatchAction) =>
+    call<MailBatchResult>("POST", "/mail/threads/batch", { ids, action }),
+  /** How to leave the mailing list a conversation came from (`null`: it doesn't say). */
+  mailUnsubscribe: (id: number) => call<MailUnsubscribe | null>("GET", `/mail/threads/${id}/unsubscribe`),
+  /** The user's click on Unsubscribe: one-click or the list's email; a website is only remembered. */
+  unsubscribeMail: (id: number) => call<MailUnsubscribe>("POST", `/mail/threads/${id}/unsubscribe`),
+  /** Archives every Inbox conversation from the same list. */
+  archiveMailList: (id: number) => call<MailArchivedCount>("POST", `/mail/threads/${id}/unsubscribe/archive`),
   createMailFolder: (f: MailFolderInput) => call<null>("POST", "/mail/folders", f),
   updateMailFolder: (id: number, f: MailFolderInput) => call<null>("PATCH", `/mail/folders/${id}`, f),
   deleteMailFolder: (id: number) => call<null>("DELETE", `/mail/folders/${id}`),
@@ -232,19 +286,43 @@ export const api = {
     call<MailDraft>("POST", `/mail/threads/${id}/draft`, { instructions }),
   /** Sends a message the user wrote or checked: their click is the approval. */
   sendMail: (draft: MailDraft) => call<null>("POST", "/mail/send", draft),
+  /** The user's Send (waits the seconds Undo is offered) or, with `send_at`, Send later. */
+  queueMail: (draft: MailDraft, send_at: number | null = null) =>
+    call<OutgoingMail>("POST", "/mail/outbox", { draft, send_at }),
+  /** Mail waiting to go, and mail that couldn't. */
+  mailOutbox: () => call<OutgoingMail[]>("GET", "/mail/outbox"),
+  /** Takes a waiting email back (Undo, Cancel) and returns its draft. */
+  cancelOutgoing: (id: string) => call<MailDraft>("DELETE", `/mail/outbox/${id}`),
+  rescheduleOutgoing: (id: string, send_at: number) =>
+    call<OutgoingMail>("PATCH", `/mail/outbox/${id}`, { send_at }),
+  sendOutgoingNow: (id: string) => call<null>("POST", `/mail/outbox/${id}/send`),
+  /** Saved drafts: written here, or found in a mail server's Drafts folder. */
+  mailDrafts: () => call<MailDraftInfo[]>("GET", "/mail/drafts"),
+  /** One draft, to continue it (one from another mail app is read from the server). */
+  mailDraft: (id: string) => call<MailDraft>("GET", `/mail/drafts/${id}`),
+  /** Saves a draft as it's written; `now`: the editor closed, copy it to the server now. */
+  saveMailDraft: (id: string, draft: MailDraft, now = false) =>
+    call<null>("PUT", `/mail/drafts/${id}`, { draft, now }),
+  deleteMailDraft: (id: string) => call<null>("DELETE", `/mail/drafts/${id}`),
+  /** The editor closed with nothing new to save: copy the draft to the server now. */
+  mirrorMailDraft: (id: string) => call<null>("POST", `/mail/drafts/${id}/mirror`),
   refreshMail: () => call<null>("POST", "/mail/refresh"),
   /** Checks the TypeSafe key with TypeSafe, then saves it (Jev as the mail sorter). */
   jevConnect: (api_key: string) => call<null>("PUT", "/mail/jev", { api_key }),
   jevDisconnect: () => call<null>("DELETE", "/mail/jev"),
+  /** The user's email signatures (Settings › General › Signature). */
+  mailSignatures: () => call<MailSignatures>("GET", "/mail/signatures"),
+  /** Saves them; returns them as kept (cleaned like an email's formatting). */
+  saveMailSignatures: (s: MailSignatures) => call<MailSignatures>("PUT", "/mail/signatures", s),
 
   calendars: () => call<CalendarInfo[]>("GET", "/calendars"),
   events: (from: number, to: number) =>
     call<CalendarEvents>("GET", `/calendar/events?from=${from}&to=${to}`),
   addEvent: (e: NewCalendarEvent) => call<CreatedEvent>("POST", "/calendar/events", e),
-  /** Changes one occurrence; only the fields given change. Nobody is emailed. */
+  /** Changes one occurrence; only the fields given change. Only Google tells guests. */
   changeEvent: (id: string, change: EventChange) =>
     call<EventChanged>("PATCH", `/calendar/events/${encodeURIComponent(id)}`, change),
-  /** Removes one occurrence, or (`all`) the whole repeating event. Nobody is emailed. */
+  /** Removes one occurrence, or (`all`) the whole repeating event. Only Google tells guests. */
   removeEvent: (id: string, all = false) =>
     call<EventChanged>(
       "DELETE",
@@ -259,8 +337,7 @@ export const api = {
     call<InvitationOffer>("POST", `/calendar/invitations/${id}/send`, {
       guests: guests ?? null,
     } satisfies SendInvitations),
-  guestSuggestions: (q: string) =>
-    call<GuestSuggestion[]>("GET", `/calendar/guests?q=${encodeURIComponent(q)}`),
+
   /** @ suggestions (people and events), or # suggestions (conversations and emails). */
   mentions: (q: string, kind: MentionSigil = "@") =>
     call<MentionCandidate[]>(
@@ -280,6 +357,12 @@ export const api = {
   send: (id: string, msg: SendMessage) =>
     call<SendMessageResult>("POST", `/conversations/${id}/messages`, msg),
   cancel: (id: string) => call<null>("POST", `/conversations/${id}/cancel`),
+  /** Whether a model can see photos sent to it. */
+  vision: (providerId: string, model: string) =>
+    call<VisionSupport>(
+      "GET",
+      `/models/vision?provider_id=${encodeURIComponent(providerId)}&model=${encodeURIComponent(model)}`,
+    ),
   approveAction: (id: string, args?: Record<string, unknown>) =>
     call<null>("POST", `/actions/${id}/approve`, { arguments: args ?? null, always: false }),
   /** Approves, and stops asking for the person or calendar the card offered. */
@@ -333,25 +416,32 @@ export const api = {
 export const keys = {
   settings: ["settings"] as const,
   updates: ["updates"] as const,
+  voice: ["voice"] as const,
   permissions: ["permissions"] as const,
   status: ["status"] as const,
   providers: ["providers"] as const,
   presets: ["presets"] as const,
   models: (providerId: string) => ["models", providerId] as const,
   allModels: ["models"] as const,
+  /** Under the source's models, so a change of sources asks again. */
+  vision: (providerId: string, model: string) => ["models", providerId, "vision", model] as const,
   recommendations: ["recommendations"] as const,
   pulls: ["pulls"] as const,
   runtime: ["runtime"] as const,
   catalog: ["catalog"] as const,
   integrations: ["integrations"] as const,
   connections: ["connections"] as const,
+  matrixGroups: ["connections", "matrix-groups"] as const,
   /** Everything about people: lists, details, duplicates, @ suggestions. */
   people: ["people"] as const,
   peopleList: (q: string) => ["people", "list", q] as const,
+  emailSuggestions: (q: string) => ["people", "emails", q] as const,
   person: (id: string) => ["people", "person", id] as const,
-  /** Events, conversations, notes and mail about someone. */
-  personExtra: (id: string, what: "events" | "conversations" | "memory" | "mail") =>
+  /** Events, conversations, notes, mail and access about someone. */
+  personExtra: (id: string, what: "events" | "conversations" | "memory" | "mail" | "access") =>
     ["people", "person", id, what] as const,
+  /** Cards people the user trusts are waiting on the user for. */
+  guestApprovals: ["access", "approvals"] as const,
   duplicates: ["people", "duplicates"] as const,
   removedPeople: ["people", "removed"] as const,
   // Under "mail" for #, so new mail refreshes the suggestions.
@@ -373,6 +463,16 @@ export const keys = {
   mailThreads: (view: MailBox | null, q: string, scope: MailScope = {}, folder: number | null = null) =>
     ["mail", "threads", view, q, scope.account ?? null, scope.address ?? null, folder] as const,
   mailThread: (id: number) => ["mail", "thread", id] as const,
+  mailUnsubscribe: (id: number) => ["mail", "unsubscribe", id] as const,
+  // Not under "mail": each mail change would search the servers again.
+  mailOlder: (q: string, account: string | null) => ["mailOlder", q.trim(), account] as const,
+  mailOutbox: ["mail", "outbox"] as const,
+  // Not under "mail": they can carry a picture, and don't change with new mail.
+  mailSignatures: ["mailSignatures"] as const,
+  // Not under "mail": saved as the user types, the drafts change far more often.
+  mailDrafts: ["mailDrafts"] as const,
+  // Read once, when a draft card in a chat shows: not refreshed as drafts change.
+  mailDraftCard: (id: string) => ["mailDraftCard", id] as const,
   // Not under "mail": an email's content never changes, and loading its pictures again at
   // every mail change would tell the sender each time.
   mailContent: (id: number, images: boolean) => ["mailContent", id, images] as const,
@@ -381,6 +481,5 @@ export const keys = {
   calendars: ["calendar", "list"] as const,
   events: (from: number, to: number) => ["calendar", "events", from, to] as const,
   invitation: (id: string) => ["calendar", "invitation", id] as const,
-  /** People to suggest as guests: under "people", so changes to People refresh them. */
-  guestSuggestions: (q: string) => ["people", "guests", q] as const,
+
 };

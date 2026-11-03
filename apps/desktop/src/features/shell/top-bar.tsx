@@ -18,6 +18,7 @@ export type SettingsPage =
   | "personality"
   | "connections"
   | "models"
+  | "voice"
   | "memory"
   | "notifications"
   | "permissions"

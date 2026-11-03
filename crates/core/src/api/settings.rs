@@ -22,16 +22,26 @@ pub async fn put(
         ));
     }
     crate::persona::validate(&mut new).map_err(AppError::bad_request)?;
-    for model in [&new.default_model, &new.pending_model]
+    crate::voice::validate(&mut new.voice).map_err(AppError::bad_request)?;
+    if !mimi_protocol::UNDO_SEND_CHOICES.contains(&new.undo_send_secs) {
+        return Err(AppError::bad_request(
+            "Undo send waits 5, 10, 20 or 30 seconds, or is off.",
+        ));
+    }
+    for model in [&new.default_model, &new.pending_model, &new.photo_model]
         .into_iter()
         .flatten()
     {
-        if crate::providers::store::get(&state.db, model.provider_id)
-            .await?
-            .is_none()
-        {
+        let Some(record) = crate::providers::store::get(&state.db, model.provider_id).await? else {
             return Err(AppError::bad_request(
                 "The chosen model's provider doesn't exist.",
+            ));
+        };
+        if Some(model) == new.photo_model.as_ref()
+            && record.provider.kind == mimi_protocol::ProviderKind::Builtin
+        {
+            return Err(AppError::bad_request(
+                "Mimi's built-in models can't see photos. Choose one from another source.",
             ));
         }
     }
@@ -56,6 +66,9 @@ pub async fn put(
     }
     if update_check_on {
         state.updates.wake.notify_one();
+    }
+    if current.voice != new.voice {
+        crate::voice::publish(&state);
     }
     state.events.publish(Event::SettingsChanged {
         settings: new.clone(),

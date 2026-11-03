@@ -93,10 +93,50 @@ pub async fn send_with_context(
     mentions: Vec<Mention>,
     hidden_context: Option<String>,
 ) -> Result<SendMessageResult, AppError> {
+    send_with_extras(
+        state,
+        conversation_id,
+        content,
+        model,
+        mentions,
+        hidden_context,
+        Extras::default(),
+    )
+    .await
+}
+
+/// What came with a message besides its words.
+#[derive(Debug, Default)]
+pub struct Extras {
+    /// Photos the user sent along.
+    pub attachments: Vec<crate::attachments::Upload>,
+    /// The words were said out loud and transcribed (`crate::voice`).
+    pub spoken: bool,
+}
+
+/// Like [`send_with_context`], with the photos the user sent along and whether they
+/// spoke. Photos are checked and normalised here (see [`crate::attachments`]); with
+/// photos the text may be empty.
+pub async fn send_with_extras(
+    state: Arc<AppState>,
+    conversation_id: Uuid,
+    content: String,
+    model: Option<ModelRef>,
+    mentions: Vec<Mention>,
+    hidden_context: Option<String>,
+    extras: Extras,
+) -> Result<SendMessageResult, AppError> {
+    let Extras {
+        attachments,
+        spoken,
+    } = extras;
     let content = content.trim().to_owned();
-    if content.is_empty() {
+    if content.is_empty() && attachments.is_empty() {
         return Err(AppError::bad_request("The message is empty."));
     }
+    let attachments = crate::attachments::prepare(attachments)
+        .await
+        .map_err(AppError::bad_request)?;
     // Only mentions that are still in the text count; a deleted "@Sam" means no Sam.
     let mut mentions: Vec<Mention> = mentions
         .into_iter()
@@ -110,9 +150,19 @@ pub async fn send_with_context(
     let mut conversation = store::get_conversation(&state.db, conversation_id)
         .await?
         .ok_or_else(|| AppError::not_found("Conversation"))?;
+    // Who this turn is for comes from the conversation, never from what's in it: a
+    // trusted person's conversation runs as them (`access`), with their allow-list of
+    // tools and none of the owner's memory.
+    let principal = crate::access::principal_for(&state, conversation_id).await?;
+    let guest = principal.guest().cloned();
+    if guest.is_some() {
+        // Nothing of the owner's is looked up for them, not even through a mention.
+        mentions.clear();
+    }
     let settings = settings::load(&state.db).await?;
     let persona = Persona::from_settings(&settings);
-    let model = model.or(settings.default_model).ok_or_else(|| {
+    let picked = model.is_some();
+    let model = model.or(settings.default_model.clone()).ok_or_else(|| {
         AppError::new(
             axum::http::StatusCode::BAD_REQUEST,
             "no_model",
@@ -172,40 +222,79 @@ pub async fn send_with_context(
             return Err(e.into());
         }
     };
-    // What's remembered about the user that matters for this message; the previous
-    // user message helps with follow-ups ("and what does she like?").
-    let previous = history
-        .iter()
-        .rev()
-        .find(|m| m.role == MessageRole::User)
-        .map(|m| m.content.as_str());
-    let query = crate::memory::recall::Query {
-        message: &content,
-        context: previous,
-        people: crate::memory::link::people_in(&state, &content, &mentions).await,
-        meaning: None,
-    };
-    let recall = crate::memory::recall::recall(&state, query)
-        .await
-        .unwrap_or_else(|e| {
-            tracing::warn!("recalling memories failed: {e}");
-            Default::default()
-        });
-    let memory = PromptMemory {
-        block: crate::memory::recall::prompt_block(&recall),
-        learning: settings.memory_learning,
-    };
     let contexts = store::mention_contexts(&state.db, conversation_id)
         .await
         .unwrap_or_default();
-    let prompt = build_prompt(
-        &settings.assistant_name,
-        &persona,
-        &history,
-        &contexts,
-        &with_context(&content, mention_context.as_deref()),
-        &memory,
-    );
+    // A model picked for this message stays; otherwise photos may go to the model for
+    // photos.
+    let photo = if picked {
+        None
+    } else {
+        photo_model(&state, &settings, &history, &attachments, &provider, &model).await
+    };
+    let (model, provider) = photo.unwrap_or((model, provider));
+    let mut photos = prompt_photos(&state, &provider, &model.model, &history, &attachments).await;
+    // The owner's photos can be attached to an email they write with the assistant
+    // (`mail::tools`): the model needs their ids.
+    if guest.is_none()
+        && (!attachments.is_empty() || history.iter().any(|m| !m.attachments.is_empty()))
+    {
+        photos.file_ids = !crate::mail::accounts(&state).await.is_empty();
+        photos.new_files = attachments.iter().map(|a| a.meta.clone()).collect();
+    }
+    let prompt = match &guest {
+        // None of the owner's memory, and not their custom instructions: those are their
+        // standing wishes about how to act for them, and may name private things.
+        Some(guest) => {
+            let calendars = crate::access::shared_calendars(&state, guest).await;
+            build_guest_prompt(
+                &settings.assistant_name,
+                &persona,
+                GuestView {
+                    guest,
+                    calendars: &calendars,
+                },
+                &history,
+                &contexts,
+                &said(with_context(&content, mention_context.as_deref()), spoken),
+                &photos,
+            )
+        }
+        None => {
+            // What's remembered about the user that matters for this message; the
+            // previous user message helps with follow-ups ("and what does she like?").
+            let previous = history
+                .iter()
+                .rev()
+                .find(|m| m.role == MessageRole::User)
+                .map(|m| m.content.as_str());
+            let query = crate::memory::recall::Query {
+                message: &content,
+                context: previous,
+                people: crate::memory::link::people_in(&state, &content, &mentions).await,
+                meaning: None,
+            };
+            let recall = crate::memory::recall::recall(&state, query)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!("recalling memories failed: {e}");
+                    Default::default()
+                });
+            let memory = PromptMemory {
+                block: crate::memory::recall::prompt_block(&recall),
+                learning: settings.memory_learning,
+            };
+            build_prompt(
+                &settings.assistant_name,
+                &persona,
+                &history,
+                &contexts,
+                &said(with_context(&content, mention_context.as_deref()), spoken),
+                &memory,
+                &photos,
+            )
+        }
+    };
     tracing::debug!(
         %conversation_id,
         prompt_messages = prompt.len(),
@@ -227,6 +316,9 @@ pub async fn send_with_context(
         created_at: now,
         actions: Vec::new(),
         mentions,
+        attachments: attachments.iter().map(|a| a.meta.clone()).collect(),
+        attachments_unseen: !attachments.is_empty() && !photos.sees,
+        spoken,
     };
     let assistant_message = Message {
         id: Uuid::now_v7(),
@@ -236,15 +328,23 @@ pub async fn send_with_context(
         model: Some(model.clone()),
         locality: Some(provider.provider.locality),
         mentions: Vec::new(),
+        attachments: Vec::new(),
+        attachments_unseen: false,
+        spoken: false,
         ..user_message.clone()
     };
     if conversation.title == DEFAULT_TITLE && history.is_empty() {
-        conversation.title = title_from(&content);
+        conversation.title = match (content.is_empty(), attachments.len()) {
+            (true, 1) => "Photo".to_owned(),
+            (true, _) => "Photos".to_owned(),
+            _ => title_from(&content),
+        };
     }
     conversation.updated_at = now;
 
     let saved = async {
         store::upsert_message(&state.db, user_message.clone()).await?;
+        crate::attachments::save(&state.db, user_message.id, attachments).await?;
         if let Some(context) = mention_context {
             store::set_mention_context(&state.db, user_message.id, context).await?;
         }
@@ -266,7 +366,10 @@ pub async fn send_with_context(
         .events
         .publish(Event::ConversationUpdated { conversation });
 
-    let tools = state.tool_sources.registry(&state).await;
+    let tools = match &guest {
+        Some(guest) => crate::access::tools::registry(&state, guest).await,
+        None => state.tool_sources.registry(&state).await,
+    };
     tokio::spawn(generate(
         state.clone(),
         provider,
@@ -274,7 +377,7 @@ pub async fn send_with_context(
         prompt,
         assistant_message.clone(),
         cancel,
-        tools,
+        Toolbox { tools, principal },
     ));
 
     Ok(SendMessageResult {
@@ -299,8 +402,16 @@ struct Turn {
     message: Message,
     cancel: CancellationToken,
     tools: ToolRegistry,
+    /// Who the reply is for; tools get it with every call.
+    principal: crate::access::Principal,
     /// Put a paragraph break before the next text, because tools ran since the last.
     separate: bool,
+}
+
+/// What a reply may use, and who it's for.
+struct Toolbox {
+    tools: ToolRegistry,
+    principal: crate::access::Principal,
 }
 
 async fn generate(
@@ -310,8 +421,9 @@ async fn generate(
     prompt: Vec<ChatMessage>,
     message: Message,
     cancel: CancellationToken,
-    tools: ToolRegistry,
+    Toolbox { tools, principal }: Toolbox,
 ) {
+    let guest = principal.guest().is_some();
     let client = tokio::select! {
         c = providers::chat_client(&state, &provider, &model) => c,
         _ = cancel.cancelled() => Err(String::new()),
@@ -326,6 +438,7 @@ async fn generate(
                 message,
                 cancel,
                 tools,
+                principal,
                 separate: false,
             };
             let outcome = turn.run().await;
@@ -388,8 +501,11 @@ async fn generate(
     }
     state.generations.finish(conversation_id);
     state.events.publish(Event::MessageUpdated { message });
-    // Once the conversation goes quiet, learn from it.
-    state.learner.schedule(conversation_id);
+    // Once the conversation goes quiet, learn from it: only the owner's. What a trusted
+    // person says is never the owner's memory.
+    if !guest {
+        state.learner.schedule(conversation_id);
+    }
 }
 
 impl Turn {
@@ -483,7 +599,12 @@ impl Turn {
     /// Handles one tool call: asks for approval when needed, runs it, and gives the
     /// result back to the model. Returns false when the reply was cancelled meanwhile.
     async fn act(&mut self, call: ToolCall, round: u32) -> bool {
-        let tool = self.tools.get(&call.name).cloned();
+        // A guest's turn reaches only their allow-list, whatever the registry holds.
+        let tool = self
+            .tools
+            .get(&call.name)
+            .filter(|t| self.principal.guest().is_none() || crate::access::tools::allowed(t.name()))
+            .cloned();
         let parsed: Result<Value, String> = if call.arguments.trim().is_empty() {
             Ok(serde_json::json!({}))
         } else {
@@ -497,6 +618,7 @@ impl Turn {
         let ctx = ToolContext {
             state: self.state.clone(),
             conversation_id: self.message.conversation_id,
+            principal: self.principal.clone(),
         };
         // What the card shows is what runs: what the arguments refer to, looked up, and
         // the arguments in the shape the tool reads.
@@ -520,8 +642,9 @@ impl Turn {
             // Can't tell what it would do, and it won't run anyway.
             _ => (call.name.clone(), false),
         };
+        // "Don't ask again" changes the owner's settings: never offered on a guest's card.
         let offer = match (&tool, &parsed) {
-            (Some(t), Ok(args)) if requires_approval => {
+            (Some(t), Ok(args)) if requires_approval && self.principal.guest().is_none() => {
                 permissions::always_offer(&self.state, t.as_ref(), args, &permissions).await
             }
             _ => None,
@@ -700,13 +823,32 @@ fn strip_tool_messages(prompt: &mut Vec<ChatMessage>) {
 }
 
 /// A past message as the model saw it: tool calls and results by round, then the text.
-fn replay(m: &Message, contexts: &HashMap<Uuid, String>) -> Vec<ChatMessage> {
+/// A user message's photos go along while they're among the latest (`photos`); older
+/// ones, or all of them for a model that can't see, become a short note.
+fn replay(
+    m: &Message,
+    contexts: &HashMap<Uuid, String>,
+    photos: &PromptPhotos,
+) -> Vec<ChatMessage> {
     if m.role == MessageRole::User {
         let context = contexts.get(&m.id).map(String::as_str);
-        return vec![ChatMessage::text(
-            Role::User,
-            with_context(&m.content, context),
-        )];
+        let mut text = with_context(&m.content, context);
+        let images = photos.earlier.get(&m.id).cloned().unwrap_or_default();
+        if !m.attachments.is_empty() && images.is_empty() {
+            let label = crate::attachments::count_label(m.attachments.len());
+            // Seen when sent (maybe by the model for photos), or there now.
+            let note = if photos.sees || !m.attachments_unseen {
+                format!("(The user sent {label} here, no longer shown to you.)")
+            } else {
+                format!("(The user sent {label} here, which you couldn't see.)")
+            };
+            text = join_note(&text, &note);
+        }
+        if photos.file_ids && !m.attachments.is_empty() {
+            text = join_note(&text, &files_note(&m.attachments));
+        }
+        let text = said(text, m.spoken);
+        return vec![ChatMessage::text(Role::User, text).with_images(images)];
     }
     let mut rounds: std::collections::BTreeMap<u32, Vec<&Action>> = Default::default();
     for a in &m.actions {
@@ -736,6 +878,170 @@ fn replay(m: &Message, contexts: &HashMap<Uuid, String>) -> Vec<ChatMessage> {
     out
 }
 
+/// Most pictures in one prompt.
+const MAX_PROMPT_IMAGES: usize = crate::attachments::MAX_PER_MESSAGE;
+/// Photos go to the model with this many of the latest user messages that have some;
+/// older ones become a note. Pictures take a lot of room, and local models have little.
+const PHOTO_TURNS: usize = 2;
+/// Room a picture takes from the history budget, in characters (about a thousand tokens).
+const IMAGE_CHARS: usize = 4_000;
+
+/// The photos in one prompt.
+#[derive(Default)]
+struct PromptPhotos {
+    /// The model can see pictures.
+    sees: bool,
+    /// Pictures of earlier user messages that still go to the model, by message.
+    earlier: HashMap<Uuid, Vec<providers::ImagePart>>,
+    /// The new message's pictures, when the model can see them.
+    new: Vec<providers::ImagePart>,
+    /// How many photos the new message has.
+    new_count: usize,
+    /// Whether messages name their photos' ids, for attaching them to an email.
+    file_ids: bool,
+    /// The new message's photos, for their ids.
+    new_files: Vec<mimi_protocol::Attachment>,
+}
+
+/// Tells the model the ids of a message's photos, which the mail tools can attach.
+fn files_note(files: &[mimi_protocol::Attachment]) -> String {
+    let list: Vec<String> = files
+        .iter()
+        .map(|f| format!("“{}” (file chat:{})", f.name, f.id))
+        .collect();
+    format!(
+        "(Photos here that can go with an email: {}.)",
+        list.join(", ")
+    )
+}
+
+/// Which photos go to the model with this message: only for a model that can see them,
+/// with the latest [`PHOTO_TURNS`] user messages that have some, at most
+/// [`MAX_PROMPT_IMAGES`] in all.
+async fn prompt_photos(
+    state: &AppState,
+    provider: &providers::store::ProviderRecord,
+    model: &str,
+    history: &[Message],
+    new: &[crate::attachments::Prepared],
+) -> PromptPhotos {
+    let earlier: Vec<&Message> = history
+        .iter()
+        .rev()
+        .filter(|m| m.role == MessageRole::User && !m.attachments.is_empty())
+        .collect();
+    if new.is_empty() && earlier.is_empty() {
+        return PromptPhotos::default();
+    }
+    let sees = providers::vision::sees_images(state, provider, model).await;
+    let mut photos = PromptPhotos {
+        sees,
+        new_count: new.len(),
+        ..Default::default()
+    };
+    if !sees {
+        return photos;
+    }
+    photos.new = new
+        .iter()
+        .map(|a| providers::ImagePart::new(a.meta.mime.clone(), a.data.clone()))
+        .collect();
+    let mut room = MAX_PROMPT_IMAGES.saturating_sub(photos.new.len());
+    let turns = PHOTO_TURNS - usize::from(!new.is_empty());
+    let mut chosen = Vec::new();
+    for m in earlier.into_iter().take(turns) {
+        if m.attachments.len() > room {
+            break;
+        }
+        room -= m.attachments.len();
+        chosen.push(m.id);
+    }
+    if !chosen.is_empty() {
+        match crate::attachments::contents(&state.db, chosen).await {
+            Ok(found) => {
+                photos.earlier = found
+                    .into_iter()
+                    .map(|(id, items)| {
+                        let images = items
+                            .into_iter()
+                            .map(|(meta, data)| providers::ImagePart::new(meta.mime, data))
+                            .collect();
+                        (id, images)
+                    })
+                    .collect();
+            }
+            Err(e) => tracing::warn!("reading earlier photos failed: {e}"),
+        }
+    }
+    photos
+}
+
+/// The model for photos (Settings › Models) and its source, when it should answer this
+/// turn: one is chosen, the new message or the user's previous one has photos, and the
+/// default model can't see them. `None` keeps the default, also when the chosen one's
+/// source is gone or can't be used.
+async fn photo_model(
+    state: &AppState,
+    settings: &mimi_protocol::Settings,
+    history: &[Message],
+    new: &[crate::attachments::Prepared],
+    default: &providers::store::ProviderRecord,
+    default_model: &ModelRef,
+) -> Option<(ModelRef, providers::store::ProviderRecord)> {
+    let chosen = settings.photo_model.clone()?;
+    let previous_had_photos = history
+        .iter()
+        .rev()
+        .find(|m| m.role == MessageRole::User)
+        .is_some_and(|m| !m.attachments.is_empty());
+    if (new.is_empty() && !previous_had_photos)
+        || chosen == *default_model
+        || providers::vision::sees_images(state, default, &default_model.model).await
+    {
+        return None;
+    }
+    let record = match provider_store::get(&state.db, chosen.provider_id).await {
+        Ok(Some(record)) => record,
+        Ok(None) => {
+            tracing::warn!("the model for photos' source was removed; using the default");
+            return None;
+        }
+        Err(e) => {
+            tracing::warn!("reading the model for photos' source failed: {e}");
+            return None;
+        }
+    };
+    if record.provider.kind == mimi_protocol::ProviderKind::Builtin {
+        return None;
+    }
+    if let Err(e) = providers::connect(&state.http, &record) {
+        tracing::warn!("the model for photos can't be used, using the default: {e}");
+        return None;
+    }
+    Some((chosen, record))
+}
+
+/// Text with a note after it (or only the note).
+/// Told to the model about what the user said out loud: speech recognition mishears a
+/// name or a word now and then.
+const SPOKEN_NOTE: &str = "(Said aloud and transcribed automatically: a word may be misheard.)";
+
+fn said(text: String, spoken: bool) -> String {
+    if spoken {
+        join_note(&text, SPOKEN_NOTE)
+    } else {
+        text
+    }
+}
+
+fn join_note(text: &str, note: &str) -> String {
+    if text.trim().is_empty() {
+        note.to_owned()
+    } else {
+        format!("{text}\n\n{note}")
+    }
+}
+
 /// Memory for one prompt: what's recalled, and whether new things may be remembered.
 #[derive(Default)]
 struct PromptMemory {
@@ -759,8 +1065,113 @@ fn build_prompt(
     contexts: &HashMap<Uuid, String>,
     new_message: &str,
     memory: &PromptMemory,
+    photos: &PromptPhotos,
 ) -> Vec<ChatMessage> {
-    let now = jiff::Zoned::now();
+    let system = owner_system(assistant_name, persona, memory);
+    assemble(
+        system,
+        persona.prompt_size(),
+        history,
+        contexts,
+        new_message,
+        photos,
+        false,
+    )
+}
+
+/// The current date and time, as the prompt says it.
+pub(crate) fn now_line() -> String {
+    jiff::Zoned::now()
+        .strftime("%A, %B %-d, %Y, %H:%M (%Z)")
+        .to_string()
+}
+
+/// Who a guest turn is for, and the calendars the owner shared with them.
+struct GuestView<'a> {
+    guest: &'a crate::access::Guest,
+    calendars: &'a [crate::access::SharedCalendar],
+}
+
+/// The prompt for a trusted person's turn (`access`): who is talking (them, not the
+/// owner), what's shared with them, the personality but not the owner's instructions,
+/// and none of the owner's memory. The code enforces all of it anyway: this only
+/// helps the model answer well.
+fn build_guest_prompt(
+    assistant_name: &str,
+    persona: &Persona,
+    GuestView { guest, calendars }: GuestView<'_>,
+    history: &[Message],
+    contexts: &HashMap<Uuid, String>,
+    new_message: &str,
+    photos: &PromptPhotos,
+) -> Vec<ChatMessage> {
+    let (who, owner) = (&guest.name, &guest.owner);
+    let tone = if persona.personality.is_empty() {
+        "Be helpful, direct and warm."
+    } else {
+        "Be helpful."
+    };
+    let approves = match guest.approver {
+        mimi_protocol::Approver::Guest => format!("{who} approves them here"),
+        mimi_protocol::Approver::Owner => format!("{owner} approves them"),
+    };
+    let mut system = format!(
+        "You are {assistant_name}, the personal assistant of {owner}. You are talking with \
+         {who}, someone {owner} lets ask you things. {owner} isn't in this conversation. \
+         {tone} Answer in {who}'s language. Use Markdown when it helps readability. When a \
+         tool can answer or do what they ask, use it; actions that change something are \
+         shown for approval before they happen ({approves}).\n\n\
+         Current date and time: {}.",
+        now_line()
+    );
+    let personality = persona.guest_block();
+    if let Some(block) = &personality {
+        system.push_str("\n\n");
+        system.push_str(block);
+    }
+    system.push_str("\n\n");
+    if calendars.is_empty() {
+        system.push_str(&format!(
+            "No calendar is shared with {who} yet: if they ask about a calendar or their \
+             schedule, tell them plainly that {owner} hasn't shared a calendar with them yet."
+        ));
+    } else {
+        let list: Vec<String> = calendars
+            .iter()
+            .map(|c| {
+                if c.writable {
+                    format!("{} (events can be added and changed)", c.name)
+                } else {
+                    format!("{} (read only)", c.name)
+                }
+            })
+            .collect();
+        system.push_str(&format!(
+            "{owner} shared these calendars with {who}: {}. Use only them.",
+            list.join(", ")
+        ));
+    }
+    system.push_str(&format!(
+        " You can set reminders and routines for {who}; they reach {who} here. You can't \
+         read or tell them anything else of {owner}'s: not their email, contacts, messages, \
+         other calendars or what you know about them. If {who} asks for that, say you \
+         can't, without guessing."
+    ));
+    let reserved = personality.map_or(0, |b| b.len());
+    assemble(
+        system,
+        reserved,
+        history,
+        contexts,
+        new_message,
+        photos,
+        true,
+    )
+}
+
+/// The opening of the owner's prompt: who the assistant is, the date, their
+/// personality and instructions, and what's remembered.
+fn owner_system(assistant_name: &str, persona: &Persona, memory: &PromptMemory) -> String {
     // The default voice, unless the user described their own.
     let tone = if persona.personality.is_empty() {
         "Be helpful, direct and warm."
@@ -774,7 +1185,7 @@ fn build_prompt(
          tool can answer or do what the user asks, use it; actions that change something \
          are shown to the user for approval before they happen.\n\n\
          Current date and time: {}.",
-        now.strftime("%A, %B %-d, %Y, %H:%M (%Z)")
+        now_line()
     );
     // The user's own personality and instructions, framed so they can't lift the rules.
     if let Some(block) = persona.prompt_block() {
@@ -797,18 +1208,63 @@ fn build_prompt(
         system.push_str("\n\n");
         system.push_str(block);
     }
+    system
+}
+
+/// The system prompt, then as much history as fits, then the new message with its
+/// photos. `reserved` is what the system prompt's user-written parts take from the
+/// history's budget. A `guest` can't change the owner's models, so they're never sent
+/// there.
+fn assemble(
+    system: String,
+    reserved: usize,
+    history: &[Message],
+    contexts: &HashMap<Uuid, String>,
+    new_message: &str,
+    photos: &PromptPhotos,
+    guest: bool,
+) -> Vec<ChatMessage> {
+    // The new message; its photos, or a note that the model can't see them.
+    let new_message = if photos.new_count > 0 && !photos.sees {
+        let instead = if guest {
+            "ask them to type out what matters in it"
+        } else {
+            "that a model that can, or one just for photos, is chosen in Models"
+        };
+        join_note(
+            new_message,
+            &format!(
+                "(They sent {}, but the current model can't see pictures. If it matters, \
+                 tell them briefly that you can't see it, and {instead}.)",
+                crate::attachments::count_label(photos.new_count)
+            ),
+        )
+    } else {
+        new_message.to_owned()
+    };
+    let new_message = if photos.file_ids && !photos.new_files.is_empty() {
+        join_note(&new_message, &files_note(&photos.new_files))
+    } else {
+        new_message
+    };
 
     // Newest history first until the budget runs out, then back in order.
     let mut budget = HISTORY_BUDGET_CHARS
         .saturating_sub(new_message.len())
-        .saturating_sub(persona.prompt_size());
+        .saturating_sub(reserved)
+        .saturating_sub(photos.new.len() * IMAGE_CHARS);
     let mut kept: Vec<Vec<ChatMessage>> = Vec::new();
     for m in history.iter().rev() {
-        if m.status == MessageStatus::Streaming || (m.content.is_empty() && m.actions.is_empty()) {
+        if m.status == MessageStatus::Streaming
+            || (m.content.is_empty() && m.actions.is_empty() && m.attachments.is_empty())
+        {
             continue;
         }
-        let block = replay(m, contexts);
-        let size: usize = block.iter().map(|c| c.content.len()).sum();
+        let block = replay(m, contexts, photos);
+        let size: usize = block
+            .iter()
+            .map(|c| c.content.len() + c.images.len() * IMAGE_CHARS)
+            .sum();
         if size > budget {
             break;
         }
@@ -819,7 +1275,7 @@ fn build_prompt(
 
     let mut prompt = vec![ChatMessage::text(Role::System, system)];
     prompt.extend(kept.into_iter().flatten());
-    prompt.push(ChatMessage::text(Role::User, new_message));
+    prompt.push(ChatMessage::text(Role::User, new_message).with_images(photos.new.clone()));
     prompt
 }
 
@@ -868,6 +1324,33 @@ pub fn new_conversation(title: Option<String>) -> Conversation {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_guest_is_asked_to_type_out_a_photo_not_sent_to_models() {
+        let photos = PromptPhotos {
+            new_count: 1,
+            ..Default::default()
+        };
+        let note = |guest| {
+            let prompt = assemble(
+                String::new(),
+                0,
+                &[],
+                &HashMap::new(),
+                "Look",
+                &photos,
+                guest,
+            );
+            prompt.last().unwrap().content.clone()
+        };
+        assert!(note(false).contains("one just for photos, is chosen in Models"));
+        let guest = note(true);
+        assert!(
+            guest.contains("ask them to type out what matters in it"),
+            "{guest}"
+        );
+        assert!(!guest.contains("Models"), "{guest}");
+    }
+
     /// The system prompt with its date line (which changes every minute) blanked out.
     fn system_text(
         persona: &Persona,
@@ -881,6 +1364,7 @@ mod tests {
             &HashMap::new(),
             new_message,
             &PromptMemory::default(),
+            &PromptPhotos::default(),
         );
         let system = prompt[0]
             .content
@@ -959,6 +1443,9 @@ mod tests {
             created_at: 0,
             actions: Vec::new(),
             mentions: Vec::new(),
+            attachments: Vec::new(),
+            attachments_unseen: false,
+            spoken: false,
         };
         let history: Vec<Message> = (0..40).map(old).collect();
         let (_, plain) = system_text(&Persona::default(), &history, "Hi");

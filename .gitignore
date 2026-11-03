@@ -8,3 +8,4 @@ dist
 /.claude/
 /apps/desktop/src-tauri/binaries
 /apps/desktop/src-tauri/resources
+/.env.google

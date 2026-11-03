@@ -101,6 +101,10 @@ fn spawn_event_relay(app: AppHandle, connected: Arc<AtomicBool>) {
             if let Some(mut stream) = stream {
                 set(&app, true);
                 while let Some(Ok(event)) = stream.next().await {
+                    // A click on a new-mail notification: come forward to show it.
+                    if matches!(event, mimi_protocol::Event::OpenMail { .. }) {
+                        show_main_window(&app);
+                    }
                     let _ = app.emit("daemon-event", &event);
                 }
             }
@@ -136,6 +140,22 @@ async fn set_background(
         .map_err(|message| CommandError::Other { message })?;
     tray::refresh(&app);
     Ok(status)
+}
+
+/// A photo sent in a chat, as raw bytes: the webview shows it from an object URL, since
+/// it can't reach the daemon itself. `id` must look like a UUID, so the path stays on
+/// that one route.
+#[tauri::command]
+async fn chat_attachment(id: String) -> Result<tauri::ipc::Response, CommandError> {
+    if id.len() != 36 || !id.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+        return Err(CommandError::Other {
+            message: "That photo doesn't exist.".to_owned(),
+        });
+    }
+    let data = Client::local()?
+        .get_bytes(&format!("/attachments/{id}"))
+        .await?;
+    Ok(tauri::ipc::Response::new(data))
 }
 
 /// What happened to an attachment the user clicked.
@@ -235,6 +255,56 @@ fn show_main_window(app: &AppHandle) {
     }
 }
 
+/// The main window, from the config's first window (`"create": false` there, so it's
+/// built here). Requests for a new window open in the system browser instead: that's how
+/// a link in an email opens. Its frame is sandboxed without scripts, and WebKit then runs
+/// no event listener in it, not even the page's own click handler, so the frame's
+/// `<base target="_blank">` turns each click into a new-window request that lands here.
+fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
+    let Some(config) = app.config().app.windows.first().cloned() else {
+        return Ok(());
+    };
+    let handle = app.clone();
+    let _window = tauri::WebviewWindowBuilder::from_config(app, &config)?
+        .on_new_window(move |url, _| {
+            if matches!(url.scheme(), "http" | "https" | "mailto") {
+                let _ = handle.opener().open_url(url.as_str(), None::<&str>);
+            }
+            tauri::webview::NewWindowResponse::Deny
+        })
+        .build()?;
+    #[cfg(target_os = "linux")]
+    allow_microphone(&_window);
+    Ok(())
+}
+
+/// Lets the app's own page use the microphone (to talk to the assistant), and nothing
+/// else: no camera, no location, no notifications from the page. On macOS WebKit asks
+/// the system, which asks the user once (`NSMicrophoneUsageDescription`).
+#[cfg(target_os = "linux")]
+fn allow_microphone(window: &tauri::WebviewWindow) {
+    let _ = window.with_webview(|webview| {
+        use webkit2gtk::glib::prelude::Cast;
+        use webkit2gtk::{
+            PermissionRequestExt, SettingsExt, UserMediaPermissionRequest,
+            UserMediaPermissionRequestExt, WebViewExt,
+        };
+        let view = webview.inner();
+        if let Some(settings) = WebViewExt::settings(&view) {
+            settings.set_enable_media_stream(true);
+        }
+        view.connect_permission_request(|_, request| {
+            match request.downcast_ref::<UserMediaPermissionRequest>() {
+                Some(media) if media.is_for_audio_device() && !media.is_for_video_device() => {
+                    request.allow()
+                }
+                _ => request.deny(),
+            }
+            true
+        });
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
@@ -254,6 +324,7 @@ pub fn run() {
             if let Ok(dir) = attachments::cache_dir(app.handle()) {
                 let _ = std::fs::remove_dir_all(dir);
             }
+            create_main_window(app.handle())?;
             #[cfg(target_os = "linux")]
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_decorations(false);
@@ -290,7 +361,8 @@ pub fn run() {
             background_status,
             set_background,
             window_chrome,
-            open_attachment
+            open_attachment,
+            chat_attachment
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

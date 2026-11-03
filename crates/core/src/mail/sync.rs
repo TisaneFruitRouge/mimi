@@ -40,7 +40,7 @@ const PASS_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const PARSE_TIMEOUT: Duration = Duration::from_secs(20);
 const DAY_MS: i64 = 24 * 3600 * 1000;
 
-fn proto(e: async_imap::error::Error) -> MailError {
+pub(super) fn proto(e: async_imap::error::Error) -> MailError {
     MailError::Protocol(e.to_string())
 }
 
@@ -74,6 +74,9 @@ pub struct Folders {
     pub all: Option<String>,
     /// Where deleted mail goes. Not read.
     pub trash: Option<String>,
+    /// Drafts: read for drafts written elsewhere, and where Mimi's drafts are copied
+    /// (`mail::drafts`). Never read as mail.
+    pub drafts: Option<String>,
 }
 
 pub async fn folders(session: &mut ImapSession) -> Result<Folders, MailError> {
@@ -88,6 +91,7 @@ pub async fn folders(session: &mut ImapSession) -> Result<Folders, MailError> {
     let mut sent_by_name = None;
     let mut archive_by_name = None;
     let mut trash_by_name = None;
+    let mut drafts_by_name = None;
     for n in &names {
         let attrs = n.attributes();
         if attrs.contains(&NameAttribute::NoSelect) {
@@ -102,6 +106,8 @@ pub async fn folders(session: &mut ImapSession) -> Result<Folders, MailError> {
             f.all.get_or_insert(name.clone());
         } else if attrs.contains(&NameAttribute::Trash) {
             f.trash.get_or_insert(name.clone());
+        } else if attrs.contains(&NameAttribute::Drafts) {
+            f.drafts.get_or_insert(name.clone());
         }
         let leaf = n
             .delimiter()
@@ -130,10 +136,17 @@ pub async fn folders(session: &mut ImapSession) -> Result<Folders, MailError> {
         ) {
             trash_by_name.get_or_insert(name.clone());
         }
+        if matches!(
+            leaf.as_str(),
+            "drafts" | "draft" | "brouillons" | "entwürfe" | "borradores" | "bozze"
+        ) {
+            drafts_by_name.get_or_insert(name.clone());
+        }
     }
     f.sent = f.sent.or(sent_by_name);
     f.archive = f.archive.or(archive_by_name);
     f.trash = f.trash.or(trash_by_name);
+    f.drafts = f.drafts.or(drafts_by_name);
     Ok(f)
 }
 
@@ -315,6 +328,10 @@ pub async fn pass(
     if let Some(archive) = &f.archive {
         changed |= sync_mailbox(state, session, account, archive, "archive").await?;
     }
+    // Drafts written in other mail apps, for the Drafts view (never stored as mail).
+    if let Err(e) = super::drafts::read_server(state, session, account, f.drafts.as_deref()).await {
+        tracing::warn!(connection = %account.id, "couldn't read the Drafts folder: {e}");
+    }
     if changed {
         super::changed(state);
         state.mail.triage_wake.notify_one();
@@ -323,7 +340,7 @@ pub async fn pass(
 }
 
 /// IMAP's date format for SEARCH: 1-Jan-2026.
-fn imap_date(ms: i64) -> String {
+pub(super) fn imap_date(ms: i64) -> String {
     chrono::DateTime::from_timestamp_millis(ms)
         .unwrap_or_default()
         .format("%-d-%b-%Y")
@@ -411,13 +428,19 @@ async fn sync_mailbox(
             messages.push(m.read(conn, mailbox, folder, &account.config.email).await);
         }
         let (name, now) = (mailbox.to_owned(), now_ms());
+        // A mailbox's first pass copies old mail: nothing to announce.
+        let watch = last_uid.is_some();
         let added = state
             .db
             .call(move |c| {
                 let tx = c.transaction()?;
                 let mut added = 0;
                 for m in &messages {
-                    added += usize::from(store::insert(&tx, m)?.is_some());
+                    let new = store::insert(&tx, m)?.is_some();
+                    if new {
+                        super::notify::queue(&tx, m, watch, now)?;
+                    }
+                    added += usize::from(new);
                 }
                 if let Some(reached) = reached {
                     store::set_sync_state(&tx, conn, &name, validity, reached, now)?;
@@ -485,6 +508,9 @@ async fn sync_mailbox(
         }
     }
 
+    // Older mail a search found: its own sweep, and forgotten once its time is up.
+    changed |= super::older::sweep(state, session, conn, mailbox).await?;
+
     // 3. Forget what has aged out of the window.
     let name = mailbox.to_owned();
     let now = now_ms();
@@ -500,7 +526,7 @@ async fn sync_mailbox(
     Ok(changed || pruned > 0)
 }
 
-fn flags_of(f: &Fetch) -> (bool, bool) {
+pub(super) fn flags_of(f: &Fetch) -> (bool, bool) {
     let mut seen = false;
     let mut flagged = false;
     for fl in f.flags() {
@@ -514,7 +540,7 @@ fn flags_of(f: &Fetch) -> (bool, bool) {
 }
 
 /// A message as it came off the wire.
-struct Fetched {
+pub(super) struct Fetched {
     uid: u32,
     seen: bool,
     flagged: bool,
@@ -528,7 +554,13 @@ impl Fetched {
     /// Reads the message, away from the async threads. One that can't be read, or takes
     /// too long, is still stored (its headers, with a note for its body), so it's never
     /// fetched and tried again.
-    async fn read(self, conn: Uuid, mailbox: &str, folder: &'static str, me: &str) -> NewMessage {
+    pub(super) async fn read(
+        self,
+        conn: Uuid,
+        mailbox: &str,
+        folder: &'static str,
+        me: &str,
+    ) -> NewMessage {
         let raw: Arc<[u8]> = self.raw.as_slice().into();
         let reading = tokio::task::spawn_blocking({
             let raw = raw.clone();
@@ -605,6 +637,7 @@ fn unreadable(raw: &[u8]) -> parse::Parsed {
         suspicious: false,
         delivered_to: Vec::new(),
         html: None,
+        list: Default::default(),
     });
     parsed.body =
         "(This message couldn't be read here. Open it in your usual mail app to read it.)"
@@ -614,7 +647,7 @@ fn unreadable(raw: &[u8]) -> parse::Parsed {
     parsed
 }
 
-async fn fetch_messages(
+pub(super) async fn fetch_messages(
     session: &mut ImapSession,
     uids: &[u32],
 ) -> Result<Vec<Fetched>, MailError> {
@@ -774,18 +807,24 @@ pub async fn trash_on_server(
 }
 
 #[derive(Clone, Copy)]
-enum Destination {
+pub(super) enum Destination {
     Archive,
     Trash,
 }
 
-async fn move_on_server(
+/// Moves messages to Archive or Trash: one session per account, whatever the number of
+/// mailboxes and conversations.
+pub(super) async fn move_on_server(
     state: &AppState,
     locations: &[(Uuid, String, String, u32)],
     to: Destination,
 ) -> Result<(), MailError> {
     let accounts = super::accounts(state).await;
+    let mut by_account: BTreeMap<Uuid, BTreeMap<String, Vec<u32>>> = BTreeMap::new();
     for ((conn, mailbox), uids) in group(locations) {
+        by_account.entry(conn).or_default().insert(mailbox, uids);
+    }
+    for (conn, mailboxes) in by_account {
         let account = accounts.iter().find(|a| a.id == conn).ok_or_else(|| {
             MailError::Protocol("that account isn't connected any more".to_owned())
         })?;
@@ -802,29 +841,30 @@ async fn move_on_server(
                 made.to_owned()
             }
         };
-        if target == mailbox {
-            let _ = s.logout().await;
-            continue;
-        }
         let can_move = s.capabilities().await.map_err(proto)?.has_str("MOVE");
-        s.select(&mailbox).await.map_err(proto)?;
-        let set = uid_set(&uids);
-        if can_move {
-            s.uid_mv(&set, &target).await.map_err(proto)?;
-        } else {
-            s.uid_copy(&set, &target).await.map_err(proto)?;
-            s.uid_store(&set, "+FLAGS.SILENT (\\Deleted)")
-                .await
-                .map_err(proto)?
-                .try_collect::<Vec<_>>()
-                .await
-                .map_err(proto)?;
-            s.expunge()
-                .await
-                .map_err(proto)?
-                .try_collect::<Vec<_>>()
-                .await
-                .map_err(proto)?;
+        for (mailbox, uids) in mailboxes {
+            if target == mailbox {
+                continue;
+            }
+            s.select(&mailbox).await.map_err(proto)?;
+            let set = uid_set(&uids);
+            if can_move {
+                s.uid_mv(&set, &target).await.map_err(proto)?;
+            } else {
+                s.uid_copy(&set, &target).await.map_err(proto)?;
+                s.uid_store(&set, "+FLAGS.SILENT (\\Deleted)")
+                    .await
+                    .map_err(proto)?
+                    .try_collect::<Vec<_>>()
+                    .await
+                    .map_err(proto)?;
+                s.expunge()
+                    .await
+                    .map_err(proto)?
+                    .try_collect::<Vec<_>>()
+                    .await
+                    .map_err(proto)?;
+            }
         }
         let _ = s.logout().await;
     }

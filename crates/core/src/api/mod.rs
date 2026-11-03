@@ -20,6 +20,10 @@ pub mod error;
 mod events;
 mod hardware;
 mod mail;
+mod mail_drafts;
+mod mail_outbox;
+mod mail_signature;
+mod mail_unsubscribe;
 mod memory;
 mod people;
 mod permissions;
@@ -27,6 +31,7 @@ mod providers;
 mod schedule;
 mod settings;
 mod updates;
+mod voice;
 mod web;
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -65,6 +70,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             axum::routing::delete(connections::delete),
         )
         .route("/connections/{id}/reconnect", post(connections::reconnect))
+        .route("/matrix/groups", get(connections::matrix_groups))
         .route(
             "/google/sign-in",
             get(connections::google_info).post(connections::google_start),
@@ -104,7 +110,13 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/people/{id}/merge", post(people::merge))
         .route("/people/{id}/split", post(people::split))
         .route("/people/{id}/memory", get(memory::person_notes))
+        .route(
+            "/people/{id}/access",
+            get(people::access).put(people::set_access),
+        )
+        .route("/access/approvals", get(people::guest_approvals))
         .route("/mentions", get(people::mentions))
+        .route("/people/emails", get(people::emails))
         .route("/calendars", get(calendar::calendars))
         .route(
             "/calendar/events",
@@ -123,7 +135,6 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/calendar/invitations/{id}/send",
             post(calendar::send_invitations),
         )
-        .route("/calendar/guests", get(calendar::guest_suggestions))
         .route("/hardware", get(hardware::get))
         .route("/recommendations", get(hardware::recommendations))
         .route(
@@ -136,7 +147,15 @@ pub fn router(state: Arc<AppState>) -> Router {
                 .patch(conversations::update)
                 .delete(conversations::delete),
         )
-        .route("/conversations/{id}/messages", post(conversations::send))
+        .route(
+            "/conversations/{id}/messages",
+            // Photos come base64-encoded in the message.
+            post(conversations::send).layer(axum::extract::DefaultBodyLimit::max(
+                crate::attachments::MAX_REQUEST_BYTES,
+            )),
+        )
+        .route("/attachments/{id}", get(conversations::attachment))
+        .route("/models/vision", get(conversations::vision))
         .route("/conversations/{id}/cancel", post(conversations::cancel))
         .route("/actions/{id}/approve", post(actions::approve))
         .route("/actions/{id}/reject", post(actions::reject))
@@ -167,13 +186,58 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/mail/presets", get(mail::presets))
         .route("/mail/discover", post(mail::discover))
         .route("/mail/threads", get(mail::threads))
+        .route("/mail/threads/batch", post(mail::batch))
         .route("/mail/threads/{id}", get(mail::thread).delete(mail::delete))
         .route("/mail/threads/{id}/read", post(mail::read))
         .route("/mail/threads/{id}/archive", post(mail::archive))
+        .route("/mail/threads/{id}/flag", post(mail::flag))
         .route("/mail/threads/{id}/summarize", post(mail::summarize))
         .route("/mail/threads/{id}/draft", post(mail::draft))
-        .route("/mail/send", post(mail::send))
+        .route(
+            "/mail/threads/{id}/unsubscribe",
+            get(mail_unsubscribe::offer).post(mail_unsubscribe::unsubscribe),
+        )
+        .route(
+            "/mail/threads/{id}/unsubscribe/archive",
+            post(mail_unsubscribe::archive_all),
+        )
+        .route(
+            "/mail/send",
+            // Attachments come base64-encoded in the draft.
+            post(mail::send).layer(axum::extract::DefaultBodyLimit::max(
+                crate::mail::smtp::MAX_REQUEST_BYTES,
+            )),
+        )
+        .route(
+            "/mail/outbox",
+            // Attachments come base64-encoded in the draft.
+            get(mail_outbox::list).post(mail_outbox::queue).layer(
+                axum::extract::DefaultBodyLimit::max(crate::mail::smtp::MAX_REQUEST_BYTES),
+            ),
+        )
+        .route(
+            "/mail/outbox/{id}",
+            axum::routing::patch(mail_outbox::reschedule).delete(mail_outbox::cancel),
+        )
+        .route("/mail/outbox/{id}/send", post(mail_outbox::send_now))
+        .route(
+            "/mail/signatures",
+            get(mail_signature::get).put(mail_signature::put),
+        )
+        .route("/mail/drafts", get(mail_drafts::list))
+        .route(
+            "/mail/drafts/{id}",
+            // Files and pictures come base64-encoded in the draft.
+            get(mail_drafts::get)
+                .put(mail_drafts::save)
+                .delete(mail_drafts::delete)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    crate::mail::smtp::MAX_REQUEST_BYTES,
+                )),
+        )
+        .route("/mail/drafts/{id}/mirror", post(mail_drafts::mirror))
         .route("/mail/refresh", post(mail::refresh))
+        .route("/mail/older", post(mail::older))
         .route("/mail/folders", post(mail::create_folder))
         .route(
             "/mail/folders/{id}",
@@ -190,6 +254,19 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/mail/messages/{id}/content", get(mail::content))
         .route("/mail/messages/{id}/images", post(mail::images))
+        .route("/voice", get(voice::status))
+        .route(
+            "/voice/transcribe",
+            // Recordings come base64-encoded.
+            post(voice::transcribe).layer(axum::extract::DefaultBodyLimit::max(
+                crate::voice::audio::MAX_BYTES * 4 / 3 + 1024,
+            )),
+        )
+        .route("/voice/prepare", post(voice::prepare))
+        .route("/voice/speak", post(voice::speak))
+        .route("/voice/packs/{id}", axum::routing::delete(voice::remove))
+        .route("/voice/packs/{id}/download", post(voice::download))
+        .route("/voice/packs/{id}/cancel", post(voice::cancel))
         .route("/web/login-link", post(web::login_link))
         .route("/web/logout", post(web::logout))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));

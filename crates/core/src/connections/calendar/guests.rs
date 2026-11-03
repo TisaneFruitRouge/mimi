@@ -1,11 +1,13 @@
 //! Guests on events: who they are (an address, or someone from People), how they're
 //! written into iCalendar data, and whose events the user may invite people to.
 //!
-//! Calendars never email guests on Mimi's behalf: Google writes are made with
-//! `sendUpdates=none`, and CalDAV attendees carry `SCHEDULE-AGENT=CLIENT` (RFC 6638), which
+//! On Google calendars, Google tells the guests itself (`sendUpdates=all`): the invitation,
+//! changes and cancellations, so the event shows in their calendars as soon as they're
+//! added. Only a trusted person's write to someone the user doesn't know stays quiet
+//! (`sendUpdates=none`). CalDAV attendees carry `SCHEDULE-AGENT=CLIENT` (RFC 6638), which
 //! tells servers such as iCloud, Fastmail and Nextcloud that the client does the
-//! scheduling. Invitations go out only through Mimi's own mail (`invite.rs`), when the
-//! user says so.
+//! scheduling: there, and for those quiet Google writes, invitations go out only through
+//! Mimi's own mail (`invite.rs`), when the user says so.
 
 use std::collections::HashSet;
 
@@ -150,6 +152,26 @@ pub async fn resolve(state: &AppState, inputs: &[String]) -> Result<Vec<Guest>, 
         } else {
             by_name(state, raw).await?
         };
+        if !out.iter().any(|o| o.email == guest.email) {
+            out.push(guest);
+        }
+    }
+    if out.len() > MAX_GUESTS {
+        return Err(format!(
+            "That's more than {MAX_GUESTS} guests. Add the others in the calendar app."
+        ));
+    }
+    Ok(out)
+}
+
+/// Guests given as email addresses only, never looked up in People: what a trusted
+/// person's turn may invite, since it has no business in the user's contacts.
+pub fn addresses_only(inputs: &[String]) -> Result<Vec<Guest>, String> {
+    let mut out: Vec<Guest> = Vec::new();
+    for raw in inputs.iter().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        let guest = Guest::parse(raw)
+            .filter(|_| raw.contains('@'))
+            .ok_or_else(|| format!("Ask them for {raw}'s email address."))?;
         if !out.iter().any(|o| o.email == guest.email) {
             out.push(guest);
         }
