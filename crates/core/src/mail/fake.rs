@@ -56,6 +56,8 @@ pub struct State {
     pub refuse_charset: bool,
     /// Every UID command received: (mailbox, command as received).
     pub commands: Vec<(String, String)>,
+    /// The connection drops when the client checks the flags of what it has, mid-answer.
+    pub drop_flag_sweep: bool,
 }
 
 pub struct FakeMail {
@@ -102,6 +104,7 @@ impl FakeMail {
                 drop_idle: false,
                 refuse_charset: false,
                 commands: Vec::new(),
+                drop_flag_sweep: false,
             }),
             imap_port: imap.local_addr().unwrap().port(),
             smtp_port: smtp.local_addr().unwrap().port(),
@@ -232,6 +235,12 @@ impl FakeMail {
     /// Hangs up on the next connection that's idling (within 50 ms, or when one starts).
     pub fn drop_idle_connection(&self) {
         self.lock().drop_idle = true;
+    }
+
+    /// Drops the connection in the middle of the flags check, after a few lines of its
+    /// answer, as a connection lost on the way would.
+    pub fn set_drop_flag_sweep(&self, drop: bool) {
+        self.lock().drop_flag_sweep = drop;
     }
 
     /// Makes fetching one message fail (`None`: none), as a flaky server might.
@@ -419,6 +428,14 @@ impl FakeMail {
                                 .any(|s| s == u.to_string())
                         })
                     {
+                        return Ok(());
+                    }
+                    let sweep = sub.eq_ignore_ascii_case("FETCH")
+                        && rest.to_uppercase().ends_with("(UID FLAGS)");
+                    if sweep && self.lock().drop_flag_sweep {
+                        let answer = self.uid_command(&tag, "FETCH", rest, &mb);
+                        let partial: String = answer.split_inclusive("\r\n").take(2).collect();
+                        w.write_all(partial.as_bytes()).await?;
                         return Ok(());
                     }
                     out += &*self.uid_command(&tag, &sub.to_uppercase(), rest, &mb);
