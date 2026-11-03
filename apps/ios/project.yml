@@ -1,0 +1,89 @@
+# The iPhone app. `xcodegen` turns this into Mimi.xcodeproj (committed, so building
+# needs only Xcode). Signing: copy Config/Local.example.xcconfig to Config/Local.xcconfig
+# and put your team there.
+name: Mimi
+options:
+  bundleIdPrefix: dev.mimi
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+configFiles:
+  Debug: Config/App.xcconfig
+  Release: Config/App.xcconfig
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+packages:
+  IrohLib:
+    url: https://github.com/n0-computer/iroh-ffi
+    exactVersion: 1.1.0
+targets:
+  Mimi:
+    type: application
+    platform: iOS
+    sources:
+      - path: Mimi
+    dependencies:
+      - package: IrohLib
+      - sdk: SystemConfiguration.framework
+      - sdk: Network.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(MIMI_BUNDLE_ID)
+        PRODUCT_NAME: Mimi
+        INFOPLIST_FILE: Mimi/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        TARGETED_DEVICE_FAMILY: "1"
+        OTHER_LDFLAGS: ["-framework", "Network"]
+        CODE_SIGN_STYLE: Automatic
+  MimiTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: MimiTests
+    dependencies:
+      - target: Mimi
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(MIMI_BUNDLE_ID).tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Mimi.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Mimi
+        BUNDLE_LOADER: $(TEST_HOST)
+  MimiUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: MimiUITests
+    dependencies:
+      - target: Mimi
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(MIMI_BUNDLE_ID).uitests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+        TEST_TARGET_NAME: Mimi
+schemes:
+  Mimi:
+    build:
+      targets:
+        Mimi: all
+        MimiTests: [test]
+    test:
+      targets:
+        - MimiTests
+  # Screenshots of the whole app against a running computer (see WalkthroughTests).
+  Walkthrough:
+    build:
+      targets:
+        Mimi: all
+        MimiUITests: [test]
+    test:
+      targets:
+        - MimiUITests

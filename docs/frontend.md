@@ -74,9 +74,9 @@ Types `Tab`, `SettingsPage` and `Section` are in `src/features/shell/top-bar.tsx
   **Chat** (home), **Calendar**, **Mail** and **People**, ⌘/Ctrl 1–4.
 - **Settings**: everything set up once lives in the Settings window (gear button or
   ⌘/Ctrl ,): a System-Settings-style sidebar with General, Personality, Connections,
-  Models, Voice, Memory, Reminders & notifications, Permissions, Privacy (`SettingsPage`:
-  `general`, `personality`, `connections`, `models`, `voice`, `memory`,
-  `notifications`, `permissions`, `privacy`).
+  Models, Voice, Memory, Reminders & notifications, Permissions, Privacy, Phone
+  (`SettingsPage`: `general`, `personality`, `connections`, `models`, `voice`, `memory`,
+  `notifications`, `permissions`, `privacy`, `phone`).
 - **Search** (⌘/Ctrl K): conversations are behind it, and it also jumps to every panel
   and settings page.
 - **New chat**: ⌘/Ctrl N.

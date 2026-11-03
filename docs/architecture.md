@@ -52,6 +52,7 @@ area has its own document (see [Areas](#areas)).
 | `crates/service` | `mimi-service` | Finds `mimid` and runs it as a login service (systemd, launchd, XDG autostart). Shared by the app and the CLI. |
 | `apps/desktop/src-tauri` | `mimi-desktop` | Tauri shell. Exposes Tauri commands that call `mimi-client`. |
 | `apps/desktop/src` | `@mimi/desktop` | React + Tailwind + shadcn/ui frontend. |
+| `apps/ios` | Mimi for iPhone | SwiftUI client over iroh (see [Phone](phone.md)). |
 
 ## Daemon discovery and auth
 
@@ -97,8 +98,8 @@ Browsers can't read the discovery file, so they sign in with a link:
 
 Known limit: browsers share cookies across ports of the same host, so another web app
 on `127.0.0.1` could receive the cookie. Such software already runs as the user, so
-this doesn't widen what it can reach, but remote access will need a proper origin and
-TLS.
+this doesn't widen what it can reach, but a browser on another device would need a proper
+origin and TLS (phones use iroh instead, see [Phone](phone.md)).
 
 ## Areas
 
@@ -146,5 +147,5 @@ the rules that must not be broken, then the design.
 
 - **Integrations**: MCP. Each tool declares its capabilities (hosts, paths, outbound
   messaging) and the user approves them. Untrusted plugins run sandboxed.
-- **Remote access**: a separate, opt-in listener with its own device pairing and
-  authentication. The loopback listener stays loopback-only.
+- **Phone notifications** while the app is closed (Apple's push service needs a key per
+  developer account, which doesn't fit "no Mimi server" for everyone yet).

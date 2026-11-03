@@ -4,12 +4,13 @@ use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::{
-    Connection, Conversation, Delivery, GuestApproval, Message, ModelPull, Provider, RuntimeStatus,
-    Settings, UpdateStatus, VoiceStatus,
+    Connection, Conversation, Delivery, GuestApproval, Message, ModelPull, Provider, RemoteAccess,
+    RuntimeStatus, Settings, UpdateStatus, VoiceStatus,
 };
 
 /// Pushed by the daemon to every client connected to `GET /v1/events` (WebSocket, one
-/// JSON event per text frame).
+/// JSON event per text frame; or, with `Accept: application/x-ndjson`, one JSON event per
+/// line of a streamed response, which is how phones listen).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[ts(export)]
@@ -85,6 +86,10 @@ pub enum Event {
     /// The saved drafts changed: one was saved, deleted or sent, or a server's Drafts
     /// folder changed (`GET /v1/mail/drafts`).
     MailDrafts,
+    /// Phones were paired or removed, connected or disconnected, or the relay changed.
+    RemoteChanged {
+        remote: RemoteAccess,
+    },
     /// This client fell behind and missed events. Refetch any state you display.
     Resync,
     /// The user clicked a new-mail notification on this computer: the desktop app comes

@@ -9,6 +9,7 @@ export const useSettings = () => useQuery({ queryKey: keys.settings, queryFn: ap
 export const useUpdates = () => useQuery({ queryKey: keys.updates, queryFn: api.updates });
 /** Speech recognition and voices: what's here, what's downloading. */
 export const useVoice = () => useQuery({ queryKey: keys.voice, queryFn: api.voice });
+export const useRemote = () => useQuery({ queryKey: keys.remote, queryFn: api.remote });
 /** What the user calls their assistant, e.g. for "Ask Mimi about this". */
 export const useAssistantName = () => useSettings().data?.assistant_name || "Mimi";
 export const useProviders =() => useQuery({ queryKey: keys.providers, queryFn: api.providers });

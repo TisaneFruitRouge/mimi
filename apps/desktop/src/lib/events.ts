@@ -147,6 +147,9 @@ function apply(qc: QueryClient, event: Event) {
     case "voice_changed":
       qc.setQueryData(keys.voice, event.voice);
       break;
+    case "remote_changed":
+      qc.setQueryData(keys.remote, event.remote);
+      break;
     case "runtime_changed":
       qc.setQueryData(keys.runtime, event.runtime);
       break;

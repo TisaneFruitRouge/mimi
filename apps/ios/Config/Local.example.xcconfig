@@ -1,0 +1,6 @@
+// Copy to Local.xcconfig (ignored by git) and fill in.
+// Your team: Xcode › Settings › Accounts, or the OU of your "Apple Development"
+// certificate. A free Apple account works, but apps it signs expire after 7 days.
+DEVELOPMENT_TEAM = ABCDE12345
+// Bundle ids are global: a free account needs one nobody else has registered.
+MIMI_BUNDLE_ID = com.example.mimi

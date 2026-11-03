@@ -1,0 +1,1002 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0362A64DE62228C1507EBA19 /* PeopleSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A113282FB863BE461F768D01 /* PeopleSettingsTests.swift */; };
+		043E80C8E0709C78FCE5C081 /* PrivacySettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C66F126D8A61D1EE5695A2A /* PrivacySettingsView.swift */; };
+		08E0C35DB04E4D0ADE081E65 /* CalendarChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB953CFD30DE13B1FC473DC4 /* CalendarChrome.swift */; };
+		0D7E3F2B0739C664D6E593E5 /* MimiAPI+Calendar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4859FE9877C3B9DF56B4A868 /* MimiAPI+Calendar.swift */; };
+		0F77E266D56004CC38FAD586 /* MessageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CB6B548EC877A3B87C728AB /* MessageView.swift */; };
+		1683A29AA60F231284007C8C /* PeopleFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 081C84F71D70760932FD9F7C /* PeopleFlow.swift */; };
+		16879E0435D4D3F9D22191B9 /* MailFolderEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E35EC5579E5E974AFC57021 /* MailFolderEditor.swift */; };
+		1DA626A80FFAB78F78466915 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 991BBBF73F27B6F3675F7F08 /* AppModel.swift */; };
+		237E79C300C99439B4CA7A39 /* MimiAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E2E121E2F7913C46E569184 /* MimiAPI.swift */; };
+		26A594DF5F74C6EC28877B9F /* MailWebPageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4792732E6C2761C6D55E6056 /* MailWebPageTests.swift */; };
+		26E9F4E758FB4DCCA137E706 /* CalendarWalkthroughTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B16D540B1566C1028F25B0B2 /* CalendarWalkthroughTests.swift */; };
+		32A9FA15BBEBBCBBC685CD60 /* MergeViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82B9E989720EDD9A863CD823 /* MergeViews.swift */; };
+		36FFAAD356E811BBD3D6A345 /* MailDraftCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = C05CC12A5AA3A10F26C290E1 /* MailDraftCard.swift */; };
+		38AEC94DFD121AAC5D345C62 /* AssistantAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A983717395C201A71211196 /* AssistantAvatar.swift */; };
+		397695F27B33C72D3A0FBEF7 /* MailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F79E5982D095863985066D11 /* MailView.swift */; };
+		3EDA155E2555DCAC940F77B8 /* ModelsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7ACD8670172AC9D75BDCDF5 /* ModelsSettingsView.swift */; };
+		400D01E6C1980737F95FBC9E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 974CD88FA4A66803E01BED12 /* Assets.xcassets */; };
+		4679EEA90DA843FF808F09B6 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83B6958E8EA884747E0DF12B /* ChatView.swift */; };
+		47046C7F11C4A4DC6B588E65 /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = C90A8CEE9691A565B2C1F822 /* Keychain.swift */; };
+		4D3B89484F77D4EB5110723D /* Invitations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99D168F90F4F9024F7B4142D /* Invitations.swift */; };
+		558A726336D946F2CE68B02C /* CalendarStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD831225A69BF8D7E626C5D8 /* CalendarStyle.swift */; };
+		579038ED6FE6EED749A2D2E1 /* GeneralSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61F5673CEC7CBA0DAD5B763E /* GeneralSettingsView.swift */; };
+		58DBA81A8204A02D70756A5D /* MailTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E51774B4A852AE5C12BD110 /* MailTests.swift */; };
+		5C9B359C60FCA49A9AB27581 /* PhoneSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEF94B91844BAB155FA773B9 /* PhoneSettingsView.swift */; };
+		5D06FEBB134728B25578ED66 /* SettingsComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0019FE6E30B63B45DE75EF32 /* SettingsComponents.swift */; };
+		5DB10E4B6620C61F3B78424F /* ConnectFlows.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FA98F052843C43A164D2FB2 /* ConnectFlows.swift */; };
+		6349538B39FADB707A6C0DDE /* MailStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E654BBBBA5ACBC94F1BBBB5D /* MailStore.swift */; };
+		6444A7B3D7A8DB19931395F7 /* PeopleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3C90E96DEE5568750DD5A87 /* PeopleView.swift */; };
+		65048B5AEAF79AEB26C8086E /* MimiApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = E32D0782CC29C8F9E3BCA1D7 /* MimiApp.swift */; };
+		669650368F626441627B172E /* SystemConfiguration.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9EB49058F70487BB0BF77240 /* SystemConfiguration.framework */; };
+		679E45A48BDD1F85453186D2 /* MailComposeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3716683E60317F918302F915 /* MailComposeView.swift */; };
+		69A1C50B270A46ABFECA3161 /* MailPrivacyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBBE23352470DD4C144B2895 /* MailPrivacyView.swift */; };
+		72AAF121566801BF7A542B47 /* PeopleSettingsWalkthroughTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4FA73CE4866B3D97446486B /* PeopleSettingsWalkthroughTests.swift */; };
+		72BA43B7A2BAB791BC3C6307 /* Calendar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23347BB42E74954E0E35C79C /* Calendar.swift */; };
+		74EC5F055AF54A216E0277C9 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5AB989E8F33AAAD708557CE /* Theme.swift */; };
+		75F884A375B755A546BDCE97 /* MimiAPI+People.swift in Sources */ = {isa = PBXBuildFile; fileRef = D72280EAAE623F3EADA26C48 /* MimiAPI+People.swift */; };
+		76A63BAA65E1166DE8C08262 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F4E040DCD4E20E7AF9DD012 /* SettingsView.swift */; };
+		78246481DC7CA8B6F6A117AC /* Network.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DDC0F46DEA99D7E088C5D5A0 /* Network.framework */; };
+		79144E96A03B7884389E084F /* Schedule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91E4B3FDB0408FB435B305BC /* Schedule.swift */; };
+		79A4BEE9B7EBE8ABF216FECF /* CalendarTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB64C938A0531D399045C0BB /* CalendarTests.swift */; };
+		7BDCD00A22A35623479FF081 /* AgendaList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F0737723770F044533D0A1E /* AgendaList.swift */; };
+		7F1480B7992EE29FD102AED2 /* MailMessageBody.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10D6113F829ABF1537D243F4 /* MailMessageBody.swift */; };
+		808B9ADFE9B836E90C1BAFE5 /* ConversationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28CAAAA64769C20F7E2FA480 /* ConversationsView.swift */; };
+		835AF9A18C172D9E174AC9F7 /* EventActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCB3D36CA31BBBC5F1269C32 /* EventActions.swift */; };
+		83DA0FB5319D37AFA2864C36 /* PeopleStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA44DBBABEF211B0EA8B8A20 /* PeopleStyle.swift */; };
+		84EE851D0AD22187761298BE /* CalendarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFB7734618676D4FD318E19E /* CalendarView.swift */; };
+		89C36313EC5A2299923D3AF1 /* RemindersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63B557E781E38E193921CDD8 /* RemindersView.swift */; };
+		8EE19E9A28D1C1D9F0D436AF /* MarkdownText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BF4C0CBD5260865DE31FAF5 /* MarkdownText.swift */; };
+		8F111D647B6C77E131AC8090 /* IrohLib in Frameworks */ = {isa = PBXBuildFile; productRef = 2893CA7AE6D79ED65264ADAE /* IrohLib */; };
+		911A58A60298216A1ECA3230 /* MailWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45F38157687CD64266857F07 /* MailWebView.swift */; };
+		933028CAC44FCCD654EE1395 /* ScheduleEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7478622BA2FFA30FAB486AB2 /* ScheduleEditor.swift */; };
+		94E621B047A3C263FB97EB0B /* WalkthroughTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AC04CE41B1F05C9EBF37655 /* WalkthroughTests.swift */; };
+		9C7CCC82605B7876B07DF90D /* Remote.swift in Sources */ = {isa = PBXBuildFile; fileRef = F95B54A0EF59A7B079462487 /* Remote.swift */; };
+		A260822BC554D48D628F40CA /* ModelSourceViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7834A0EAC77D885690D93CB /* ModelSourceViews.swift */; };
+		A29093969A3598222B21D9F8 /* ActionArguments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D243A1C23A2E25DF4304B92 /* ActionArguments.swift */; };
+		A32D751E6E1FAD41CE6972FC /* EventEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2C7EDA4A6D628027312BC94 /* EventEditor.swift */; };
+		A69837181E7A1B1F6ACA46C8 /* JSONValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E01C5D443BE8E8B49BA5154 /* JSONValue.swift */; };
+		ACD3EA9914E001F81D4446D5 /* MailReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C824580BC57E2F9DAB0B21C4 /* MailReaderView.swift */; };
+		ADFB3C8F53E3D622DBDB8D6D /* PersonForms.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41115A3C5078E002F58523B0 /* PersonForms.swift */; };
+		B00EF10CA19AC65119ACD999 /* CalendarMath.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2047A62BA87CB69032B6B2B /* CalendarMath.swift */; };
+		B1AF6CE934DC1DBDED9FD2CE /* ConnectionsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93E71ADBF126FC6D939320DC /* ConnectionsSettingsView.swift */; };
+		B72E3BEBF4A12B84790C9FE0 /* EventDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EC352169D1F89E851B9984A /* EventDetailView.swift */; };
+		B93416B1AA52F3F1111B52CA /* DaemonLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C44E04DF9F1F2CF7899660C /* DaemonLink.swift */; };
+		BBB310994F992190E2246CD5 /* MimiAPI+Mail.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3A92240A373B1B555747858 /* MimiAPI+Mail.swift */; };
+		BC092006A9421D0A3F1FF845 /* MailText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E48281E9093D88DB3A97BCF /* MailText.swift */; };
+		BD679C384F255B4A71BA2F19 /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9C17D0D8C8E223E3FEE8291 /* WelcomeView.swift */; };
+		BEEA26B3DBC96D8001D85497 /* NotificationsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E7D7F77A4E4896A691CAF24 /* NotificationsSettingsView.swift */; };
+		C0A3B1F1F1773C47EBE37115 /* ActionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F98F7E51564F8F806E8DDDFF /* ActionsView.swift */; };
+		C1641D7FE43EC5EC30EB903E /* SettingsData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EDCED8EB311DA34AE857CB8 /* SettingsData.swift */; };
+		C57E9CB2E6EA0477043338FB /* Mail.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA923574987297FC53394234 /* Mail.swift */; };
+		C950102985458C26A715C18A /* MailListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53769EFA7005630ADB50D3A9 /* MailListView.swift */; };
+		D16D9E61D72BDEEBF8FF3B0B /* MailWalkthroughTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1EA615912B653EA23664C2C0 /* MailWalkthroughTests.swift */; };
+		DC9BEA08031B15EEAF2B252A /* MailFolderLooks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E2951E762B1BE88E5F8C62F /* MailFolderLooks.swift */; };
+		DE5BE4A0104FC6CBD24B7E10 /* PersonalitySettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEEA9B2DD4D97D5503FB680A /* PersonalitySettingsView.swift */; };
+		E20B695F0B42467D37324D93 /* MimiTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34D290F57CAF5F711269C458 /* MimiTests.swift */; };
+		E28FC9FB29BBE5260173D7F8 /* Composer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B018ED2B903AA1FEB8A80BE6 /* Composer.swift */; };
+		EB528EDB0E3307DC76848D89 /* Chat.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB154F39B13BDF3749744D35 /* Chat.swift */; };
+		EF01E23DC54C37B40D0203BC /* ScheduleDraft.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA45CCA7A3DDAA2801CFBEAF /* ScheduleDraft.swift */; };
+		EFD7A143F4022770CB276C73 /* CalendarStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B7E1371A52B71BE1D034D3D /* CalendarStore.swift */; };
+		F44A701468A8F3A900F62C71 /* MimiAPI+Settings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 098999EDED58763A334D6882 /* MimiAPI+Settings.swift */; };
+		F8BF2BDF85F0FC4ADBC1F518 /* MemorySettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 577308B8063CE68FD23A7C76 /* MemorySettingsView.swift */; };
+		F9CDF3D07BD4CC3F995FDE49 /* PermissionsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B51DDB41791BD73CFAA4DB5 /* PermissionsSettingsView.swift */; };
+		FC179B7741C16085F6DA0B6E /* People.swift in Sources */ = {isa = PBXBuildFile; fileRef = 599B214F0977BD791F70F33A /* People.swift */; };
+		FCEFB4D2C3099A88B4E932A1 /* PersonView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EE177F34360A4D23814B485 /* PersonView.swift */; };
+		FEE7B78A6A673F585C2C2DDF /* DayTimeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31601E6483E77D8A2C7834CF /* DayTimeline.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		D5948B197CF732D53E67932F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5041304FDC84EBE759FC7EA6 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 221CA24A547DE24235BA5178;
+			remoteInfo = Mimi;
+		};
+		FCBF5C67EBF3469A4FC432F2 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5041304FDC84EBE759FC7EA6 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 221CA24A547DE24235BA5178;
+			remoteInfo = Mimi;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		0019FE6E30B63B45DE75EF32 /* SettingsComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsComponents.swift; sourceTree = "<group>"; };
+		081C84F71D70760932FD9F7C /* PeopleFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeopleFlow.swift; sourceTree = "<group>"; };
+		098999EDED58763A334D6882 /* MimiAPI+Settings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MimiAPI+Settings.swift"; sourceTree = "<group>"; };
+		0A983717395C201A71211196 /* AssistantAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantAvatar.swift; sourceTree = "<group>"; };
+		0C44E04DF9F1F2CF7899660C /* DaemonLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DaemonLink.swift; sourceTree = "<group>"; };
+		0E48281E9093D88DB3A97BCF /* MailText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailText.swift; sourceTree = "<group>"; };
+		0E4DC312712BAF6740119236 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		0E51774B4A852AE5C12BD110 /* MailTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailTests.swift; sourceTree = "<group>"; };
+		0F0737723770F044533D0A1E /* AgendaList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgendaList.swift; sourceTree = "<group>"; };
+		10D6113F829ABF1537D243F4 /* MailMessageBody.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailMessageBody.swift; sourceTree = "<group>"; };
+		1D243A1C23A2E25DF4304B92 /* ActionArguments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActionArguments.swift; sourceTree = "<group>"; };
+		1EA615912B653EA23664C2C0 /* MailWalkthroughTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailWalkthroughTests.swift; sourceTree = "<group>"; };
+		23347BB42E74954E0E35C79C /* Calendar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Calendar.swift; sourceTree = "<group>"; };
+		28CAAAA64769C20F7E2FA480 /* ConversationsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationsView.swift; sourceTree = "<group>"; };
+		2B7E1371A52B71BE1D034D3D /* CalendarStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarStore.swift; sourceTree = "<group>"; };
+		2C30D7C0D2554C5520809D27 /* Mimi.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Mimi.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		2EDCED8EB311DA34AE857CB8 /* SettingsData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsData.swift; sourceTree = "<group>"; };
+		31601E6483E77D8A2C7834CF /* DayTimeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayTimeline.swift; sourceTree = "<group>"; };
+		34D290F57CAF5F711269C458 /* MimiTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MimiTests.swift; sourceTree = "<group>"; };
+		3716683E60317F918302F915 /* MailComposeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailComposeView.swift; sourceTree = "<group>"; };
+		3EE177F34360A4D23814B485 /* PersonView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonView.swift; sourceTree = "<group>"; };
+		3F4E040DCD4E20E7AF9DD012 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		41115A3C5078E002F58523B0 /* PersonForms.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonForms.swift; sourceTree = "<group>"; };
+		45F38157687CD64266857F07 /* MailWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailWebView.swift; sourceTree = "<group>"; };
+		4792732E6C2761C6D55E6056 /* MailWebPageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailWebPageTests.swift; sourceTree = "<group>"; };
+		4859FE9877C3B9DF56B4A868 /* MimiAPI+Calendar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MimiAPI+Calendar.swift"; sourceTree = "<group>"; };
+		4E2E121E2F7913C46E569184 /* MimiAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MimiAPI.swift; sourceTree = "<group>"; };
+		53769EFA7005630ADB50D3A9 /* MailListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailListView.swift; sourceTree = "<group>"; };
+		577308B8063CE68FD23A7C76 /* MemorySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemorySettingsView.swift; sourceTree = "<group>"; };
+		599B214F0977BD791F70F33A /* People.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = People.swift; sourceTree = "<group>"; };
+		5B51DDB41791BD73CFAA4DB5 /* PermissionsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsSettingsView.swift; sourceTree = "<group>"; };
+		61F5673CEC7CBA0DAD5B763E /* GeneralSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneralSettingsView.swift; sourceTree = "<group>"; };
+		63B557E781E38E193921CDD8 /* RemindersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemindersView.swift; sourceTree = "<group>"; };
+		6B94FABD767B5D79EA1840DD /* MimiTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MimiTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		6C66F126D8A61D1EE5695A2A /* PrivacySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivacySettingsView.swift; sourceTree = "<group>"; };
+		6CB6B548EC877A3B87C728AB /* MessageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageView.swift; sourceTree = "<group>"; };
+		6E2951E762B1BE88E5F8C62F /* MailFolderLooks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailFolderLooks.swift; sourceTree = "<group>"; };
+		6FA98F052843C43A164D2FB2 /* ConnectFlows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectFlows.swift; sourceTree = "<group>"; };
+		7478622BA2FFA30FAB486AB2 /* ScheduleEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleEditor.swift; sourceTree = "<group>"; };
+		7E35EC5579E5E974AFC57021 /* MailFolderEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailFolderEditor.swift; sourceTree = "<group>"; };
+		82B9E989720EDD9A863CD823 /* MergeViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MergeViews.swift; sourceTree = "<group>"; };
+		83B6958E8EA884747E0DF12B /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
+		8BF4C0CBD5260865DE31FAF5 /* MarkdownText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownText.swift; sourceTree = "<group>"; };
+		8E01C5D443BE8E8B49BA5154 /* JSONValue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONValue.swift; sourceTree = "<group>"; };
+		91E4B3FDB0408FB435B305BC /* Schedule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Schedule.swift; sourceTree = "<group>"; };
+		93E71ADBF126FC6D939320DC /* ConnectionsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionsSettingsView.swift; sourceTree = "<group>"; };
+		952B58D9FDFA3BFA4B9C5761 /* MimiUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MimiUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		974CD88FA4A66803E01BED12 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		991BBBF73F27B6F3675F7F08 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		99D168F90F4F9024F7B4142D /* Invitations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Invitations.swift; sourceTree = "<group>"; };
+		9AC04CE41B1F05C9EBF37655 /* WalkthroughTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalkthroughTests.swift; sourceTree = "<group>"; };
+		9E7D7F77A4E4896A691CAF24 /* NotificationsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationsSettingsView.swift; sourceTree = "<group>"; };
+		9EB49058F70487BB0BF77240 /* SystemConfiguration.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SystemConfiguration.framework; path = System/Library/Frameworks/SystemConfiguration.framework; sourceTree = SDKROOT; };
+		9EC352169D1F89E851B9984A /* EventDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventDetailView.swift; sourceTree = "<group>"; };
+		A113282FB863BE461F768D01 /* PeopleSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeopleSettingsTests.swift; sourceTree = "<group>"; };
+		A2047A62BA87CB69032B6B2B /* CalendarMath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarMath.swift; sourceTree = "<group>"; };
+		AD831225A69BF8D7E626C5D8 /* CalendarStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarStyle.swift; sourceTree = "<group>"; };
+		AEEA9B2DD4D97D5503FB680A /* PersonalitySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalitySettingsView.swift; sourceTree = "<group>"; };
+		B018ED2B903AA1FEB8A80BE6 /* Composer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Composer.swift; sourceTree = "<group>"; };
+		B16D540B1566C1028F25B0B2 /* CalendarWalkthroughTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarWalkthroughTests.swift; sourceTree = "<group>"; };
+		B3C90E96DEE5568750DD5A87 /* PeopleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeopleView.swift; sourceTree = "<group>"; };
+		B5AB989E8F33AAAD708557CE /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		BCB3D36CA31BBBC5F1269C32 /* EventActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventActions.swift; sourceTree = "<group>"; };
+		C05CC12A5AA3A10F26C290E1 /* MailDraftCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailDraftCard.swift; sourceTree = "<group>"; };
+		C3A92240A373B1B555747858 /* MimiAPI+Mail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MimiAPI+Mail.swift"; sourceTree = "<group>"; };
+		C7834A0EAC77D885690D93CB /* ModelSourceViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelSourceViews.swift; sourceTree = "<group>"; };
+		C7ACD8670172AC9D75BDCDF5 /* ModelsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelsSettingsView.swift; sourceTree = "<group>"; };
+		C824580BC57E2F9DAB0B21C4 /* MailReaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailReaderView.swift; sourceTree = "<group>"; };
+		C90A8CEE9691A565B2C1F822 /* Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keychain.swift; sourceTree = "<group>"; };
+		CA45CCA7A3DDAA2801CFBEAF /* ScheduleDraft.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleDraft.swift; sourceTree = "<group>"; };
+		CB64C938A0531D399045C0BB /* CalendarTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarTests.swift; sourceTree = "<group>"; };
+		D2C7EDA4A6D628027312BC94 /* EventEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventEditor.swift; sourceTree = "<group>"; };
+		D72280EAAE623F3EADA26C48 /* MimiAPI+People.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MimiAPI+People.swift"; sourceTree = "<group>"; };
+		D9C17D0D8C8E223E3FEE8291 /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
+		DA44DBBABEF211B0EA8B8A20 /* PeopleStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeopleStyle.swift; sourceTree = "<group>"; };
+		DA923574987297FC53394234 /* Mail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mail.swift; sourceTree = "<group>"; };
+		DB154F39B13BDF3749744D35 /* Chat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Chat.swift; sourceTree = "<group>"; };
+		DDC0F46DEA99D7E088C5D5A0 /* Network.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Network.framework; path = System/Library/Frameworks/Network.framework; sourceTree = SDKROOT; };
+		DF0555E83932D36046B4501D /* App.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = App.xcconfig; sourceTree = "<group>"; };
+		DFB7734618676D4FD318E19E /* CalendarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarView.swift; sourceTree = "<group>"; };
+		E32D0782CC29C8F9E3BCA1D7 /* MimiApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MimiApp.swift; sourceTree = "<group>"; };
+		E4FA73CE4866B3D97446486B /* PeopleSettingsWalkthroughTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeopleSettingsWalkthroughTests.swift; sourceTree = "<group>"; };
+		E654BBBBA5ACBC94F1BBBB5D /* MailStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailStore.swift; sourceTree = "<group>"; };
+		EB953CFD30DE13B1FC473DC4 /* CalendarChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarChrome.swift; sourceTree = "<group>"; };
+		F79E5982D095863985066D11 /* MailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailView.swift; sourceTree = "<group>"; };
+		F95B54A0EF59A7B079462487 /* Remote.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Remote.swift; sourceTree = "<group>"; };
+		F98F7E51564F8F806E8DDDFF /* ActionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActionsView.swift; sourceTree = "<group>"; };
+		FBBE23352470DD4C144B2895 /* MailPrivacyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailPrivacyView.swift; sourceTree = "<group>"; };
+		FEF94B91844BAB155FA773B9 /* PhoneSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneSettingsView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		2BBDF19F4436F78255E125C6 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8F111D647B6C77E131AC8090 /* IrohLib in Frameworks */,
+				669650368F626441627B172E /* SystemConfiguration.framework in Frameworks */,
+				78246481DC7CA8B6F6A117AC /* Network.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0533B32FDEE081C11C7C4CA5 /* MimiTests */ = {
+			isa = PBXGroup;
+			children = (
+				CB64C938A0531D399045C0BB /* CalendarTests.swift */,
+				0E51774B4A852AE5C12BD110 /* MailTests.swift */,
+				4792732E6C2761C6D55E6056 /* MailWebPageTests.swift */,
+				34D290F57CAF5F711269C458 /* MimiTests.swift */,
+				A113282FB863BE461F768D01 /* PeopleSettingsTests.swift */,
+			);
+			path = MimiTests;
+			sourceTree = "<group>";
+		};
+		1101140AA59675C52B7F8BA7 /* Connection */ = {
+			isa = PBXGroup;
+			children = (
+				0C44E04DF9F1F2CF7899660C /* DaemonLink.swift */,
+				C90A8CEE9691A565B2C1F822 /* Keychain.swift */,
+				4E2E121E2F7913C46E569184 /* MimiAPI.swift */,
+				4859FE9877C3B9DF56B4A868 /* MimiAPI+Calendar.swift */,
+				C3A92240A373B1B555747858 /* MimiAPI+Mail.swift */,
+				D72280EAAE623F3EADA26C48 /* MimiAPI+People.swift */,
+				098999EDED58763A334D6882 /* MimiAPI+Settings.swift */,
+			);
+			path = Connection;
+			sourceTree = "<group>";
+		};
+		3587FBFD3CFFA0613ABE1ABB /* Store */ = {
+			isa = PBXGroup;
+			children = (
+				991BBBF73F27B6F3675F7F08 /* AppModel.swift */,
+			);
+			path = Store;
+			sourceTree = "<group>";
+		};
+		5762DDC39903755C3DBD67FC = {
+			isa = PBXGroup;
+			children = (
+				E435C386DA8803C4F895FC2D /* Config */,
+				EE309BB3F16D58129E4220ED /* Mimi */,
+				0533B32FDEE081C11C7C4CA5 /* MimiTests */,
+				F9655301DB0283531EC864CE /* MimiUITests */,
+				9B6371A3834271ECC0FD5437 /* Frameworks */,
+				9FD12BC5412CC3E7E7EACFDA /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		7FF1B17C51F336283B7FE318 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				23347BB42E74954E0E35C79C /* Calendar.swift */,
+				DB154F39B13BDF3749744D35 /* Chat.swift */,
+				8E01C5D443BE8E8B49BA5154 /* JSONValue.swift */,
+				DA923574987297FC53394234 /* Mail.swift */,
+				599B214F0977BD791F70F33A /* People.swift */,
+				F95B54A0EF59A7B079462487 /* Remote.swift */,
+				91E4B3FDB0408FB435B305BC /* Schedule.swift */,
+				2EDCED8EB311DA34AE857CB8 /* SettingsData.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		8BFC8469AE0131086104EB5C /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				6FA98F052843C43A164D2FB2 /* ConnectFlows.swift */,
+				93E71ADBF126FC6D939320DC /* ConnectionsSettingsView.swift */,
+				61F5673CEC7CBA0DAD5B763E /* GeneralSettingsView.swift */,
+				577308B8063CE68FD23A7C76 /* MemorySettingsView.swift */,
+				C7834A0EAC77D885690D93CB /* ModelSourceViews.swift */,
+				C7ACD8670172AC9D75BDCDF5 /* ModelsSettingsView.swift */,
+				5B51DDB41791BD73CFAA4DB5 /* PermissionsSettingsView.swift */,
+				AEEA9B2DD4D97D5503FB680A /* PersonalitySettingsView.swift */,
+				FEF94B91844BAB155FA773B9 /* PhoneSettingsView.swift */,
+				6C66F126D8A61D1EE5695A2A /* PrivacySettingsView.swift */,
+				0019FE6E30B63B45DE75EF32 /* SettingsComponents.swift */,
+				3F4E040DCD4E20E7AF9DD012 /* SettingsView.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+		914DD07D83F966D195A231E3 /* Design */ = {
+			isa = PBXGroup;
+			children = (
+				0A983717395C201A71211196 /* AssistantAvatar.swift */,
+				8BF4C0CBD5260865DE31FAF5 /* MarkdownText.swift */,
+				B5AB989E8F33AAAD708557CE /* Theme.swift */,
+			);
+			path = Design;
+			sourceTree = "<group>";
+		};
+		94793361946DA6C1DB6D9B10 /* People */ = {
+			isa = PBXGroup;
+			children = (
+				82B9E989720EDD9A863CD823 /* MergeViews.swift */,
+				081C84F71D70760932FD9F7C /* PeopleFlow.swift */,
+				DA44DBBABEF211B0EA8B8A20 /* PeopleStyle.swift */,
+				B3C90E96DEE5568750DD5A87 /* PeopleView.swift */,
+				41115A3C5078E002F58523B0 /* PersonForms.swift */,
+				3EE177F34360A4D23814B485 /* PersonView.swift */,
+			);
+			path = People;
+			sourceTree = "<group>";
+		};
+		985299994C7A414F863FAF92 /* Pairing */ = {
+			isa = PBXGroup;
+			children = (
+				D9C17D0D8C8E223E3FEE8291 /* WelcomeView.swift */,
+			);
+			path = Pairing;
+			sourceTree = "<group>";
+		};
+		9B6371A3834271ECC0FD5437 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				DDC0F46DEA99D7E088C5D5A0 /* Network.framework */,
+				9EB49058F70487BB0BF77240 /* SystemConfiguration.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		9FD12BC5412CC3E7E7EACFDA /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				2C30D7C0D2554C5520809D27 /* Mimi.app */,
+				6B94FABD767B5D79EA1840DD /* MimiTests.xctest */,
+				952B58D9FDFA3BFA4B9C5761 /* MimiUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A382648CBE1862FD2C0DCBC7 /* Calendar */ = {
+			isa = PBXGroup;
+			children = (
+				0F0737723770F044533D0A1E /* AgendaList.swift */,
+				EB953CFD30DE13B1FC473DC4 /* CalendarChrome.swift */,
+				A2047A62BA87CB69032B6B2B /* CalendarMath.swift */,
+				2B7E1371A52B71BE1D034D3D /* CalendarStore.swift */,
+				AD831225A69BF8D7E626C5D8 /* CalendarStyle.swift */,
+				DFB7734618676D4FD318E19E /* CalendarView.swift */,
+				31601E6483E77D8A2C7834CF /* DayTimeline.swift */,
+				BCB3D36CA31BBBC5F1269C32 /* EventActions.swift */,
+				9EC352169D1F89E851B9984A /* EventDetailView.swift */,
+				D2C7EDA4A6D628027312BC94 /* EventEditor.swift */,
+				99D168F90F4F9024F7B4142D /* Invitations.swift */,
+				9E7D7F77A4E4896A691CAF24 /* NotificationsSettingsView.swift */,
+				63B557E781E38E193921CDD8 /* RemindersView.swift */,
+				CA45CCA7A3DDAA2801CFBEAF /* ScheduleDraft.swift */,
+				7478622BA2FFA30FAB486AB2 /* ScheduleEditor.swift */,
+			);
+			path = Calendar;
+			sourceTree = "<group>";
+		};
+		B0B7C087B15FB11B0583AF34 /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				A382648CBE1862FD2C0DCBC7 /* Calendar */,
+				EFDDCC96A3C6DE255C0B6D41 /* Chat */,
+				F1FF450F09F3158CACD9802D /* Mail */,
+				985299994C7A414F863FAF92 /* Pairing */,
+				94793361946DA6C1DB6D9B10 /* People */,
+				8BFC8469AE0131086104EB5C /* Settings */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		BA755654D77BB5EF6513DDB7 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				E32D0782CC29C8F9E3BCA1D7 /* MimiApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		E435C386DA8803C4F895FC2D /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				DF0555E83932D36046B4501D /* App.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		EE309BB3F16D58129E4220ED /* Mimi */ = {
+			isa = PBXGroup;
+			children = (
+				974CD88FA4A66803E01BED12 /* Assets.xcassets */,
+				0E4DC312712BAF6740119236 /* Info.plist */,
+				BA755654D77BB5EF6513DDB7 /* App */,
+				1101140AA59675C52B7F8BA7 /* Connection */,
+				914DD07D83F966D195A231E3 /* Design */,
+				B0B7C087B15FB11B0583AF34 /* Features */,
+				7FF1B17C51F336283B7FE318 /* Models */,
+				3587FBFD3CFFA0613ABE1ABB /* Store */,
+			);
+			path = Mimi;
+			sourceTree = "<group>";
+		};
+		EFDDCC96A3C6DE255C0B6D41 /* Chat */ = {
+			isa = PBXGroup;
+			children = (
+				1D243A1C23A2E25DF4304B92 /* ActionArguments.swift */,
+				F98F7E51564F8F806E8DDDFF /* ActionsView.swift */,
+				83B6958E8EA884747E0DF12B /* ChatView.swift */,
+				B018ED2B903AA1FEB8A80BE6 /* Composer.swift */,
+				28CAAAA64769C20F7E2FA480 /* ConversationsView.swift */,
+				6CB6B548EC877A3B87C728AB /* MessageView.swift */,
+			);
+			path = Chat;
+			sourceTree = "<group>";
+		};
+		F1FF450F09F3158CACD9802D /* Mail */ = {
+			isa = PBXGroup;
+			children = (
+				3716683E60317F918302F915 /* MailComposeView.swift */,
+				C05CC12A5AA3A10F26C290E1 /* MailDraftCard.swift */,
+				7E35EC5579E5E974AFC57021 /* MailFolderEditor.swift */,
+				6E2951E762B1BE88E5F8C62F /* MailFolderLooks.swift */,
+				53769EFA7005630ADB50D3A9 /* MailListView.swift */,
+				10D6113F829ABF1537D243F4 /* MailMessageBody.swift */,
+				FBBE23352470DD4C144B2895 /* MailPrivacyView.swift */,
+				C824580BC57E2F9DAB0B21C4 /* MailReaderView.swift */,
+				E654BBBBA5ACBC94F1BBBB5D /* MailStore.swift */,
+				0E48281E9093D88DB3A97BCF /* MailText.swift */,
+				F79E5982D095863985066D11 /* MailView.swift */,
+				45F38157687CD64266857F07 /* MailWebView.swift */,
+			);
+			path = Mail;
+			sourceTree = "<group>";
+		};
+		F9655301DB0283531EC864CE /* MimiUITests */ = {
+			isa = PBXGroup;
+			children = (
+				B16D540B1566C1028F25B0B2 /* CalendarWalkthroughTests.swift */,
+				1EA615912B653EA23664C2C0 /* MailWalkthroughTests.swift */,
+				E4FA73CE4866B3D97446486B /* PeopleSettingsWalkthroughTests.swift */,
+				9AC04CE41B1F05C9EBF37655 /* WalkthroughTests.swift */,
+			);
+			path = MimiUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		221CA24A547DE24235BA5178 /* Mimi */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 2D059E2C72C6FA42F7F5B941 /* Build configuration list for PBXNativeTarget "Mimi" */;
+			buildPhases = (
+				BB5519C2AC84E9EE53BD1391 /* Sources */,
+				F42FF0D863F48E53F55C3A87 /* Resources */,
+				2BBDF19F4436F78255E125C6 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Mimi;
+			packageProductDependencies = (
+				2893CA7AE6D79ED65264ADAE /* IrohLib */,
+			);
+			productName = Mimi;
+			productReference = 2C30D7C0D2554C5520809D27 /* Mimi.app */;
+			productType = "com.apple.product-type.application";
+		};
+		EDCA444145B7BE6B300B6D19 /* MimiTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 03E5BFB5FA0194A5FC04B387 /* Build configuration list for PBXNativeTarget "MimiTests" */;
+			buildPhases = (
+				A811D95182602166BD321425 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				724B0958CCA34A5F1AA9199D /* PBXTargetDependency */,
+			);
+			name = MimiTests;
+			packageProductDependencies = (
+			);
+			productName = MimiTests;
+			productReference = 6B94FABD767B5D79EA1840DD /* MimiTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		F19A3556619684179D667A58 /* MimiUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 02EF77CDB92586C458253EF1 /* Build configuration list for PBXNativeTarget "MimiUITests" */;
+			buildPhases = (
+				957DBD2619101F4C1A922B61 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B286AB0A475D0EFCD0260B03 /* PBXTargetDependency */,
+			);
+			name = MimiUITests;
+			packageProductDependencies = (
+			);
+			productName = MimiUITests;
+			productReference = 952B58D9FDFA3BFA4B9C5761 /* MimiUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		5041304FDC84EBE759FC7EA6 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					221CA24A547DE24235BA5178 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+					EDCA444145B7BE6B300B6D19 = {
+						DevelopmentTeam = "";
+					};
+					F19A3556619684179D667A58 = {
+						DevelopmentTeam = "";
+						TestTargetID = 221CA24A547DE24235BA5178;
+					};
+				};
+			};
+			buildConfigurationList = 443F99B2BD21C86C754974BC /* Build configuration list for PBXProject "Mimi" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 5762DDC39903755C3DBD67FC;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				24D525E12580550A743A2EAB /* XCRemoteSwiftPackageReference "iroh-ffi" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 9FD12BC5412CC3E7E7EACFDA /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				221CA24A547DE24235BA5178 /* Mimi */,
+				EDCA444145B7BE6B300B6D19 /* MimiTests */,
+				F19A3556619684179D667A58 /* MimiUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		F42FF0D863F48E53F55C3A87 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				400D01E6C1980737F95FBC9E /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		957DBD2619101F4C1A922B61 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				26E9F4E758FB4DCCA137E706 /* CalendarWalkthroughTests.swift in Sources */,
+				D16D9E61D72BDEEBF8FF3B0B /* MailWalkthroughTests.swift in Sources */,
+				72AAF121566801BF7A542B47 /* PeopleSettingsWalkthroughTests.swift in Sources */,
+				94E621B047A3C263FB97EB0B /* WalkthroughTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A811D95182602166BD321425 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				79A4BEE9B7EBE8ABF216FECF /* CalendarTests.swift in Sources */,
+				58DBA81A8204A02D70756A5D /* MailTests.swift in Sources */,
+				26A594DF5F74C6EC28877B9F /* MailWebPageTests.swift in Sources */,
+				E20B695F0B42467D37324D93 /* MimiTests.swift in Sources */,
+				0362A64DE62228C1507EBA19 /* PeopleSettingsTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BB5519C2AC84E9EE53BD1391 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A29093969A3598222B21D9F8 /* ActionArguments.swift in Sources */,
+				C0A3B1F1F1773C47EBE37115 /* ActionsView.swift in Sources */,
+				7BDCD00A22A35623479FF081 /* AgendaList.swift in Sources */,
+				1DA626A80FFAB78F78466915 /* AppModel.swift in Sources */,
+				38AEC94DFD121AAC5D345C62 /* AssistantAvatar.swift in Sources */,
+				72BA43B7A2BAB791BC3C6307 /* Calendar.swift in Sources */,
+				08E0C35DB04E4D0ADE081E65 /* CalendarChrome.swift in Sources */,
+				B00EF10CA19AC65119ACD999 /* CalendarMath.swift in Sources */,
+				EFD7A143F4022770CB276C73 /* CalendarStore.swift in Sources */,
+				558A726336D946F2CE68B02C /* CalendarStyle.swift in Sources */,
+				84EE851D0AD22187761298BE /* CalendarView.swift in Sources */,
+				EB528EDB0E3307DC76848D89 /* Chat.swift in Sources */,
+				4679EEA90DA843FF808F09B6 /* ChatView.swift in Sources */,
+				E28FC9FB29BBE5260173D7F8 /* Composer.swift in Sources */,
+				5DB10E4B6620C61F3B78424F /* ConnectFlows.swift in Sources */,
+				B1AF6CE934DC1DBDED9FD2CE /* ConnectionsSettingsView.swift in Sources */,
+				808B9ADFE9B836E90C1BAFE5 /* ConversationsView.swift in Sources */,
+				B93416B1AA52F3F1111B52CA /* DaemonLink.swift in Sources */,
+				FEE7B78A6A673F585C2C2DDF /* DayTimeline.swift in Sources */,
+				835AF9A18C172D9E174AC9F7 /* EventActions.swift in Sources */,
+				B72E3BEBF4A12B84790C9FE0 /* EventDetailView.swift in Sources */,
+				A32D751E6E1FAD41CE6972FC /* EventEditor.swift in Sources */,
+				579038ED6FE6EED749A2D2E1 /* GeneralSettingsView.swift in Sources */,
+				4D3B89484F77D4EB5110723D /* Invitations.swift in Sources */,
+				A69837181E7A1B1F6ACA46C8 /* JSONValue.swift in Sources */,
+				47046C7F11C4A4DC6B588E65 /* Keychain.swift in Sources */,
+				C57E9CB2E6EA0477043338FB /* Mail.swift in Sources */,
+				679E45A48BDD1F85453186D2 /* MailComposeView.swift in Sources */,
+				36FFAAD356E811BBD3D6A345 /* MailDraftCard.swift in Sources */,
+				16879E0435D4D3F9D22191B9 /* MailFolderEditor.swift in Sources */,
+				DC9BEA08031B15EEAF2B252A /* MailFolderLooks.swift in Sources */,
+				C950102985458C26A715C18A /* MailListView.swift in Sources */,
+				7F1480B7992EE29FD102AED2 /* MailMessageBody.swift in Sources */,
+				69A1C50B270A46ABFECA3161 /* MailPrivacyView.swift in Sources */,
+				ACD3EA9914E001F81D4446D5 /* MailReaderView.swift in Sources */,
+				6349538B39FADB707A6C0DDE /* MailStore.swift in Sources */,
+				BC092006A9421D0A3F1FF845 /* MailText.swift in Sources */,
+				397695F27B33C72D3A0FBEF7 /* MailView.swift in Sources */,
+				911A58A60298216A1ECA3230 /* MailWebView.swift in Sources */,
+				8EE19E9A28D1C1D9F0D436AF /* MarkdownText.swift in Sources */,
+				F8BF2BDF85F0FC4ADBC1F518 /* MemorySettingsView.swift in Sources */,
+				32A9FA15BBEBBCBBC685CD60 /* MergeViews.swift in Sources */,
+				0F77E266D56004CC38FAD586 /* MessageView.swift in Sources */,
+				0D7E3F2B0739C664D6E593E5 /* MimiAPI+Calendar.swift in Sources */,
+				BBB310994F992190E2246CD5 /* MimiAPI+Mail.swift in Sources */,
+				75F884A375B755A546BDCE97 /* MimiAPI+People.swift in Sources */,
+				F44A701468A8F3A900F62C71 /* MimiAPI+Settings.swift in Sources */,
+				237E79C300C99439B4CA7A39 /* MimiAPI.swift in Sources */,
+				65048B5AEAF79AEB26C8086E /* MimiApp.swift in Sources */,
+				A260822BC554D48D628F40CA /* ModelSourceViews.swift in Sources */,
+				3EDA155E2555DCAC940F77B8 /* ModelsSettingsView.swift in Sources */,
+				BEEA26B3DBC96D8001D85497 /* NotificationsSettingsView.swift in Sources */,
+				FC179B7741C16085F6DA0B6E /* People.swift in Sources */,
+				1683A29AA60F231284007C8C /* PeopleFlow.swift in Sources */,
+				83DA0FB5319D37AFA2864C36 /* PeopleStyle.swift in Sources */,
+				6444A7B3D7A8DB19931395F7 /* PeopleView.swift in Sources */,
+				F9CDF3D07BD4CC3F995FDE49 /* PermissionsSettingsView.swift in Sources */,
+				ADFB3C8F53E3D622DBDB8D6D /* PersonForms.swift in Sources */,
+				FCEFB4D2C3099A88B4E932A1 /* PersonView.swift in Sources */,
+				DE5BE4A0104FC6CBD24B7E10 /* PersonalitySettingsView.swift in Sources */,
+				5C9B359C60FCA49A9AB27581 /* PhoneSettingsView.swift in Sources */,
+				043E80C8E0709C78FCE5C081 /* PrivacySettingsView.swift in Sources */,
+				89C36313EC5A2299923D3AF1 /* RemindersView.swift in Sources */,
+				9C7CCC82605B7876B07DF90D /* Remote.swift in Sources */,
+				79144E96A03B7884389E084F /* Schedule.swift in Sources */,
+				EF01E23DC54C37B40D0203BC /* ScheduleDraft.swift in Sources */,
+				933028CAC44FCCD654EE1395 /* ScheduleEditor.swift in Sources */,
+				5D06FEBB134728B25578ED66 /* SettingsComponents.swift in Sources */,
+				C1641D7FE43EC5EC30EB903E /* SettingsData.swift in Sources */,
+				76A63BAA65E1166DE8C08262 /* SettingsView.swift in Sources */,
+				74EC5F055AF54A216E0277C9 /* Theme.swift in Sources */,
+				BD679C384F255B4A71BA2F19 /* WelcomeView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		724B0958CCA34A5F1AA9199D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 221CA24A547DE24235BA5178 /* Mimi */;
+			targetProxy = D5948B197CF732D53E67932F /* PBXContainerItemProxy */;
+		};
+		B286AB0A475D0EFCD0260B03 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 221CA24A547DE24235BA5178 /* Mimi */;
+			targetProxy = FCBF5C67EBF3469A4FC432F2 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		205B580D140688C6D867CE98 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(MIMI_BUNDLE_ID).tests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Mimi.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Mimi";
+			};
+			name = Release;
+		};
+		30FB3B8B206EC5B276767406 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(MIMI_BUNDLE_ID).uitests";
+				SDKROOT = iphoneos;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Mimi;
+			};
+			name = Debug;
+		};
+		6E31526895A32E6F4B5F93D5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(MIMI_BUNDLE_ID).tests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Mimi.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Mimi";
+			};
+			name = Debug;
+		};
+		9899B12F1769F368816B5E4C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = Mimi/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"-framework",
+					Network,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(MIMI_BUNDLE_ID)";
+				PRODUCT_NAME = Mimi;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		A4699171FF94A60DC26A5B54 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = DF0555E83932D36046B4501D /* App.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		BD53DA77B4597763A6326A9E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(MIMI_BUNDLE_ID).uitests";
+				SDKROOT = iphoneos;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Mimi;
+			};
+			name = Release;
+		};
+		C966BFC7AC03C55C06CC0442 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = DF0555E83932D36046B4501D /* App.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		F3117DCCC2F13668D63AD636 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = Mimi/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"-framework",
+					Network,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(MIMI_BUNDLE_ID)";
+				PRODUCT_NAME = Mimi;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		02EF77CDB92586C458253EF1 /* Build configuration list for PBXNativeTarget "MimiUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				30FB3B8B206EC5B276767406 /* Debug */,
+				BD53DA77B4597763A6326A9E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		03E5BFB5FA0194A5FC04B387 /* Build configuration list for PBXNativeTarget "MimiTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6E31526895A32E6F4B5F93D5 /* Debug */,
+				205B580D140688C6D867CE98 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		2D059E2C72C6FA42F7F5B941 /* Build configuration list for PBXNativeTarget "Mimi" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F3117DCCC2F13668D63AD636 /* Debug */,
+				9899B12F1769F368816B5E4C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		443F99B2BD21C86C754974BC /* Build configuration list for PBXProject "Mimi" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A4699171FF94A60DC26A5B54 /* Debug */,
+				C966BFC7AC03C55C06CC0442 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		24D525E12580550A743A2EAB /* XCRemoteSwiftPackageReference "iroh-ffi" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/n0-computer/iroh-ffi";
+			requirement = {
+				kind = exactVersion;
+				version = 1.1.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		2893CA7AE6D79ED65264ADAE /* IrohLib */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 24D525E12580550A743A2EAB /* XCRemoteSwiftPackageReference "iroh-ffi" */;
+			productName = IrohLib;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 5041304FDC84EBE759FC7EA6 /* Project object */;
+}

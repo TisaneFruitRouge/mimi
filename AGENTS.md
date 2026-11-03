@@ -24,7 +24,11 @@ user can see, change and undo what it does.
    client ID, a Telegram api_id) are just identifiers shown on consent screens; they
    never route data through the project. The one exception to "nothing unasked":
    "Check for new versions" asks GitHub's public releases API directly, once a day, and
-   only after the user turns it on (off by default).
+   only after the user turns it on (off by default). The other exception is phone access
+   (Settings › Phone, only once a phone is paired): iroh's public relays and address
+   lookup, run by number 0, help the phone find the computer and pass on end-to-end
+   encrypted traffic they can't read when no direct path exists. Disclosed in Settings,
+   replaceable with the user's own relay.
 1. **Self-hosting, privacy and security by default.** Prefer local processing. Data
    leaves the machine only when the task needs it (sending a Telegram message, creating
    a calendar event), or when the user has explicitly chosen a cloud model.
@@ -88,6 +92,7 @@ change. Each starts with the rules that must not be broken.
 | First run | [onboarding.md](docs/onboarding.md) |
 | Running the daemon in the background | [daemon-lifecycle.md](docs/daemon-lifecycle.md) |
 | Installers, releases, update check | [packaging.md](docs/packaging.md) |
+| Using Mimi from a phone, the iPhone app | [phone.md](docs/phone.md) |
 
 ## Working here safely
 

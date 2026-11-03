@@ -23,6 +23,7 @@ pub mod memory;
 pub mod people;
 pub mod persona;
 pub mod providers;
+pub mod remote;
 pub mod runtime;
 pub mod schedule;
 pub mod settings;
@@ -73,6 +74,8 @@ pub struct AppState {
     pub access: access::Access,
     /// Listening and speaking: loaded voice models and their downloads.
     pub voice: voice::Voice,
+    /// Using Mimi from a phone: the iroh endpoint, pairing codes, open connections.
+    pub remote: remote::Remote,
 }
 
 impl AppState {
@@ -111,6 +114,7 @@ impl AppState {
             updates: Default::default(),
             access: Default::default(),
             voice: Default::default(),
+            remote: Default::default(),
         }
     }
 }
